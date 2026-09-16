@@ -5,8 +5,8 @@
   <text x="776" y="28" text-anchor="end" fill="#3ee0c8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700">2</text>
   <line x1="56" y1="48" x2="56" y2="240" stroke="#1c2a38"/>
   <line x1="56" y1="240" x2="776" y2="240" stroke="#1c2a38"/>
-  <path d="M56.0,240.0 L104.0,240.0 L152.0,240.0 L200.0,240.0 L248.0,240.0 L296.0,240.0 L344.0,144.0 L392.0,144.0 L440.0,144.0 L488.0,144.0 L536.0,48.0 L584.0,48.0 L632.0,48.0 L680.0,48.0 L728.0,48.0 L776.0,48.0" fill="none" stroke="#3ee0c8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M56.0,240.0 L101.0,240.0 L146.0,240.0 L191.0,240.0 L236.0,240.0 L281.0,240.0 L326.0,144.0 L371.0,144.0 L416.0,144.0 L461.0,144.0 L506.0,48.0 L551.0,48.0 L596.0,48.0 L641.0,48.0 L686.0,48.0 L731.0,48.0 L776.0,48.0" fill="none" stroke="#3ee0c8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
   <circle cx="776.0" cy="48.0" r="5" fill="#7c6bff"/>
   <text x="56" y="266" fill="#9ab0c4" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">2026-08-31</text>
-  <text x="776" y="266" text-anchor="end" fill="#9ab0c4" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">2026-09-15</text>
+  <text x="776" y="266" text-anchor="end" fill="#9ab0c4" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">2026-09-16</text>
 </svg>
