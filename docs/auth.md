@@ -11,7 +11,7 @@
 
 Chrome extension: `chrome-extension/` on an open `chat.deepseek.com` tab. Collect until **Token** is Ready, then Save File. Do not paste the JSON into chat.
 
-Fields: `token`, `cookie`, `wasmUrl`. Optional: `hif_dliq`, `hif_leim`, `name` (dashboard label), `enabled` (`false` pauses the login). See [`auth.example.json`](../auth.example.json).
+Fields: `token`, `cookie`, `wasmUrl`. Optional: `hif_dliq`, `hif_leim`, `name` (label), `enabled` (`false` pauses the login). See [`auth.example.json`](../auth.example.json).
 
 ## Pool (2–3 accounts)
 
@@ -23,7 +23,5 @@ npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./account
 ```
 
 The proxy also loads `./accounts/*.json` next to the default `deepseek-auth.json`. Override with `DEEPSEEK_AUTH_DIR` or a comma list in `DEEPSEEK_AUTH_PATH`.
-
-Dashboard (loopback): [http://127.0.0.1:9655/dashboard](http://127.0.0.1:9655/dashboard) — add/rename/pause/replace/remove accounts, usage, request log, client IPs. The routing id stays the filename stem; `name` is the label only.
 
 HTTP details: [`api.md`](api.md).

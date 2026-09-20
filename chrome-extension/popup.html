@@ -8,54 +8,68 @@
 </head>
 <body>
   <header class="masthead">
-    <h1 class="visually-hidden">DeepSeek Session</h1>
-    <img class="brand" src="icons/logo.svg" width="140" height="30" alt="DeepSeek">
-    <p class="sub">Export for FreeDeepseekAPI</p>
+    <span class="brand-mark" aria-hidden="true">
+      <img src="icons/mark.svg" alt="">
+    </span>
+    <span>
+      <h1>Session Export</h1>
+      <p class="sub">FreeDeepseekAPI</p>
+    </span>
   </header>
 
   <section id="callout" class="callout" hidden>
-    <p id="calloutTitle" class="callout-title"></p>
-    <p id="calloutBody" class="callout-body"></p>
+    <span class="status-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 3a9 9 0 1 1-9 9 9 9 0 0 1 9-9Z"/>
+        <path class="status-default" d="M12 8v4.5M12 16h.01"/>
+        <path class="status-ready" d="m8.5 12 2.3 2.3 4.8-5"/>
+      </svg>
+    </span>
+    <span class="status-copy">
+      <strong id="calloutTitle" class="callout-title"></strong>
+      <span id="calloutBody" class="callout-body"></span>
+    </span>
   </section>
 
   <button type="button" id="btnCollect" class="btn btn-filled">
-    <svg class="icon" viewBox="0 0 20 20" aria-hidden="true">
-      <path fill="currentColor" d="M10 3a7 7 0 1 0 6.32 4.09.75.75 0 0 0-1.36-.62A5.5 5.5 0 1 1 10 4.5V6l3-2.25L10 1.5V3z"/>
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 12.5V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v5.5M8 12l4 4 4-4M12 5v11M6 19h12"/>
     </svg>
-    Collect from Tab
+    <span class="btn-label">Read current tab</span>
   </button>
 
-  <section class="group" aria-label="Session fields">
-    <div class="row">
+  <section class="checks" aria-label="Session status">
+    <div class="check">
+      <span class="check-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M8.5 11V8.5a3.5 3.5 0 0 1 7 0V11M7 11h10v9H7zM12 15v2"/></svg>
+      </span>
       <span class="label">Token</span>
-      <span id="rowToken" class="value">—</span>
+      <span id="rowToken" class="value">Not read</span>
     </div>
-    <div class="row">
+    <div class="check">
+      <span class="check-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-7-7c0 2 1 3 3 3 0 2 1 3 4 3Z"/><path d="M8.5 13.5h.01M12.5 16.5h.01M14.5 12.5h.01"/></svg>
+      </span>
       <span class="label">Cookies</span>
-      <span id="rowCookie" class="value">—</span>
-    </div>
-    <div class="row">
-      <span class="label">Device headers</span>
-      <span id="rowHif" class="value">Optional</span>
+      <span id="rowCookie" class="value">Not read</span>
     </div>
   </section>
 
   <div class="actions">
-    <button type="button" id="btnCopy" class="btn btn-tinted" disabled>Copy JSON</button>
-    <button type="button" id="btnSave" class="btn btn-tinted" disabled>Save File</button>
+    <button type="button" id="btnCopy" class="btn btn-secondary" disabled>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>
+      </svg>
+      <span class="btn-label">Copy</span>
+    </button>
+    <button type="button" id="btnSave" class="btn btn-secondary" disabled>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3v12M7.5 10.5 12 15l4.5-4.5M5 20h14"/>
+      </svg>
+      <span class="btn-label">Download</span>
+    </button>
   </div>
 
-  <details class="json-block">
-    <summary>
-      <span>JSON</span>
-      <svg class="disclosure" viewBox="0 0 9 16" aria-hidden="true">
-        <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2 2.5 7 8 2 13.5"/>
-      </svg>
-    </summary>
-    <pre id="jsonPreview" class="json"></pre>
-  </details>
-
-  <p id="detail" class="caption">Open chat.deepseek.com, then Collect.</p>
   <script src="popup.js"></script>
 </body>
 </html>

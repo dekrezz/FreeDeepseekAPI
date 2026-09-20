@@ -3,7 +3,7 @@
 # FreeDeepseekAPI
 
 Локальный прокси OpenAI / Anthropic / Responses над [chat.deepseek.com](https://chat.deepseek.com).  
-Web-логин, без платного API-ключа. **2–3 аккаунта** для параллельных клиентов. Дашборд: `/dashboard`.
+Web-логин, без платного API-ключа. **2–3 аккаунта** для параллельных клиентов.
 
 [English](README.md) · **Русский** · [简体中文](README.zh.md)
 
@@ -11,7 +11,7 @@ Web-логин, без платного API-ключа. **2–3 аккаунта
   <a href="https://github.com/dekrezz/FreeDeepseekAPI/stargazers"><img src="https://img.shields.io/github/stars/dekrezz/FreeDeepseekAPI?style=for-the-badge&logo=github&color=3ee0c8&label=stars" alt="GitHub stars" /></a>
   <a href="https://github.com/dekrezz/FreeDeepseekAPI/network/members"><img src="https://img.shields.io/github/forks/dekrezz/FreeDeepseekAPI?style=for-the-badge&logo=github&color=7c6bff" alt="forks" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-3ee0c8?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="node" />
-  <img src="https://img.shields.io/badge/models-V4--Flash%20%7C%20V4--Pro-7c6bff?style=for-the-badge" alt="models" />
+  <img src="https://img.shields.io/badge/models-V4.1--Flash-7c6bff?style=for-the-badge" alt="models" />
 </p>
 
 <p>
@@ -30,7 +30,6 @@ Web-логин, без платного API-ключа. **2–3 аккаунта
 ```bash
 npm run auth
 npm start
-# http://127.0.0.1:9655/dashboard
 ```
 
 ```bash
@@ -41,13 +40,13 @@ curl http://127.0.0.1:9655/v1/chat/completions \
 
 ## Модели
 
-Только **V4-Flash** (Instant) и **V4-Pro** (Expert). [Таблица →](docs/ru/models.md)
+На Web только **DeepSeek-V4.1-Flash** (Instant / Expert / Pro убраны). [Таблица →](docs/ru/models.md)
 
 | ID | Web |
 |---|---|
-| [`deepseek-v4-flash`](docs/ru/models.md) | Instant |
-| [`deepseek-v4-pro`](docs/ru/models.md) | Expert |
-| `…-thinking` / `…-search` | те же модели, другие флаги |
+| [`deepseek-v4-flash`](docs/ru/models.md) / `deepseek-flash` | V4.1-Flash |
+| `deepseek-v4-pro` | та же модель (старый алиас) |
+| `…-thinking` / `…-search` | DeepThink / Search |
 
 ## Агенты одним нажатием
 
@@ -61,6 +60,7 @@ npm run setup:agents
 <tr>
 <td align="center"><a href="docs/ru/agents.md"><b>Claude Code</b></a></td>
 <td align="center"><a href="docs/ru/agents.md"><b>Codex</b></a></td>
+<td align="center"><a href="docs/ru/agents.md"><b>OpenCode</b></a></td>
 <td align="center"><a href="docs/ru/agents.md"><b>Hermes</b></a></td>
 <td align="center"><a href="docs/ru/agents.md"><b>OpenClaw</b></a></td>
 <td align="center"><a href="docs/ru/agents.md"><b>Cursor</b></a></td>
@@ -73,7 +73,7 @@ npm run setup:agents
 
 | Гайд | |
 |---|---|
-| [Модели](docs/ru/models.md) | Instant / Expert |
+| [Модели](docs/ru/models.md) | V4.1-Flash |
 | [Агенты](docs/ru/agents.md) | one-click |
 | [Авторизация](docs/auth.md) | 1–3 Web-логина |
 | [HTTP API](docs/api.md) | пул, `429`, env |

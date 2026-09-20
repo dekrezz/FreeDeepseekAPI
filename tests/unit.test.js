@@ -236,7 +236,6 @@ test('Containerfile keeps the rootless Podman runtime minimal and fail-closed', 
   assert.deepEqual(copyLines, [
     'COPY --chown=1000:1000 package.json server.js ./',
     'COPY --chown=1000:1000 lib/pow.js ./lib/pow.js',
-    'COPY --chown=1000:1000 dashboard ./dashboard',
   ]);
   assert.doesNotMatch(containerfile, /^\s*(?:COPY|ADD)\s+\.\s/m);
   assert.match(containerfile, /^USER 1000:1000$/m);
@@ -727,6 +726,65 @@ test('tool results use the global prompt cap instead of an unconditional 8k trun
   assert.match(bounded.prompt, /RESULT_END/);
 });
 
+test('image inputs stay structured across OpenAI, Responses, and Anthropic payloads', () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';
+  const openaiMessages = [{
+    role: 'user',
+    content: [
+      { type: 'text', text: 'Describe it' },
+      { type: 'image_url', image_url: { url: `data:image/png;base64,${png}` } },
+    ],
+  }];
+  const responses = serverInternals.normalizeApiParams({
+    input: [{
+      type: 'message',
+      role: 'user',
+      content: [
+        { type: 'input_text', text: 'Describe it' },
+        { type: 'input_image', image_url: 'https://example.com/picture.webp' },
+      ],
+    }],
+  }, 'responses');
+  const anthropic = serverInternals.normalizeApiParams({
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } },
+        { type: 'text', text: 'Describe it' },
+      ],
+    }],
+  }, 'anthropic');
+
+  assert.equal(serverInternals.extractImageInputs(openaiMessages)[0].url, `data:image/png;base64,${png}`);
+  assert.equal(responses.messages[0].content[1].type, 'image_url');
+  assert.equal(serverInternals.extractImageInputs(responses.messages)[0].url, 'https://example.com/picture.webp');
+  assert.equal(anthropic.messages[0].content[0].type, 'image_url');
+  assert.equal(serverInternals.extractImageInputs(anthropic.messages)[0].url, `data:image/png;base64,${png}`);
+
+  const formatted = serverInternals.formatMessages(anthropic.messages, []);
+  assert.match(formatted.prompt, /Describe it/);
+  assert.match(formatted.prompt, /\[Image attachment\]/);
+  assert.doesNotMatch(formatted.prompt, /iVBOR/);
+});
+
+test('image materialization rejects private URLs and unsupported provider file IDs', async () => {
+  await assert.rejects(
+    serverInternals.materializeImageInput({ url: 'http://127.0.0.1/private.png' }, 0),
+    /public HTTPS URL/,
+  );
+  await assert.rejects(
+    serverInternals.materializeImageInput({ url: 'https://127.0.0.1/private.png' }, 0),
+    /public network addresses/,
+  );
+  assert.throws(
+    () => serverInternals.extractImageInputs([{
+      role: 'user',
+      content: [{ type: 'input_image', file_id: 'file_123' }],
+    }]),
+    /file_id.*not supported/,
+  );
+});
+
 test('retry state clears a stale finish reason and failure classes use protocol-appropriate status codes', () => {
   const retry = serverInternals.normalizeRetryResponse({ content: 'recovered', finishReason: null });
   assert.equal(retry.finishReason, null);
@@ -757,7 +815,7 @@ test('context-compaction header is marked and exposed to browser clients', () =>
   assert.equal(headers.get(serverInternals.CONTEXT_COMPACTED_HEADER), 'true');
 });
 
-test('only V4-Flash and V4-Pro aliases are registered', () => {
+test('only V4.1-Flash aliases are registered', () => {
   const { resolveModelConfig, isKnownModel, isSupportedModel, SUPPORTED_MODEL_IDS, DEFAULT_MODEL_ID, MODEL_CONFIGS } = serverInternals;
 
   assert.equal(DEFAULT_MODEL_ID, 'deepseek-v4-flash');
@@ -777,19 +835,19 @@ test('only V4-Flash and V4-Pro aliases are registered', () => {
   assert.equal(flash.model_type, 'default');
   assert.equal(flash.thinking_enabled, false);
   assert.equal(flash.search_enabled, false);
-  assert.match(flash.real_model, /V4-Flash-0731/);
+  assert.match(flash.real_model, /V4\.1-Flash/);
 
   const flashThink = resolveModelConfig('deepseek-v4-flash-thinking');
   assert.equal(flashThink.model_type, 'default');
   assert.equal(flashThink.thinking_enabled, true);
 
   const pro = resolveModelConfig('deepseek-v4-pro');
-  assert.equal(pro.model_type, 'expert');
+  assert.equal(pro.model_type, 'default');
   assert.equal(pro.thinking_enabled, false);
-  assert.match(pro.real_model, /V4-Pro-0813/);
+  assert.match(pro.real_model, /V4\.1-Flash/);
 
   const proThink = resolveModelConfig('deepseek-v4-pro-thinking');
-  assert.equal(proThink.model_type, 'expert');
+  assert.equal(proThink.model_type, 'default');
   assert.equal(proThink.thinking_enabled, true);
 
   for (const id of SUPPORTED_MODEL_IDS) assert.equal(isSupportedModel(id), true, id);
@@ -799,8 +857,10 @@ test('only V4-Flash and V4-Pro aliases are registered', () => {
 
   const { canonicalizeModelId } = serverInternals;
   assert.equal(canonicalizeModelId('claude-sonnet-4-6'), 'deepseek-v4-flash');
-  assert.equal(canonicalizeModelId('claude-opus-4-6'), 'deepseek-v4-pro-thinking');
+  assert.equal(canonicalizeModelId('claude-opus-4-6'), 'deepseek-v4-flash-thinking');
   assert.equal(canonicalizeModelId('deepseek-v4-pro[1m]'), 'deepseek-v4-pro');
+  assert.equal(canonicalizeModelId('deepseek-flash'), 'deepseek-v4-flash');
+  assert.equal(canonicalizeModelId('deepseek-flash-thinking'), 'deepseek-v4-flash-thinking');
   assert.equal(isKnownModel('claude-haiku-4-5'), true);
 });
 
@@ -856,7 +916,7 @@ test('one-click agent setup writes Claude Code and Hermes configs into SETUP_HOM
   const dir = tmpdir();
   const res = runNode([
     'scripts/setup-agents.js',
-    '--target', 'claude-code,hermes,openclaw,codex',
+    '--target', 'claude-code,hermes,openclaw,codex,opencode',
     '--model', 'deepseek-v4-pro',
     '--base-url', 'http://127.0.0.1:9655',
     '--api-key', 'local',
@@ -877,10 +937,21 @@ test('one-click agent setup writes Claude Code and Hermes configs into SETUP_HOM
   const claw = JSON.parse(fs.readFileSync(path.join(dir, '.openclaw', 'openclaw.json'), 'utf8'));
   assert.equal(claw.agents.defaults.model.primary, 'freedeepseek/deepseek-v4-pro');
   assert.equal(claw.models.providers.freedeepseek.api, 'openai-completions');
+  assert.deepEqual(claw.models.providers.freedeepseek.models[0].input, ['text', 'image']);
 
   const toml = fs.readFileSync(path.join(dir, '.codex', 'config.toml'), 'utf8');
   assert.match(toml, /model_provider = "freedeepseek"/);
   assert.match(toml, /wire_api = "responses"/);
+  const catalog = JSON.parse(fs.readFileSync(path.join(dir, '.codex', 'freedeepseek-models.json'), 'utf8'));
+  assert.deepEqual(catalog.models[0].input_modalities, ['text', 'image']);
+  assert.deepEqual(catalog.models[0].supported_reasoning_levels, []);
+  assert.equal(catalog.models[0].shell_type, 'shell_command');
+  assert.equal(catalog.models[0].supports_reasoning_summary_parameter, false);
+
+  const opencode = JSON.parse(fs.readFileSync(path.join(dir, '.config', 'opencode', 'opencode.json'), 'utf8'));
+  assert.equal(opencode.model, 'freedeepseek/deepseek-v4-pro');
+  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-pro'].attachment, true);
+  assert.deepEqual(opencode.provider.freedeepseek.models['deepseek-v4-pro'].modalities.input, ['text', 'image']);
 });
 
 test('account patch persists display name and skips paused logins', (t) => {

@@ -3,5 +3,3 @@
 !server.js
 !lib
 !lib/pow.js
-!dashboard
-!dashboard/**

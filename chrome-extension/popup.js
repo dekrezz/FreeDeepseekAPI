@@ -9,9 +9,6 @@ const els = {
   btnSave: document.getElementById('btnSave'),
   rowToken: document.getElementById('rowToken'),
   rowCookie: document.getElementById('rowCookie'),
-  rowHif: document.getElementById('rowHif'),
-  jsonPreview: document.getElementById('jsonPreview'),
-  detail: document.getElementById('detail'),
 };
 
 let lastExport = null;
@@ -39,17 +36,6 @@ function exportText(auth) {
   return `${JSON.stringify(auth, null, 2)}\n`;
 }
 
-function redactedPreview(auth) {
-  const n = cookieCount(auth.cookie);
-  return JSON.stringify({
-    token: auth.token ? `present (${auth.token.length} chars)` : '',
-    hif_dliq: auth.hif_dliq ? 'present' : '',
-    hif_leim: auth.hif_leim ? 'present' : '',
-    cookie: n ? `${n} cookies` : '',
-    wasmUrl: auth.wasmUrl,
-  }, null, 2);
-}
-
 function setValue(el, text, kind) {
   el.textContent = text;
   el.className = `value${kind ? ` ${kind}` : ''}`;
@@ -62,65 +48,50 @@ function showCallout(kind, title, body) {
   els.calloutBody.textContent = body;
 }
 
-function formatCollectedAt(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(d);
-}
-
 function render(data) {
   const source = data && typeof data === 'object' ? data : {};
   const auth = buildAuthJson(source);
   lastExport = auth;
   const ready = !!(auth.token && auth.cookie);
   const cookieN = cookieCount(auth.cookie);
-  const hifReady = !!(auth.hif_dliq && auth.hif_leim);
-
-  els.jsonPreview.textContent = redactedPreview(auth);
   els.btnCopy.disabled = !ready;
   els.btnSave.disabled = !ready;
 
   setValue(
     els.rowToken,
-    auth.token ? 'Ready' : source._lastUpdated ? 'Missing' : '—',
+    auth.token ? 'Ready' : source._lastUpdated ? 'Missing' : 'Not read',
     auth.token ? 'ready' : source._lastUpdated ? 'missing' : ''
   );
   setValue(
     els.rowCookie,
-    cookieN ? `${cookieN} cookies` : source._lastUpdated ? 'Missing' : '—',
+    cookieN ? 'Ready' : source._lastUpdated ? 'Missing' : 'Not read',
     cookieN ? 'ready' : source._lastUpdated ? 'missing' : ''
   );
-  setValue(els.rowHif, hifReady ? 'Ready' : 'Optional', hifReady ? 'ready' : '');
 
   if (!source._lastUpdated) {
-    showCallout('warning', 'No session yet', 'Open chat.deepseek.com, stay signed in, then Collect.');
-    els.detail.textContent = 'Collect reads the open DeepSeek tab.';
+    showCallout('warning', 'Open DeepSeek first', 'Sign in, then read the current tab.');
     return;
   }
 
   if (ready) {
-    showCallout('ok', 'Ready to import', 'Save the file, then run npm run auth:import in the proxy folder.');
+    showCallout('ok', 'Session captured', 'Your credentials are ready to export.');
   } else if (!auth.token && cookieN) {
     showCallout(
       'warning',
-      'Token is still in the page',
-      'Send any short message on the DeepSeek tab so the app writes userToken, then Collect again.'
+      'Send one message',
+      'Then read the tab again to capture the token.'
     );
   } else {
-    showCallout('warning', 'Incomplete session', 'Sign in on chat.deepseek.com and Collect again.');
+    showCallout('warning', 'Session not found', 'Sign in to DeepSeek and try again.');
   }
 
-  els.detail.textContent = `Collected ${formatCollectedAt(source._lastUpdated)}`;
 }
 
 function flashButton(btn, label) {
-  const prev = btn.textContent;
-  btn.textContent = label;
-  window.setTimeout(() => { btn.textContent = prev; }, 1200);
+  const target = btn.querySelector('.btn-label');
+  const prev = target.textContent;
+  target.textContent = label;
+  window.setTimeout(() => { target.textContent = prev; }, 1200);
 }
 
 function inExtension() {
@@ -151,7 +122,7 @@ async function loadAuth() {
 }
 
 els.btnCollect.addEventListener('click', async () => {
-  showCallout('warning', 'Collecting…', 'Reading the open DeepSeek tab.');
+  showCallout('warning', 'Reading tab…', 'Looking for your active session.');
   try {
     const response = await send('collect');
     if (response && response.success) render(response.auth);

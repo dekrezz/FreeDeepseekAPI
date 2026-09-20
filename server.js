@@ -11,11 +11,14 @@
  */
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const readline = require('readline');
 const crypto = require('crypto');
+const dns = require('dns').promises;
+const net = require('net');
 const { spawnSync } = require('child_process');
 const { solvePOW } = require('./lib/pow');
 
@@ -373,13 +376,6 @@ function clientIp(req) {
     }
     return raw || 'unknown';
 }
-function isLoopbackAddress(ip) {
-    return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost' || /^127\./.test(ip);
-}
-function isDashboardAllowed(req) {
-    if (isProxyAuthorized(req.headers.authorization)) return true;
-    return isLoopbackAddress(clientIp(req));
-}
 function modelCostUsd(model, promptTokens, completionTokens) {
     const pro = /pro/.test(String(model || ''));
     const input = pro ? 0.66 : 0.22;
@@ -400,20 +396,6 @@ function recordRequest(entry) {
 function jsonResponse(res, status, body, extraHeaders = {}) {
     res.writeHead(status, { 'Content-Type': 'application/json', ...extraHeaders });
     res.end(JSON.stringify(body));
-}
-function writeNewAccountFile(name, auth) {
-    fs.mkdirSync(ACCOUNTS_DIR, { recursive: true, mode: 0o700 });
-    const safe = String(name || 'account').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40) || 'account';
-    let file = path.join(ACCOUNTS_DIR, `${safe}.json`);
-    let n = 2;
-    while (fs.existsSync(file)) {
-        file = path.join(ACCOUNTS_DIR, `${safe}-${n}.json`);
-        n++;
-    }
-    fs.writeFileSync(file, JSON.stringify(serializeAccountConfig(auth), null, 2), { mode: 0o600 });
-    if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
-    loadDeepSeekConfig({ fatal: false });
-    return file;
 }
 function serializeAccountConfig(config) {
     const out = {
@@ -482,130 +464,6 @@ function applyAccountPatch(id, patch = {}) {
     }
     persistAccountConfig(account);
     return accountStatus(account);
-}
-function removeAccountFile(id) {
-    const account = accounts.find(a => a.id === id);
-    if (!account?.file) return false;
-    const resolved = path.resolve(account.file);
-    const allowedRoots = [path.resolve(ACCOUNTS_DIR), path.dirname(path.resolve(DS_CONFIG_PATH))];
-    if (!allowedRoots.some(root => resolved === path.resolve(DS_CONFIG_PATH) || resolved.startsWith(root + path.sep) || resolved.startsWith(root + '/'))) {
-        throw Object.assign(new Error('Refusing to delete a file outside the auth pool'), { status: 403, type: 'forbidden' });
-    }
-    fs.unlinkSync(account.file);
-    loadDeepSeekConfig({ fatal: false });
-    return true;
-}
-const DASHBOARD_DIR = path.join(__dirname, 'dashboard');
-const DASHBOARD_TYPES = {
-    '.html': 'text/html; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.js': 'text/javascript; charset=utf-8',
-    '.svg': 'image/svg+xml',
-    '.png': 'image/png',
-};
-function serveDashboardAsset(res, pathname) {
-    let rel = (pathname === '/dashboard' || pathname === '/dashboard/') ? 'index.html' : pathname.replace(/^\/dashboard\//, '');
-    if (!rel || rel.includes('..')) {
-        res.writeHead(400); res.end('Bad path'); return;
-    }
-    const file = path.resolve(DASHBOARD_DIR, rel);
-    if (file !== DASHBOARD_DIR && !file.startsWith(DASHBOARD_DIR + path.sep)) {
-        res.writeHead(403); res.end('Forbidden'); return;
-    }
-    fs.readFile(file, (err, data) => {
-        if (err) { res.writeHead(404); res.end('Not found'); return; }
-        res.writeHead(200, { 'Content-Type': DASHBOARD_TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-        res.end(data);
-    });
-}
-async function handleAdmin(req, res, url) {
-    if (req.method === 'GET' && url.pathname === '/v1/admin/state') {
-        const usage = [...usageByAccount.entries()].map(([id, u]) => ({ account: id, ...u }));
-        jsonResponse(res, 200, {
-            accounts: accounts.map(accountStatus),
-            locks: listAccountChatLocks(),
-            in_flight: inFlight,
-            requests: requestLog.slice(-200).reverse(),
-            usage,
-            totals: usage.reduce((acc, u) => {
-                acc.prompt_tokens += u.prompt_tokens;
-                acc.completion_tokens += u.completion_tokens;
-                acc.usd += u.usd;
-                acc.requests += u.requests;
-                return acc;
-            }, { prompt_tokens: 0, completion_tokens: 0, usd: 0, requests: 0 }),
-        });
-        return;
-    }
-    if (req.method === 'POST' && url.pathname === '/v1/admin/accounts') {
-        const body = await readRequestJson(req);
-        const auth = body.auth && typeof body.auth === 'object' ? body.auth : body;
-        const token = String(auth.token || '').trim();
-        const cookie = String(auth.cookie || '').trim();
-        if (!token || !cookie) {
-            jsonResponse(res, 400, { error: { message: 'token and cookie are required', type: 'invalid_auth' } });
-            return;
-        }
-        const label = String(auth.name || body.name || '').trim().slice(0, 80);
-        const file = writeNewAccountFile(body.name || 'account', {
-            token,
-            cookie,
-            hif_dliq: String(auth.hif_dliq || ''),
-            hif_leim: String(auth.hif_leim || ''),
-            wasmUrl: String(auth.wasmUrl || 'https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm'),
-            ...(label ? { name: label } : {}),
-        });
-        jsonResponse(res, 201, { ok: true, file: path.basename(file), accounts: accounts.map(accountStatus) });
-        return;
-    }
-    if (req.method === 'DELETE' && url.pathname === '/v1/admin/accounts') {
-        const id = url.searchParams.get('id');
-        if (!id) {
-            jsonResponse(res, 400, { error: { message: 'id query is required', type: 'invalid_request' } });
-            return;
-        }
-        const removed = removeAccountFile(id);
-        if (!removed) {
-            jsonResponse(res, 404, { error: { message: `Unknown account ${id}`, type: 'not_found' } });
-            return;
-        }
-        jsonResponse(res, 200, { ok: true, accounts: accounts.map(accountStatus) });
-        return;
-    }
-    if (req.method === 'PATCH' && url.pathname === '/v1/admin/accounts') {
-        const body = await readRequestJson(req);
-        const id = body.id || url.searchParams.get('id');
-        if (!id) {
-            jsonResponse(res, 400, { error: { message: 'id is required', type: 'invalid_request' } });
-            return;
-        }
-        const updated = applyAccountPatch(id, body);
-        jsonResponse(res, 200, { ok: true, account: updated, accounts: accounts.map(accountStatus) });
-        return;
-    }
-    if (req.method === 'POST' && url.pathname === '/v1/admin/accounts/cooldown-clear') {
-        const id = url.searchParams.get('id');
-        const account = accounts.find(a => a.id === id);
-        if (!account) {
-            jsonResponse(res, 404, { error: { message: `Unknown account ${id}`, type: 'not_found' } });
-            return;
-        }
-        account.cooldownUntil = 0;
-        jsonResponse(res, 200, { ok: true, accounts: accounts.map(accountStatus) });
-        return;
-    }
-    jsonResponse(res, 404, { error: { message: 'Unknown admin route', type: 'not_found' } });
-}
-function readRequestJson(req) {
-    return new Promise((resolve, reject) => {
-        let body = '';
-        req.on('data', chunk => { body += chunk; if (body.length > 2 * 1024 * 1024) { req.destroy(); reject(new Error('body too large')); } });
-        req.on('end', () => {
-            try { resolve(JSON.parse(body || '{}')); }
-            catch (e) { reject(e); }
-        });
-        req.on('error', reject);
-    });
 }
 // Parse a Retry-After header value into a cooldown duration in ms, or null if
 // absent/unparseable. Supports both forms: delta-seconds (e.g. "120") and an
@@ -707,8 +565,8 @@ function sweepIdleSessions(maxIdleMs = SESSION_TTL_MS * 2) {
 // solvePOW() lives in lib/pow (compiled-module cache + WASM-fetch timeout),
 // shared with client.js. Called as solvePOW(challenge, wasmUrl).
 
-// DeepSeek Web as of 2026-08-31: only V4-Flash (Instant) and V4-Pro (Expert).
-// Official IDs: deepseek-v4-flash / deepseek-v4-pro. Web model_type: default / expert.
+// DeepSeek Web as of 2026-09-20: Instant/Expert/Pro UI gone. One weight: V4.1-Flash.
+// Official paid ID: deepseek-flash. Web model_type is always `default`.
 // Thinking and search are request flags, encoded here as `-thinking` / `-search` suffixes.
 const DEFAULT_MODEL_ID = 'deepseek-v4-flash';
 function webModel({ model_type, thinking_enabled, search_enabled, real_model, capabilities, supported = true }) {
@@ -718,33 +576,33 @@ function webModel({ model_type, thinking_enabled, search_enabled, real_model, ca
 const MODEL_CONFIGS = {
     'deepseek-v4-flash': webModel({
         model_type: 'default', thinking_enabled: false, search_enabled: false,
-        real_model: 'DeepSeek-V4-Flash-0731 (Web Instant Mode)',
-        capabilities: { reasoning: false, web_search: false, files: true },
+        real_model: 'DeepSeek-V4.1-Flash',
+        capabilities: { reasoning: false, web_search: false, files: true, vision: true },
     }),
     'deepseek-v4-flash-thinking': webModel({
         model_type: 'default', thinking_enabled: true, search_enabled: false,
-        real_model: 'DeepSeek-V4-Flash-0731 (Web Instant Mode + thinking)',
-        capabilities: { reasoning: true, web_search: false, files: true },
+        real_model: 'DeepSeek-V4.1-Flash (thinking)',
+        capabilities: { reasoning: true, web_search: false, files: true, vision: true },
     }),
     'deepseek-v4-flash-search': webModel({
         model_type: 'default', thinking_enabled: false, search_enabled: true,
-        real_model: 'DeepSeek-V4-Flash-0731 (Web Instant Mode + web search)',
-        capabilities: { reasoning: false, web_search: true, files: true },
+        real_model: 'DeepSeek-V4.1-Flash (web search)',
+        capabilities: { reasoning: false, web_search: true, files: true, vision: true },
     }),
     'deepseek-v4-flash-thinking-search': webModel({
         model_type: 'default', thinking_enabled: true, search_enabled: true,
-        real_model: 'DeepSeek-V4-Flash-0731 (Web Instant Mode + thinking + web search)',
-        capabilities: { reasoning: true, web_search: true, files: true },
+        real_model: 'DeepSeek-V4.1-Flash (thinking + web search)',
+        capabilities: { reasoning: true, web_search: true, files: true, vision: true },
     }),
     'deepseek-v4-pro': webModel({
-        model_type: 'expert', thinking_enabled: false, search_enabled: false,
-        real_model: 'DeepSeek-V4-Pro-0813 (Web Expert Mode)',
-        capabilities: { reasoning: false, web_search: false, files: false },
+        model_type: 'default', thinking_enabled: false, search_enabled: false,
+        real_model: 'DeepSeek-V4.1-Flash (legacy Pro alias)',
+        capabilities: { reasoning: false, web_search: false, files: true, vision: true },
     }),
     'deepseek-v4-pro-thinking': webModel({
-        model_type: 'expert', thinking_enabled: true, search_enabled: false,
-        real_model: 'DeepSeek-V4-Pro-0813 (Web Expert Mode + thinking)',
-        capabilities: { reasoning: true, web_search: false, files: false },
+        model_type: 'default', thinking_enabled: true, search_enabled: false,
+        real_model: 'DeepSeek-V4.1-Flash (legacy Pro alias + thinking)',
+        capabilities: { reasoning: true, web_search: false, files: true, vision: true },
     }),
 };
 
@@ -817,9 +675,12 @@ function applyResponsePatchOperations(ops, appendFragments) {
 function canonicalizeModelId(model) {
     let id = String(model || DEFAULT_MODEL_ID).toLowerCase().trim();
     id = id.replace(/\[(?:1m|max|high|low)\]$/i, '');
+    if (id === 'deepseek-flash' || id.startsWith('deepseek-flash-')) {
+        id = id.replace(/^deepseek-flash/, 'deepseek-v4-flash');
+    }
     if (Object.prototype.hasOwnProperty.call(MODEL_CONFIGS, id)) return id;
     // Claude Code keeps shipping claude-* IDs unless ANTHROPIC_*_MODEL is set.
-    if (/claude[-_. ]?opus/.test(id) || /opus-4/.test(id)) return 'deepseek-v4-pro-thinking';
+    if (/claude[-_. ]?opus/.test(id) || /opus-4/.test(id)) return 'deepseek-v4-flash-thinking';
     if (/claude[-_. ]?(sonnet|haiku)/.test(id)) return 'deepseek-v4-flash';
     return id;
 }
@@ -830,7 +691,289 @@ function resolveModelConfig(model) {
 function isKnownModel(model) { return Object.prototype.hasOwnProperty.call(MODEL_CONFIGS, canonicalizeModelId(model)); }
 function isSupportedModel(model) { return resolveModelConfig(model).supported === true; }
 
-async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, freshSessionPrompt = prompt, lockHolder = null) {
+const DEEPSEEK_COMPLETION_PATH = '/api/v0/chat/completion';
+const DEEPSEEK_UPLOAD_PATH = '/api/v0/file/upload_file';
+const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const MAX_IMAGE_COUNT = 10;
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_IMAGE_REDIRECTS = 3;
+const FILE_PARSE_TIMEOUT_MS = 15000;
+const FILE_PARSE_FAILURES = new Set([
+    'FAILED', 'CONTENT_FILTER', 'CONTENT_TOO_LONG', 'CANCELLED', 'CONTENT_EMPTY',
+    '_CUSTOM_SYSTEM_ERROR_FAIL', '_CUSTOM_FROM_SHARE',
+]);
+
+function clientInputError(message, type = 'invalid_request_error') {
+    const error = new Error(message);
+    error.status = 400;
+    error.type = type;
+    return error;
+}
+
+function normalizeImageMediaType(value) {
+    const mediaType = String(value || '').split(';', 1)[0].trim().toLowerCase();
+    if (mediaType === 'image/jpg') return 'image/jpeg';
+    return mediaType;
+}
+
+function imageExtension(mediaType) {
+    return {
+        'image/png': '.png',
+        'image/jpeg': '.jpg',
+        'image/webp': '.webp',
+        'image/gif': '.gif',
+    }[mediaType] || '';
+}
+
+function isPrivateNetworkAddress(address) {
+    const value = String(address || '').toLowerCase().split('%', 1)[0];
+    if (net.isIPv4(value)) {
+        const parts = value.split('.').map(Number);
+        const [a, b, c] = parts;
+        return a === 0 || a === 10 || a === 127
+            || (a === 100 && b >= 64 && b <= 127)
+            || (a === 169 && b === 254)
+            || (a === 172 && b >= 16 && b <= 31)
+            || (a === 192 && b === 0 && (c === 0 || c === 2))
+            || (a === 192 && b === 168)
+            || (a === 198 && (b === 18 || b === 19 || b === 51))
+            || (a === 203 && b === 0 && c === 113)
+            || a >= 224;
+    }
+    if (net.isIPv6(value)) {
+        if (value === '::' || value === '::1') return true;
+        if (value.startsWith('fc') || value.startsWith('fd')) return true;
+        if (/^fe[89ab]/.test(value)) return true;
+        const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+        return mapped ? isPrivateNetworkAddress(mapped[1]) : false;
+    }
+    return true;
+}
+
+async function assertPublicImageUrl(url) {
+    if (url.protocol !== 'https:') {
+        throw clientInputError('Image URL must be a public HTTPS URL');
+    }
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
+        throw clientInputError('Image URL must be a public HTTPS URL');
+    }
+    let addresses;
+    try {
+        addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+    } catch (error) {
+        throw clientInputError(`Could not resolve image URL host: ${hostname}`);
+    }
+    if (!addresses.length || addresses.some(entry => isPrivateNetworkAddress(entry.address))) {
+        throw clientInputError('Image URL must resolve only to public network addresses');
+    }
+    return addresses;
+}
+
+function safeImageFilename(candidate, mediaType, index) {
+    const extension = imageExtension(mediaType);
+    const base = path.basename(String(candidate || '')).replace(/[^A-Za-z0-9._-]/g, '_');
+    if (base && imageExtension(mediaType) && base.toLowerCase().endsWith(extension)) return base;
+    const stem = base ? base.replace(/\.[^.]*$/, '') : `image-${index + 1}`;
+    return `${stem || `image-${index + 1}`}${extension}`;
+}
+
+function downloadPinnedImage(url, address) {
+    return new Promise((resolve, reject) => {
+        const request = https.get(url, {
+            headers: { 'User-Agent': 'FreeDeepseekAPI image input' },
+            lookup: (_hostname, options, callback) => {
+                if (options?.all) callback(null, [address]);
+                else callback(null, address.address, address.family);
+            },
+        }, response => {
+            if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
+                response.resume();
+                resolve({ status: response.statusCode, headers: response.headers, buffer: null });
+                return;
+            }
+            const chunks = [];
+            let bytes = 0;
+            response.on('data', chunk => {
+                bytes += chunk.length;
+                if (bytes > MAX_IMAGE_BYTES) {
+                    response.destroy(clientInputError(`Image exceeds ${MAX_IMAGE_BYTES} byte limit`, 'payload_too_large'));
+                    return;
+                }
+                chunks.push(chunk);
+            });
+            response.on('end', () => resolve({
+                status: response.statusCode,
+                headers: response.headers,
+                buffer: Buffer.concat(chunks),
+            }));
+            response.on('error', reject);
+        });
+        request.setTimeout(DS_FETCH_TIMEOUT_MS, () => request.destroy(new Error('Image URL request timed out')));
+        request.on('error', reject);
+    });
+}
+
+async function fetchPublicImage(sourceUrl, index) {
+    let current;
+    try { current = new URL(sourceUrl); }
+    catch (error) { throw clientInputError('Image URL is invalid'); }
+
+    for (let redirect = 0; redirect <= MAX_IMAGE_REDIRECTS; redirect++) {
+        const addresses = await assertPublicImageUrl(current);
+        let response;
+        try {
+            response = await downloadPinnedImage(current, addresses[0]);
+        } catch (error) {
+            if (error.status) throw error;
+            throw clientInputError(`Could not download image URL: ${error.message}`);
+        }
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+            const location = response.headers.location;
+            if (!location || redirect === MAX_IMAGE_REDIRECTS) {
+                throw clientInputError('Image URL has too many redirects');
+            }
+            current = new URL(location, current);
+            continue;
+        }
+        if (response.status < 200 || response.status >= 300) {
+            throw clientInputError(`Could not download image URL: HTTP ${response.status}`);
+        }
+        const declaredLength = Number(response.headers['content-length'] || 0);
+        if (declaredLength > MAX_IMAGE_BYTES) {
+            throw clientInputError(`Image exceeds ${MAX_IMAGE_BYTES} byte limit`, 'payload_too_large');
+        }
+        const mediaType = normalizeImageMediaType(response.headers['content-type']);
+        if (!SUPPORTED_IMAGE_TYPES.has(mediaType)) {
+            throw clientInputError(`Unsupported image media type: ${mediaType || 'unknown'}`);
+        }
+        const buffer = response.buffer;
+        if (!buffer.length || buffer.length > MAX_IMAGE_BYTES) {
+            throw clientInputError(`Image is empty or exceeds ${MAX_IMAGE_BYTES} byte limit`, 'payload_too_large');
+        }
+        return {
+            buffer,
+            mediaType,
+            filename: safeImageFilename(current.pathname, mediaType, index),
+        };
+    }
+    throw clientInputError('Image URL has too many redirects');
+}
+
+async function materializeImageInput(input, index = 0) {
+    const url = String(input?.url || '');
+    const dataUrl = url.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/i);
+    if (!dataUrl) return fetchPublicImage(url, index);
+
+    const mediaType = normalizeImageMediaType(dataUrl[1]);
+    if (!SUPPORTED_IMAGE_TYPES.has(mediaType)) {
+        throw clientInputError(`Unsupported image media type: ${mediaType || 'unknown'}`);
+    }
+    const buffer = Buffer.from(dataUrl[2].replace(/\s/g, ''), 'base64');
+    if (!buffer.length || buffer.length > MAX_IMAGE_BYTES) {
+        throw clientInputError(`Image is empty or exceeds ${MAX_IMAGE_BYTES} byte limit`, 'payload_too_large');
+    }
+    return {
+        buffer,
+        mediaType,
+        filename: safeImageFilename(input.filename, mediaType, index),
+    };
+}
+
+async function createDeepSeekPowHeader(account, targetPath) {
+    const response = await dsFetch('https://chat.deepseek.com/api/v0/chat/create_pow_challenge', {
+        method: 'POST',
+        headers: account.headers,
+        body: JSON.stringify({ target_path: targetPath }),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+        markAccountFailure(account, response.status, `PoW challenge for ${targetPath}`);
+        throw createUpstreamHttpError(response.status, text, response.headers.get('retry-after'));
+    }
+    let payload;
+    try { payload = JSON.parse(text); }
+    catch (error) {
+        throw new Error(`DeepSeek returned non-JSON PoW response for ${targetPath}. First chars: ${text.substring(0, 120)}`);
+    }
+    const challenge = payload?.data?.biz_data?.challenge;
+    if (!challenge) {
+        throw new Error(`DeepSeek PoW response has no challenge for ${targetPath}. Run npm run doctor, then npm run auth.`);
+    }
+    const answer = await solvePOW(challenge, account.config.wasmUrl);
+    return Buffer.from(JSON.stringify({
+        algorithm: challenge.algorithm,
+        challenge: challenge.challenge,
+        salt: challenge.salt,
+        answer,
+        signature: challenge.signature,
+        target_path: targetPath,
+    })).toString('base64');
+}
+
+async function waitForDeepSeekFile(account, uploadedFile) {
+    let file = uploadedFile;
+    const deadline = Date.now() + FILE_PARSE_TIMEOUT_MS;
+    while (file?.status !== 'SUCCESS') {
+        if (FILE_PARSE_FAILURES.has(file?.status)) {
+            throw createUpstreamHttpError(422, `DeepSeek image processing failed: ${file.status}${file.error_code ? ` (${file.error_code})` : ''}`);
+        }
+        if (Date.now() >= deadline) {
+            throw createUpstreamHttpError(504, `DeepSeek image processing timed out (last status: ${file?.status || 'unknown'})`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 250));
+        const response = await dsFetch(`https://chat.deepseek.com/api/v0/file/fetch_files?file_ids=${encodeURIComponent(file.id)}`, {
+            method: 'GET',
+            headers: account.headers,
+        });
+        const text = await response.text();
+        let payload;
+        try { payload = JSON.parse(text); }
+        catch (error) {
+            throw new Error(`DeepSeek returned non-JSON file status response. First chars: ${text.substring(0, 120)}`);
+        }
+        const files = payload?.data?.biz_data?.files;
+        if (!response.ok || payload?.data?.biz_code !== 0 || !Array.isArray(files)) {
+            throw createUpstreamHttpError(response.status || 502, payload?.data?.biz_msg || text, response.headers.get('retry-after'));
+        }
+        file = files.find(candidate => candidate?.id === uploadedFile.id) || file;
+    }
+    return file;
+}
+
+async function uploadDeepSeekImage(account, modelCfg, input, index) {
+    const image = await materializeImageInput(input, index);
+    const powHeader = await createDeepSeekPowHeader(account, DEEPSEEK_UPLOAD_PATH);
+    const headers = {
+        ...account.headers,
+        'X-DS-PoW-Response': powHeader,
+        'x-thinking-enabled': modelCfg.thinking_enabled ? '1' : '0',
+        'x-model-type': modelCfg.model_type,
+        'x-file-size': String(image.buffer.length),
+    };
+    delete headers['Content-Type'];
+    const body = new FormData();
+    body.append('file', new Blob([image.buffer], { type: image.mediaType }), image.filename);
+    const response = await dsFetch(`https://chat.deepseek.com${DEEPSEEK_UPLOAD_PATH}`, {
+        method: 'POST',
+        headers,
+        body,
+    });
+    const text = await response.text();
+    let payload;
+    try { payload = JSON.parse(text); }
+    catch (error) {
+        throw new Error(`DeepSeek returned non-JSON image upload response. First chars: ${text.substring(0, 120)}`);
+    }
+    const file = payload?.data?.biz_data;
+    if (!response.ok || payload?.data?.biz_code !== 0 || !file?.id) {
+        if (!response.ok) markAccountFailure(account, response.status, 'image upload');
+        throw createUpstreamHttpError(response.status || 502, payload?.data?.biz_msg || text, response.headers.get('retry-after'));
+    }
+    return (await waitForDeepSeekFile(account, file)).id;
+}
+
+async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, freshSessionPrompt = prompt, lockHolder = null, imageContext = null) {
     const modelCfg = resolveModelConfig(model);
     const session = getOrCreateAgentSession(agentId);
     const hadRemoteSession = Boolean(session.id);
@@ -854,23 +997,14 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
         console.log(`${agentTag} Session ${rollover.failedSessionId} reset before upstream call (${rollover.reason}).`);
     }
 
-    const cr = await dsFetch('https://chat.deepseek.com/api/v0/chat/create_pow_challenge', {
-        method: 'POST', headers: dsHeaders,
-        body: JSON.stringify({ target_path: '/api/v0/chat/completion' })
-    });
-    const chalText = await cr.text();
-    if (!cr.ok) {
-        markAccountFailure(account, cr.status, 'pow challenge');
-        throw new Error(`DeepSeek auth/network error while creating PoW challenge: HTTP ${cr.status}. Run npm run doctor. If auth expired, run npm run auth or npm run auth:import.`);
+    if (imageContext && imageContext.inputs.length > 0 && imageContext.refFileIds.length === 0) {
+        for (let index = 0; index < imageContext.inputs.length; index++) {
+            imageContext.refFileIds.push(await uploadDeepSeekImage(account, modelCfg, imageContext.inputs[index], index));
+        }
+        console.log(`${agentTag} Uploaded ${imageContext.refFileIds.length} image attachment(s).`);
     }
-    let chalJson;
-    try { chalJson = JSON.parse(chalText); }
-    catch (e) { throw new Error(`DeepSeek returned non-JSON PoW response. Run npm run doctor. First chars: ${chalText.substring(0, 120)}`); }
-    const challenge = chalJson?.data?.biz_data?.challenge;
-    if (!challenge) {
-        throw new Error('DeepSeek PoW response has no data.biz_data.challenge. Auth may be expired, captcha may be required, or DeepSeek changed Web API. Run npm run doctor, then npm run auth.');
-    }
-    const answer = await solvePOW(challenge, account.config.wasmUrl);
+    const refFileIds = imageContext?.refFileIds || [];
+    const powB64 = await createDeepSeekPowHeader(account, DEEPSEEK_COMPLETION_PATH);
 
     if (!session.id) {
         const sr = await dsFetch('https://chat.deepseek.com/api/v0/chat_session/create', {
@@ -891,11 +1025,6 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
         console.log(`${agentTag} Reusing session: ${session.id} (parent: ${session.parentMessageId}, msg#${session.messageCount})`);
     }
 
-    const powB64 = Buffer.from(JSON.stringify({
-        algorithm: challenge.algorithm, challenge: challenge.challenge,
-        salt: challenge.salt, answer: answer,
-        signature: challenge.signature, target_path: '/api/v0/chat/completion'
-    })).toString('base64');
     const resp = await dsFetch('https://chat.deepseek.com/api/v0/chat/completion', {
         method: 'POST',
         headers: { ...dsHeaders, 'X-DS-PoW-Response': powB64 },
@@ -903,7 +1032,7 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
             chat_session_id: session.id,
             parent_message_id: session.parentMessageId,
             model_type: modelCfg.model_type,
-            prompt: effectivePrompt, ref_file_ids: [],
+            prompt: effectivePrompt, ref_file_ids: refFileIds,
             thinking_enabled: modelCfg.thinking_enabled, search_enabled: modelCfg.search_enabled,
             action: null, preempt: false,
         })
@@ -934,11 +1063,7 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
             session.createdAt = Date.now();
             console.log(`${agentTag} Created new session: ${session.id}`);
 
-            const newPowB64 = Buffer.from(JSON.stringify({
-                algorithm: challenge.algorithm, challenge: challenge.challenge,
-                salt: challenge.salt, answer: answer,
-                signature: challenge.signature, target_path: '/api/v0/chat/completion'
-            })).toString('base64');
+            const newPowB64 = await createDeepSeekPowHeader(account, DEEPSEEK_COMPLETION_PATH);
             const resp2 = await dsFetch('https://chat.deepseek.com/api/v0/chat/completion', {
                 method: 'POST',
                 headers: { ...dsHeaders, 'X-DS-PoW-Response': newPowB64 },
@@ -946,7 +1071,7 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
                     chat_session_id: session.id,
                     parent_message_id: null,
                     model_type: modelCfg.model_type,
-                    prompt: freshSessionPrompt, ref_file_ids: [],
+                    prompt: freshSessionPrompt, ref_file_ids: refFileIds,
                     thinking_enabled: modelCfg.thinking_enabled, search_enabled: modelCfg.search_enabled,
                     action: null, preempt: false,
                 })
@@ -1548,6 +1673,79 @@ function buildTextResponse(content, prompt, model = DEFAULT_MODEL_ID, reasoningC
     };
 }
 
+function normalizeContentParts(content) {
+    if (!Array.isArray(content)) return content;
+    return content.map(part => {
+        if (typeof part === 'string' || !part || typeof part !== 'object') return part;
+        if (part.type === 'text' || part.type === 'input_text' || part.type === 'output_text') {
+            return { type: 'text', text: part.text || '' };
+        }
+        if (part.type === 'image_url') {
+            const raw = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
+            return { type: 'image_url', image_url: { url: raw || '' } };
+        }
+        if (part.type === 'input_image') {
+            if (part.file_id) return { type: 'input_image', file_id: part.file_id };
+            return { type: 'image_url', image_url: { url: part.image_url || '' } };
+        }
+        if (part.type === 'image' && part.source) {
+            if (part.source.type === 'base64') {
+                const mediaType = normalizeImageMediaType(part.source.media_type);
+                return { type: 'image_url', image_url: { url: `data:${mediaType};base64,${part.source.data || ''}` } };
+            }
+            if (part.source.type === 'url') {
+                return { type: 'image_url', image_url: { url: part.source.url || '' } };
+            }
+            if (part.source.type === 'file') {
+                return { type: 'input_image', file_id: part.source.file_id || '' };
+            }
+        }
+        return part;
+    });
+}
+
+function imageUrlFromPart(part) {
+    if (!part || typeof part !== 'object') return null;
+    if (part.type === 'image_url') {
+        return typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
+    }
+    if (part.type === 'input_image') {
+        if (part.file_id) {
+            throw clientInputError('Image file_id inputs are not supported; send a base64 data URL or a public HTTPS image URL');
+        }
+        return part.image_url;
+    }
+    if (part.type === 'image' && part.source) {
+        if (part.source.type === 'base64') {
+            const mediaType = normalizeImageMediaType(part.source.media_type);
+            return `data:${mediaType};base64,${part.source.data || ''}`;
+        }
+        if (part.source.type === 'url') return part.source.url;
+        if (part.source.type === 'file') {
+            throw clientInputError('Anthropic file image sources are not supported; send a base64 or URL image source');
+        }
+    }
+    return null;
+}
+
+function extractImageInputs(messages) {
+    const inputs = [];
+    for (const message of messages || []) {
+        if (!Array.isArray(message?.content)) continue;
+        for (const part of message.content) {
+            const url = imageUrlFromPart(part);
+            if (url !== null) {
+                if (!String(url || '').trim()) throw clientInputError('Image input is missing image_url data');
+                inputs.push({ url: String(url), filename: part.filename || part.name || '' });
+            }
+        }
+    }
+    if (inputs.length > MAX_IMAGE_COUNT) {
+        throw clientInputError(`At most ${MAX_IMAGE_COUNT} image inputs are supported`, 'payload_too_large');
+    }
+    return inputs;
+}
+
 function normalizeMessageContent(content) {
     if (content === null || content === undefined) return '';
     if (typeof content === 'string') return content;
@@ -1557,7 +1755,7 @@ function normalizeMessageContent(content) {
             if (!part || typeof part !== 'object') return '';
             if (part.type === 'text' || part.type === 'input_text' || part.type === 'output_text') return part.text || '';
             if (part.type === 'tool_result') return `[Tool Result ${part.tool_use_id || ''}]\n${normalizeMessageContent(part.content)}`;
-            if (part.type === 'image_url') return `[Image: ${part.image_url?.url || ''}]`;
+            if (imageUrlFromPart(part) !== null) return '[Image attachment]';
             return part.text || part.content || JSON.stringify(part);
         }).filter(Boolean).join('\n');
     }
@@ -1592,13 +1790,15 @@ function normalizeResponsesInput(input) {
     for (const item of input) {
         if (!item || typeof item !== 'object') continue;
         if (item.type === 'message') {
-            messages.push({ role: item.role || 'user', content: normalizeMessageContent(item.content) });
+            messages.push({ role: item.role || 'user', content: normalizeContentParts(item.content) });
         } else if (item.role) {
-            messages.push({ role: item.role, content: normalizeMessageContent(item.content) });
+            messages.push({ role: item.role, content: normalizeContentParts(item.content) });
         } else if (item.type === 'function_call_output') {
             messages.push({ role: 'tool', tool_call_id: item.call_id, content: item.output || '' });
         } else if (item.type === 'input_text') {
             messages.push({ role: 'user', content: item.text || '' });
+        } else if (item.type === 'input_image') {
+            messages.push({ role: 'user', content: normalizeContentParts([item]) });
         }
     }
     return messages;
@@ -1619,10 +1819,10 @@ function normalizeApiParams(params, apiMode) {
             } else if (msg.role === 'user' && Array.isArray(msg.content) && msg.content.some(part => part && part.type === 'tool_result')) {
                 for (const part of msg.content) {
                     if (part && part.type === 'tool_result') messages.push({ role: 'tool', tool_call_id: part.tool_use_id, content: normalizeMessageContent(part.content) });
-                    else messages.push({ role: 'user', content: normalizeMessageContent(part) });
+                    else messages.push({ role: 'user', content: normalizeContentParts([part]) });
                 }
             } else {
-                messages.push({ role: msg.role || 'user', content: normalizeMessageContent(msg.content) });
+                messages.push({ role: msg.role || 'user', content: normalizeContentParts(msg.content) });
             }
         }
         return {
@@ -2072,21 +2272,6 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    const isDashboardPath = url.pathname === '/dashboard' || url.pathname.startsWith('/dashboard/') || url.pathname.startsWith('/v1/admin');
-    if (isDashboardPath) {
-        if (!isDashboardAllowed(req)) {
-            jsonResponse(res, 401, { error: { message: 'Dashboard is loopback-only unless you send Authorization: Bearer <PROXY_API_KEY>', type: 'authentication_error' } });
-            return;
-        }
-        if (url.pathname === '/dashboard' || url.pathname.startsWith('/dashboard/')) {
-            serveDashboardAsset(res, url.pathname);
-            return;
-        }
-        handleAdmin(req, res, url).catch((e) => {
-            jsonResponse(res, e.status || 400, { error: { message: e.message, type: e.type || 'invalid_request' } });
-        });
-        return;
-    }
 
     const isPublicProbe = req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health' || url.pathname === '/readyz');
     if (!isPublicProbe && !isProxyAuthorized(req.headers.authorization)) {
@@ -2203,7 +2388,7 @@ const server = http.createServer(async (req, res) => {
 
     let body = '';
     let bodyTooLarge = false;
-    const MAX_BODY_BYTES = 10 * 1024 * 1024;  // chat payloads are small; cap memory before JSON.parse
+    const MAX_BODY_BYTES = Number(process.env.MAX_REQUEST_BODY_BYTES || 30 * 1024 * 1024);
     req.on('data', chunk => { body += chunk; if (body.length > MAX_BODY_BYTES) { bodyTooLarge = true; req.destroy(); } });
     req.on('end', async () => {
         if (bodyTooLarge) {
@@ -2237,6 +2422,7 @@ const server = http.createServer(async (req, res) => {
             const rawParams = JSON.parse(body || '{}');
             const params = normalizeApiParams(rawParams, apiMode);
             const messages = params.messages || [];
+            const imageContext = { inputs: extractImageInputs(messages), refFileIds: [] };
             const tools = params.tools || [];
             const stream = params.stream === true;
             const requestedModel = canonicalizeModelId(params.model || DEFAULT_MODEL_ID);
@@ -2331,7 +2517,7 @@ const server = http.createServer(async (req, res) => {
             }
 
             const startTime = Date.now();
-            const initialCall = await askDeepSeekStream(fullPrompt, agentId, requestedModel, freshPromptBuild.prompt, lockHolder);
+            const initialCall = await askDeepSeekStream(fullPrompt, agentId, requestedModel, freshPromptBuild.prompt, lockHolder, imageContext);
             const dsResp = initialCall.resp;
             if (initialCall.promptUsed !== fullPrompt) {
                 fullPrompt = initialCall.promptUsed;
@@ -2469,7 +2655,7 @@ const server = http.createServer(async (req, res) => {
                 resetRemoteSession(session);
                 // Brief delay before retry to let DeepSeek breathe
                 await new Promise(r => setTimeout(r, Math.min(500 * retryAttempt, 1500)));
-                const { resp: retryResp } = await askDeepSeekStream(retryPrompt, agentId, requestedModel, retryPrompt, lockHolder);
+                const { resp: retryResp } = await askDeepSeekStream(retryPrompt, agentId, requestedModel, retryPrompt, lockHolder, imageContext);
                 const retryResult = await readDeepSeekResponse(retryResp.body);
                 const retryState = normalizeRetryResponse(retryResult);
                 fullPrompt = retryPrompt;
@@ -2533,7 +2719,8 @@ const server = http.createServer(async (req, res) => {
                     agentId,
                     requestedModel,
                     continuationRecoveryPrompt,
-                    lockHolder
+                    lockHolder,
+                    imageContext
                 );
                 const { resp: contResp, account: contAccount } = continuationCall;
                 // A cross-account continuation is valid only when the call
@@ -2578,7 +2765,7 @@ const server = http.createServer(async (req, res) => {
                     freshPromptBuild.prompt,
                     '[STRICT INSTRUCTION] Your previous response contained incomplete tool-call markup. Keep arguments short and output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}'
                 );
-                const { resp: retryResp2 } = await askDeepSeekStream(strictPrompt, agentId, requestedModel, strictPrompt, lockHolder);
+                const { resp: retryResp2 } = await askDeepSeekStream(strictPrompt, agentId, requestedModel, strictPrompt, lockHolder, imageContext);
                 const retryResult2 = await readDeepSeekResponse(retryResp2.body);
                 const retryContent2 = retryResult2 && retryResult2.content ? sanitizeContent(retryResult2.content) : '';
                 if (retryContent2 && retryContent2.trim()) {
@@ -2763,8 +2950,6 @@ async function main() {
     setInterval(sweepIdleSessions, 10 * 60 * 1000).unref();
     server.listen(PORT, HOST, () => {
         console.log(`[DS-API] Server on http://${HOST}:${PORT} (multi-agent sessions enabled)`);
-        const dashHost = HOST === '0.0.0.0' || HOST === '::' ? '127.0.0.1' : HOST;
-        console.log(`[DS-API] Dashboard: http://${dashHost}:${PORT}/dashboard`);
         console.log(`[DS-API] ${formatWatermark()}`);
         console.log('[DS-API] POST /v1/chat/completions (OpenAI Chat Completions, stream=true|false)');
         console.log('[DS-API] POST /v1/messages — Anthropic Messages shim for Claude Code');
@@ -2815,6 +3000,9 @@ module.exports = {
         normalizeRetryResponse,
         classifyRecoveryFailure,
         isTimeoutError,
+        normalizeApiParams,
+        extractImageInputs,
+        materializeImageInput,
         formatMessages,
         createSession,
         resetRemoteSession,

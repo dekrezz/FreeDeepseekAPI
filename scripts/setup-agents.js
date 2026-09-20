@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * One-click wiring of FreeDeepseekAPI into Claude Code, Codex, Hermes, OpenClaw, Cursor.
+ * One-click wiring of FreeDeepseekAPI into Claude Code, Codex, OpenCode, Hermes, OpenClaw, Cursor.
  * Writes the live config each tool actually reads. Backs up first.
  *
  *   npm run setup:agents
@@ -14,7 +14,7 @@ const readline = require('readline');
 
 const ROOT = path.resolve(__dirname, '..');
 const HOME = process.env.SETUP_HOME || os.homedir();
-const VALID_TARGETS = ['claude-code', 'codex', 'hermes', 'openclaw', 'cursor'];
+const VALID_TARGETS = ['claude-code', 'codex', 'opencode', 'hermes', 'openclaw', 'cursor'];
 const VALID_MODELS = ['deepseek-v4-flash', 'deepseek-v4-flash-thinking', 'deepseek-v4-pro', 'deepseek-v4-pro-thinking'];
 
 function argValue(args, name, fallback = '') {
@@ -182,12 +182,28 @@ function setupCodex(opts) {
   const catalog = {
     models: VALID_MODELS.map(slug => ({
       slug,
-      display_name: slug === 'deepseek-v4-pro' || slug.startsWith('deepseek-v4-pro') ? 'DeepSeek-V4-Pro (FreeDeepseekAPI)' : 'DeepSeek-V4-Flash (FreeDeepseekAPI)',
-      description: 'Routed through local FreeDeepseekAPI (DeepSeek Web Instant/Expert).',
-      input_modalities: ['text'],
+      display_name: 'DeepSeek-V4.1-Flash (FreeDeepseekAPI)',
+      description: 'Routed through local FreeDeepseekAPI (DeepSeek Web V4.1-Flash).',
+      supported_reasoning_levels: [],
+      shell_type: 'shell_command',
+      visibility: 'list',
+      supported_in_api: true,
+      priority: 1,
+      availability_nux: null,
+      upgrade: null,
+      base_instructions: 'You are a coding agent. Follow developer instructions, use tools when needed, and report results concisely.',
+      supports_reasoning_summary_parameter: false,
+      default_reasoning_summary: 'none',
+      support_verbosity: false,
+      default_verbosity: null,
+      input_modalities: ['text', 'image'],
       context_window: 1048576,
       max_context_window: 1048576,
+      effective_context_window_percent: 95,
+      experimental_supported_tools: [],
+      truncation_policy: { mode: 'tokens', limit: 10000 },
       supports_parallel_tool_calls: true,
+      supports_search_tool: false,
       prefer_websockets: false,
       apply_patch_tool_type: 'freeform',
     })),
@@ -266,7 +282,7 @@ function setupOpenClaw(opts) {
       id,
       name: id,
       reasoning: id.includes('thinking'),
-      input: ['text'],
+      input: ['text', 'image'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128000,
       maxTokens: 8192,
@@ -289,6 +305,51 @@ function setupOpenClaw(opts) {
   };
   writeFile(dest, `${JSON.stringify(cfg, null, 2)}\n`, opts);
   console.log('OpenClaw: restart gateway / `openclaw tui`. Model ref is freedeepseek/<id>.');
+}
+
+function setupOpenCode(opts) {
+  const dest = path.join(HOME, '.config', 'opencode', 'opencode.json');
+  backupFile(dest, opts.backupDir, opts);
+  const cfg = readJson(dest, {});
+  const models = {};
+  for (const id of VALID_MODELS) {
+    models[id] = {
+      name: `${id} (FreeDeepseekAPI)`,
+      attachment: true,
+      reasoning: id.includes('thinking'),
+      tool_call: true,
+      modalities: {
+        input: ['text', 'image'],
+        output: ['text'],
+      },
+      limit: {
+        context: 128000,
+        output: 8192,
+      },
+    };
+  }
+  cfg.$schema = cfg.$schema || 'https://opencode.ai/config.json';
+  cfg.model = `freedeepseek/${opts.model}`;
+  cfg.provider = cfg.provider && typeof cfg.provider === 'object' ? cfg.provider : {};
+  cfg.provider.freedeepseek = {
+    npm: '@ai-sdk/openai-compatible',
+    name: 'FreeDeepseekAPI',
+    options: {
+      baseURL: openaiBase(opts.baseUrl),
+      apiKey: opts.apiKey,
+    },
+    models,
+  };
+  cfg.attachment = cfg.attachment && typeof cfg.attachment === 'object' ? cfg.attachment : {};
+  cfg.attachment.image = {
+    ...(cfg.attachment.image || {}),
+    auto_resize: true,
+    max_width: 2000,
+    max_height: 2000,
+    max_base64_bytes: 5242880,
+  };
+  writeFile(dest, `${JSON.stringify(cfg, null, 2)}\n`, opts);
+  console.log('OpenCode: restart `opencode`; attach images with drag-and-drop or paste.');
 }
 
 function cursorSettingsSnippet(opts) {
@@ -339,6 +400,7 @@ exit 1
 const HANDLERS = {
   'claude-code': setupClaudeCode,
   codex: setupCodex,
+  opencode: setupOpenCode,
   hermes: setupHermes,
   openclaw: setupOpenClaw,
   cursor: setupCursor,
@@ -351,6 +413,7 @@ function restoreFrom(dir) {
     'settings.local.json': path.join(process.cwd(), '.claude', 'settings.local.json'),
     'config.toml': path.join(HOME, '.codex', 'config.toml'),
     'models.json': path.join(HOME, '.codex', 'models.json'),
+    'opencode.json': path.join(HOME, '.config', 'opencode', 'opencode.json'),
     'config.yaml': path.join(HOME, '.hermes', 'config.yaml'),
     'openclaw.json': path.join(HOME, '.openclaw', 'openclaw.json'),
   };

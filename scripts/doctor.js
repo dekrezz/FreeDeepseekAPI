@@ -85,7 +85,6 @@ async function main(args = process.argv.slice(2)) {
   }
   console.log('\nSession reuse: one x-agent-session/user => one DeepSeek chat until TTL/message limit/error reset.');
   console.log('Concurrent chats: one in-flight request per Web login; extra logins go in ./accounts/*.json');
-  console.log('Dashboard: http://127.0.0.1:9655/dashboard');
   console.log('Reset: curl -X POST "http://localhost:9655/reset-session?agent=all"');
   console.log('VPS: import auth on server, then run NON_INTERACTIVE=1 npm start');
   return ok ? 0 : 2;
