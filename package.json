@@ -1,7 +1,7 @@
 {
   "name": "free-deepseek-api",
   "version": "0.1.0",
-  "description": "Free self-hosted OpenAI, Anthropic and Responses API gateway for DeepSeek V4.1 Web with vision, tools and streaming",
+  "description": "DeepSeek for free — private, powerful and ready for your favorite apps and coding agents",
   "main": "server.js",
   "bin": {
     "free-deepseek-api": "./server.js",

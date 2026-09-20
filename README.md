@@ -3,11 +3,11 @@
   <img src="docs/assets/logo.png" width="160" alt="FreeDeepseekAPI logo" />
   <h1>FreeDeepseekAPI</h1>
 
-  <p><strong>Free DeepSeek V4.1 API for OpenAI, Anthropic, and coding agents.</strong></p>
+  <p><strong>DeepSeek for free. No subscriptions. No API bills. No middlemen.</strong></p>
 
   <p>
-    Turn a DeepSeek Web session into a fast, drop-in local API with streaming,<br />
-    tools, vision, and agent integrations — no paid DeepSeek API key required.
+    Private, powerful, and ready wherever you work.<br />
+    Use it as much as you want, on your own terms.
   </p>
 
   <p>
