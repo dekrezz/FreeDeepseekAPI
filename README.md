@@ -1,18 +1,22 @@
 <div align="center">
   <br />
-  <img src="docs/assets/logo.svg" width="96" alt="FreeDeepseekAPI logo" />
+  <img src="docs/assets/logo.png" width="160" alt="FreeDeepseekAPI logo" />
   <h1>FreeDeepseekAPI</h1>
 
-  <p><strong>A local API gateway for DeepSeek Web.</strong></p>
+  <p><strong>Free DeepSeek V4.1 API for OpenAI, Anthropic, and coding agents.</strong></p>
 
   <p>
-    Use DeepSeek-V4.1-Flash from coding agents and OpenAI-compatible apps<br />
-    through one lightweight Node.js server — no paid DeepSeek API key required.
+    Turn a DeepSeek Web session into a fast, drop-in local API with streaming,<br />
+    tools, vision, and agent integrations — no paid DeepSeek API key required.
   </p>
 
   <p>
     <a href="https://github.com/dekrezz/FreeDeepseekAPI/stargazers"><img src="https://img.shields.io/github/stars/dekrezz/FreeDeepseekAPI?style=flat-square&logo=github&label=Stars&color=16b8a6" alt="GitHub stars" /></a>
     <a href="https://github.com/dekrezz/FreeDeepseekAPI/network/members"><img src="https://img.shields.io/github/forks/dekrezz/FreeDeepseekAPI?style=flat-square&logo=github&label=Forks&color=4d6bfe" alt="GitHub forks" /></a>
+    <img src="https://img.shields.io/badge/OpenAI-Compatible-412991?style=flat-square&logo=openai&logoColor=white" alt="OpenAI compatible" />
+    <img src="https://img.shields.io/badge/Anthropic-Compatible-d97757?style=flat-square&logo=anthropic&logoColor=white" alt="Anthropic compatible" />
+    <img src="https://img.shields.io/badge/Vision-Images-0ea5e9?style=flat-square" alt="Image input supported" />
+    <img src="https://img.shields.io/badge/Self--hosted-Local-16b8a6?style=flat-square" alt="Self-hosted locally" />
     <img src="https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 18+" />
     <img src="https://img.shields.io/badge/DeepSeek-V4.1--Flash-4d6bfe?style=flat-square" alt="DeepSeek V4.1 Flash" />
     <img src="https://img.shields.io/badge/License-MIT-f3f4f6?style=flat-square" alt="MIT License" />
@@ -68,6 +72,8 @@ Configure all supported coding agents in one command:
 ```bash
 npm run setup:agents
 ```
+
+DeepSeek is added as an opt-in provider/profile. Existing Claude, GPT, and other default models are not replaced.
 
 <table>
   <tr>

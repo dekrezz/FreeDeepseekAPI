@@ -912,8 +912,18 @@ test('OpenAI stream emits a usage chunk before DONE so clients can show tokens',
   assert.ok(body.indexOf('"usage"') < body.indexOf('[DONE]'));
 });
 
-test('one-click agent setup writes Claude Code and Hermes configs into SETUP_HOME', () => {
+test('one-click agent setup adds opt-in providers without replacing native defaults', () => {
   const dir = tmpdir();
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.codex'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.config', 'opencode'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.openclaw'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.hermes'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ model: 'claude-opus', env: { KEEP: 'yes' } }));
+  fs.writeFileSync(path.join(dir, '.codex', 'config.toml'), 'model = "gpt-native"\nmodel_provider = "openai"\n');
+  fs.writeFileSync(path.join(dir, '.config', 'opencode', 'opencode.json'), JSON.stringify({ model: 'openai/gpt-native' }));
+  fs.writeFileSync(path.join(dir, '.openclaw', 'openclaw.json'), JSON.stringify({ agents: { defaults: { model: { primary: 'anthropic/claude-opus' } } } }));
+  fs.writeFileSync(path.join(dir, '.hermes', 'config.yaml'), 'model:\n  default: claude-opus\n');
   const res = runNode([
     'scripts/setup-agents.js',
     '--target', 'claude-code,hermes,openclaw,codex,opencode',
@@ -924,24 +934,28 @@ test('one-click agent setup writes Claude Code and Hermes configs into SETUP_HOM
   ], { env: { SETUP_HOME: dir } });
   assert.equal(res.status, 0, res.stderr || res.stdout);
 
-  const claude = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
-  assert.equal(claude.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:9655');
-  assert.equal(claude.env.ANTHROPIC_MODEL, 'deepseek-v4-pro');
-  assert.equal(claude.model, 'deepseek-v4-pro');
+  const claudeNative = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
+  assert.deepEqual(claudeNative, { model: 'claude-opus', env: { KEEP: 'yes' } });
+  const claudeProfile = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'freedeepseek.settings.json'), 'utf8'));
+  assert.equal(claudeProfile.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:9655');
+  assert.equal(claudeProfile.model, 'deepseek-v4-pro');
 
-  const hermes = fs.readFileSync(path.join(dir, '.hermes', 'config.yaml'), 'utf8');
-  assert.match(hermes, /provider: custom/);
-  assert.match(hermes, /deepseek-v4-pro/);
-  assert.match(hermes, /127\.0\.0\.1:9655\/v1/);
+  const hermesNative = fs.readFileSync(path.join(dir, '.hermes', 'config.yaml'), 'utf8');
+  assert.match(hermesNative, /claude-opus/);
+  const hermesProfile = fs.readFileSync(path.join(dir, '.hermes', 'freedeepseek.yaml'), 'utf8');
+  assert.match(hermesProfile, /provider: custom/);
+  assert.match(hermesProfile, /deepseek-v4-pro/);
 
   const claw = JSON.parse(fs.readFileSync(path.join(dir, '.openclaw', 'openclaw.json'), 'utf8'));
-  assert.equal(claw.agents.defaults.model.primary, 'freedeepseek/deepseek-v4-pro');
+  assert.equal(claw.agents.defaults.model.primary, 'anthropic/claude-opus');
   assert.equal(claw.models.providers.freedeepseek.api, 'openai-completions');
   assert.deepEqual(claw.models.providers.freedeepseek.models[0].input, ['text', 'image']);
 
   const toml = fs.readFileSync(path.join(dir, '.codex', 'config.toml'), 'utf8');
-  assert.match(toml, /model_provider = "freedeepseek"/);
-  assert.match(toml, /wire_api = "responses"/);
+  assert.equal(toml, 'model = "gpt-native"\nmodel_provider = "openai"\n');
+  const codexProfile = fs.readFileSync(path.join(dir, '.codex', 'freedeepseek.config.toml'), 'utf8');
+  assert.match(codexProfile, /model_provider = "freedeepseek"/);
+  assert.match(codexProfile, /wire_api = "responses"/);
   const catalog = JSON.parse(fs.readFileSync(path.join(dir, '.codex', 'freedeepseek-models.json'), 'utf8'));
   assert.deepEqual(catalog.models[0].input_modalities, ['text', 'image']);
   assert.deepEqual(catalog.models[0].supported_reasoning_levels, []);
@@ -949,7 +963,7 @@ test('one-click agent setup writes Claude Code and Hermes configs into SETUP_HOM
   assert.equal(catalog.models[0].supports_reasoning_summary_parameter, false);
 
   const opencode = JSON.parse(fs.readFileSync(path.join(dir, '.config', 'opencode', 'opencode.json'), 'utf8'));
-  assert.equal(opencode.model, 'freedeepseek/deepseek-v4-pro');
+  assert.equal(opencode.model, 'openai/gpt-native');
   assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-pro'].attachment, true);
   assert.deepEqual(opencode.provider.freedeepseek.models['deepseek-v4-pro'].modalities.input, ['text', 'image']);
 });

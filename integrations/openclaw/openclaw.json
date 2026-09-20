@@ -1,11 +1,4 @@
 {
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": "freedeepseek/deepseek-v4-flash"
-      }
-    }
-  },
   "models": {
     "mode": "merge",
     "providers": {

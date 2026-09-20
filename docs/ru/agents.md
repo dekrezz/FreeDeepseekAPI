@@ -6,16 +6,16 @@ npm run setup:agents -- --all --model deepseek-v4-flash
 npm run setup:agents -- --target claude-code --model deepseek-v4-pro
 ```
 
-Скрипт пишет файлы, которые реально читают инструменты, и кладёт бэкап в `~/.freedeepseek-api/backups/`.
+Скрипт добавляет FreeDeepseekAPI как отдельный opt-in профиль/provider. Текущие Opus, Sonnet, GPT и выбранная модель не заменяются.
 
-| Цель | Куда пишет |
+| Цель | Что добавляется |
 |---|---|
-| Claude Code | `~/.claude/settings.json` |
-| Codex | `~/.codex/config.toml` + профиль `freedeepseek`; Responses API и изображения |
-| OpenCode | `~/.config/opencode/opencode.json`; вложения и image modality включены |
-| Hermes | `~/.hermes/config.yaml` |
-| OpenClaw | `~/.openclaw/openclaw.json`; вход `text` + `image` |
-| Cursor | сниппет + launcher; ключ всё равно в GUI |
+| Claude Code | `~/.claude/freedeepseek.settings.json`; запуск через `claude --settings …` |
+| Codex | профиль `freedeepseek`; запуск через `codex --profile freedeepseek` |
+| OpenCode | provider `freedeepseek`; текущий `model` сохраняется |
+| Hermes | отдельный `~/.hermes/freedeepseek.yaml` |
+| OpenClaw | provider `freedeepseek`; текущий primary сохраняется |
+| Cursor | сниппет + launcher; настройки редактора не меняются |
 
 Изображения можно вставлять или прикреплять в Claude Code и OpenCode; в Codex используйте `codex -i screenshot.png`. API принимает OpenAI `image_url` / `input_image` и Anthropic `image` с base64 или публичным HTTPS URL. `file_id` не поддерживается. Форматы и лимиты: [HTTP API](../api.md#image-input).
 

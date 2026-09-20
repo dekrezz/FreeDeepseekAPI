@@ -1,7 +1,7 @@
 {
   "name": "free-deepseek-api",
   "version": "0.1.0",
-  "description": "OpenAI-compatible local API proxy for DeepSeek Web chat",
+  "description": "Free self-hosted OpenAI, Anthropic and Responses API gateway for DeepSeek V4.1 Web with vision, tools and streaming",
   "main": "server.js",
   "bin": {
     "free-deepseek-api": "./server.js",
@@ -20,9 +20,22 @@
   },
   "keywords": [
     "deepseek",
+    "deepseek-api",
     "proxy",
+    "api-proxy",
+    "api-gateway",
     "openai-compatible",
+    "openai-api",
+    "anthropic",
+    "anthropic-api",
+    "claude-code",
+    "codex",
+    "opencode",
     "llm",
+    "llm-proxy",
+    "self-hosted",
+    "vision",
+    "coding-agents",
     "web-api"
   ],
   "license": "MIT",

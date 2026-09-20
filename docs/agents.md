@@ -1,6 +1,6 @@
 # One-click agent setup
 
-`npm run setup:agents` writes the files each tool actually reads, with a backup.
+`npm run setup:agents` adds FreeDeepseekAPI as an **opt-in provider/profile**. It does not replace the current Claude, GPT, or other default model.
 
 ```bash
 npm run setup:agents
@@ -12,14 +12,14 @@ npm run setup:agents -- --dry-run --target hermes,openclaw,opencode
 
 Requires the proxy already listening (`npm start`). Default origin: `http://127.0.0.1:9655`. Override with `--base-url` / `PROXY_BASE_URL`. If `PROXY_API_KEY` is set, it is copied into the agent configs.
 
-| Target | File written | How the model is selected |
+| Target | Added configuration | Selection |
 |---|---|---|
-| Claude Code | `~/.claude/settings.json` (`env` block) or project `.claude/settings.local.json` | `ANTHROPIC_MODEL` + gateway discovery of `GET /v1/models` |
-| Codex | `~/.codex/config.toml` + `freedeepseek.config.toml` + catalog JSON | Responses API; catalog declares `text` + `image` input |
-| OpenCode | `~/.config/opencode/opencode.json` | OpenAI-compatible provider with `attachment: true` and image modality |
-| Hermes | `~/.hermes/config.yaml` `model:` mapping | `provider: custom`, `base_url: …/v1` |
-| OpenClaw | `~/.openclaw/openclaw.json` | Provider models declare `input: ["text", "image"]` |
-| Cursor | `integrations/cursor/settings.json`, launcher, optional `.cursor/settings.json` | Override OpenAI Base URL in Settings → Models (GUI still owns the API key) |
+| Claude Code | `~/.claude/freedeepseek.settings.json` | `claude --settings ~/.claude/freedeepseek.settings.json`; normal `claude` keeps native models |
+| Codex | `~/.codex/freedeepseek.config.toml` + catalog JSON | `codex --profile freedeepseek`; normal Codex keeps GPT/default provider |
+| OpenCode | `freedeepseek` entry in `~/.config/opencode/opencode.json` | Select `freedeepseek/<id>`; existing `model` remains unchanged |
+| Hermes | `~/.hermes/freedeepseek.yaml` | Separate profile file; native config remains unchanged |
+| OpenClaw | `freedeepseek` provider in `~/.openclaw/openclaw.json` | Select explicitly; existing primary model remains unchanged |
+| Cursor | Template + optional launcher in `integrations/cursor/` | Existing editor settings remain unchanged |
 
 ## Images in coding agents
 

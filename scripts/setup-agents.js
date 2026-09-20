@@ -147,12 +147,11 @@ function mergeClaudeSettings(existing, incoming) {
 
 function setupClaudeCode(opts) {
   const dest = opts.scope === 'project'
-    ? path.join(process.cwd(), '.claude', 'settings.local.json')
-    : path.join(HOME, '.claude', 'settings.json');
+    ? path.join(process.cwd(), '.claude', 'freedeepseek.settings.json')
+    : path.join(HOME, '.claude', 'freedeepseek.settings.json');
   backupFile(dest, opts.backupDir, opts);
-  const merged = mergeClaudeSettings(readJson(dest, {}), claudeSettings(opts));
-  writeFile(dest, `${JSON.stringify(merged, null, 2)}\n`, opts);
-  console.log('Claude Code: restart `claude`, then /model. Discovery reads GET /v1/models.');
+  writeFile(dest, `${JSON.stringify(claudeSettings(opts), null, 2)}\n`, opts);
+  console.log(`Claude Code: native defaults unchanged. Opt in with: claude --settings ${dest}`);
 }
 
 function tomlEscape(value) { return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
@@ -173,11 +172,8 @@ function upsertTomlTable(text, heading, body) {
 
 function setupCodex(opts) {
   const dir = path.join(HOME, '.codex');
-  const configPath = path.join(dir, 'config.toml');
   const catalogPath = path.join(dir, 'freedeepseek-models.json');
   const profilePath = path.join(dir, 'freedeepseek.config.toml');
-  backupFile(configPath, opts.backupDir, opts);
-  backupFile(path.join(dir, 'models.json'), opts.backupDir, opts);
 
   const catalog = {
     models: VALID_MODELS.map(slug => ({
@@ -230,15 +226,7 @@ function setupCodex(opts) {
   ].join('\n');
   writeFile(profilePath, profile, opts);
 
-  let toml = readText(configPath);
-  toml = upsertTomlKey(toml, 'model', opts.model);
-  toml = upsertTomlKey(toml, 'model_provider', 'freedeepseek');
-  toml = upsertTomlKey(toml, 'preferred_auth_method', 'apikey');
-  toml = upsertTomlKey(toml, 'forced_login_method', 'api');
-  toml = upsertTomlKey(toml, 'model_catalog_json', catalogPath);
-  toml = upsertTomlTable(toml, 'model_providers.freedeepseek', providerBody);
-  writeFile(configPath, toml.endsWith('\n') ? toml : `${toml}\n`, opts);
-  console.log('Codex: restart CLI/IDE. Or: codex --profile freedeepseek');
+  console.log('Codex: native GPT model/provider unchanged. Opt in with: codex --profile freedeepseek');
 }
 
 function yamlQuote(value) {
@@ -265,11 +253,11 @@ function upsertYamlModelBlock(text, opts) {
 }
 
 function setupHermes(opts) {
-  const dest = path.join(HOME, '.hermes', 'config.yaml');
+  const dest = path.join(HOME, '.hermes', 'freedeepseek.yaml');
   backupFile(dest, opts.backupDir, opts);
-  const next = upsertYamlModelBlock(readText(dest), opts);
+  const next = upsertYamlModelBlock('', opts);
   writeFile(dest, next.endsWith('\n') ? next : `${next}\n`, opts);
-  console.log('Hermes: run `hermes` (or `hermes model` to confirm custom provider).');
+  console.log(`Hermes: native config unchanged. FreeDeepseekAPI profile written to ${dest}.`);
 }
 
 function setupOpenClaw(opts) {
@@ -297,14 +285,8 @@ function setupOpenClaw(opts) {
     api: 'openai-completions',
     models,
   };
-  cfg.agents = cfg.agents || {};
-  cfg.agents.defaults = cfg.agents.defaults || {};
-  cfg.agents.defaults.model = {
-    ...(cfg.agents.defaults.model || {}),
-    primary: `freedeepseek/${opts.model}`,
-  };
   writeFile(dest, `${JSON.stringify(cfg, null, 2)}\n`, opts);
-  console.log('OpenClaw: restart gateway / `openclaw tui`. Model ref is freedeepseek/<id>.');
+  console.log('OpenClaw: provider added; existing primary model unchanged. Select freedeepseek/<id> explicitly.');
 }
 
 function setupOpenCode(opts) {
@@ -329,7 +311,6 @@ function setupOpenCode(opts) {
     };
   }
   cfg.$schema = cfg.$schema || 'https://opencode.ai/config.json';
-  cfg.model = `freedeepseek/${opts.model}`;
   cfg.provider = cfg.provider && typeof cfg.provider === 'object' ? cfg.provider : {};
   cfg.provider.freedeepseek = {
     npm: '@ai-sdk/openai-compatible',
@@ -349,7 +330,7 @@ function setupOpenCode(opts) {
     max_base64_bytes: 5242880,
   };
   writeFile(dest, `${JSON.stringify(cfg, null, 2)}\n`, opts);
-  console.log('OpenCode: restart `opencode`; attach images with drag-and-drop or paste.');
+  console.log('OpenCode: provider added; existing default model unchanged. Select freedeepseek/<id> explicitly.');
 }
 
 function cursorSettingsSnippet(opts) {
@@ -386,13 +367,8 @@ exit 1
   writeFile(launchPath, launch, opts);
   if (!opts.dryRun) fs.chmodSync(launchPath, 0o755);
 
-  const projectSettings = path.join(process.cwd(), '.cursor', 'settings.json');
-  if (opts.scope === 'project' || process.cwd() !== HOME) {
-    backupFile(projectSettings, opts.backupDir, opts);
-    const existing = readJson(projectSettings, {});
-    writeFile(projectSettings, `${JSON.stringify({ ...existing, ...cursorSettingsSnippet(opts) }, null, 2)}\n`, opts);
-  }
-  console.log(`Cursor: Settings → Models → Override OpenAI Base URL = ${openaiBase(opts.baseUrl)}`);
+  console.log('Cursor: existing editor settings unchanged.');
+  console.log(`        Optional profile launcher uses OpenAI Base URL = ${openaiBase(opts.baseUrl)}`);
   console.log(`        Add models: ${VALID_MODELS.join(', ')}`);
   console.log(`        Or: sh ${launchPath}`);
 }

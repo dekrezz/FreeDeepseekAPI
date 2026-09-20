@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="FreeDeepseekAPI">
-  <rect width="128" height="128" rx="28" fill="#0e2f2c"/>
-  <rect x="3" y="3" width="122" height="122" rx="25" fill="none" stroke="#3ee0c8" stroke-width="4"/>
-  <path d="M46 38 A32 32 0 0 1 46 90" fill="none" stroke="#3ee0c8" stroke-width="8" stroke-linecap="round"/>
-  <path d="M62 48 A20 20 0 0 1 62 80" fill="none" stroke="#99f6e4" stroke-width="6" stroke-linecap="round"/>
-  <circle cx="82" cy="64" r="8" fill="#3ee0c8"/>
-</svg>
