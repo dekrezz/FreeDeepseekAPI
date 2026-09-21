@@ -121,7 +121,7 @@ Instant, Expert, and Pro are no longer separate Web models. See [model aliases a
 
 One DeepSeek Web account must not run two chats concurrently. For parallel clients, place 2–3 auth files in `accounts/` and give every client a unique `x-agent-session`.
 
-The proxy keeps each agent on a sticky account and returns `429` instead of risking concurrent requests on one login.
+The proxy keeps each agent on a sticky account. A second chat waits for that login instead of overlapping Web requests. The standing system prompt is sent once per remote session, not on every agent turn.
 
 ## Container
 

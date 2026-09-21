@@ -22,9 +22,31 @@
             "context": 128000,
             "output": 8192
           }
+        },
+        "deepseek-v4-flash-thinking-search": {
+          "name": "DeepSeek-V4.1-Flash thinking+search (FreeDeepseekAPI)",
+          "attachment": true,
+          "reasoning": true,
+          "tool_call": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 128000,
+            "output": 8192
+          }
         }
       }
     }
+  },
+  "tools": {
+    "websearch": false,
+    "webfetch": false
+  },
+  "permission": {
+    "websearch": "deny",
+    "webfetch": "deny"
   },
   "attachment": {
     "image": {

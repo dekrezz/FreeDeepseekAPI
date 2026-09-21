@@ -15,7 +15,7 @@ const readline = require('readline');
 const ROOT = path.resolve(__dirname, '..');
 const HOME = process.env.SETUP_HOME || os.homedir();
 const VALID_TARGETS = ['claude-code', 'codex', 'opencode', 'hermes', 'openclaw', 'cursor'];
-const VALID_MODELS = ['deepseek-v4-flash', 'deepseek-v4-flash-thinking', 'deepseek-v4-pro', 'deepseek-v4-pro-thinking'];
+const VALID_MODELS = ['deepseek-v4-flash', 'deepseek-v4-flash-thinking', 'deepseek-v4-flash-thinking-search', 'deepseek-v4-pro', 'deepseek-v4-pro-thinking'];
 
 function argValue(args, name, fallback = '') {
   for (let i = 0; i < args.length; i++) {
@@ -187,7 +187,7 @@ function setupCodex(opts) {
       priority: 1,
       availability_nux: null,
       upgrade: null,
-      base_instructions: 'You are a coding agent. Follow developer instructions, use tools when needed, and report results concisely.',
+      base_instructions: 'You are a coding agent. Follow developer instructions and use local tools when needed. Do not use the Codex/harness web search tool. DeepSeek native Web Search and DeepThink are enabled — use those for live web data and report the findings.',
       supports_reasoning_summary_parameter: false,
       default_reasoning_summary: 'none',
       support_verbosity: false,
@@ -289,9 +289,31 @@ function setupOpenClaw(opts) {
   console.log('OpenClaw: provider added; existing primary model unchanged. Select freedeepseek/<id> explicitly.');
 }
 
+const OPENCODE_AGENTS_MARKER = 'freedeepseek-autonomy';
+const OPENCODE_AGENTS_GUIDANCE = `# FreeDeepseekAPI
+
+This model is a chat agent, not a metered API. Token cost does not matter.
+
+Finish the user's task autonomously: inspect the repo, make the changes, run the relevant checks, and keep going until the work is done or a real blocker (missing credential, destructive action, or a choice only the user can make). Do not ask clarifying questions, do not stop at a plan or a first step, and do not wait for permission. Finish every unblocked part first.`;
+
+function upsertMarkedSection(existing, marker, body) {
+  const start = `<!-- ${marker} -->`;
+  const end = `<!-- /${marker} -->`;
+  const block = `${start}\n${String(body || '').trim()}\n${end}\n`;
+  const escapedStart = start.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedEnd = end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`${escapedStart}[\\s\\S]*?${escapedEnd}\\n?`);
+  const src = String(existing || '');
+  if (re.test(src)) return src.replace(re, block);
+  const base = src.replace(/\s*$/, '');
+  return base ? `${base}\n\n${block}` : block;
+}
+
 function setupOpenCode(opts) {
   const dest = path.join(HOME, '.config', 'opencode', 'opencode.json');
+  const agentsPath = path.join(HOME, '.config', 'opencode', 'AGENTS.md');
   backupFile(dest, opts.backupDir, opts);
+  backupFile(agentsPath, opts.backupDir, opts);
   const cfg = readJson(dest, {});
   const models = {};
   for (const id of VALID_MODELS) {
@@ -321,6 +343,11 @@ function setupOpenCode(opts) {
     },
     models,
   };
+  cfg.tools = { ...(cfg.tools && typeof cfg.tools === 'object' ? cfg.tools : {}), websearch: false, webfetch: false };
+  cfg.permission = { ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}), websearch: 'deny', webfetch: 'deny' };
+  if (String(cfg.model || '').startsWith('freedeepseek/')) {
+    cfg.model = 'freedeepseek/deepseek-v4-flash-thinking-search';
+  }
   cfg.attachment = cfg.attachment && typeof cfg.attachment === 'object' ? cfg.attachment : {};
   cfg.attachment.image = {
     ...(cfg.attachment.image || {}),
@@ -330,6 +357,7 @@ function setupOpenCode(opts) {
     max_base64_bytes: 5242880,
   };
   writeFile(dest, `${JSON.stringify(cfg, null, 2)}\n`, opts);
+  writeFile(agentsPath, upsertMarkedSection(readText(agentsPath), OPENCODE_AGENTS_MARKER, OPENCODE_AGENTS_GUIDANCE), opts);
   console.log('OpenCode: provider added; existing default model unchanged. Select freedeepseek/<id> explicitly.');
 }
 
@@ -390,6 +418,7 @@ function restoreFrom(dir) {
     'config.toml': path.join(HOME, '.codex', 'config.toml'),
     'models.json': path.join(HOME, '.codex', 'models.json'),
     'opencode.json': path.join(HOME, '.config', 'opencode', 'opencode.json'),
+    'AGENTS.md': path.join(HOME, '.config', 'opencode', 'AGENTS.md'),
     'config.yaml': path.join(HOME, '.hermes', 'config.yaml'),
     'openclaw.json': path.join(HOME, '.openclaw', 'openclaw.json'),
   };
@@ -445,5 +474,7 @@ module.exports = {
   openaiBase,
   anthropicBase,
   parseArgs,
+  upsertMarkedSection,
+  OPENCODE_AGENTS_GUIDANCE,
   main,
 };

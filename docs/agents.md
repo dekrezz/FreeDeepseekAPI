@@ -16,7 +16,7 @@ Requires the proxy already listening (`npm start`). Default origin: `http://127.
 |---|---|---|
 | Claude Code | `~/.claude/freedeepseek.settings.json` | `claude --settings ~/.claude/freedeepseek.settings.json`; normal `claude` keeps native models |
 | Codex | `~/.codex/freedeepseek.config.toml` + catalog JSON | `codex --profile freedeepseek`; normal Codex keeps GPT/default provider |
-| OpenCode | `freedeepseek` entry in `~/.config/opencode/opencode.json` | Select `freedeepseek/<id>`; existing `model` remains unchanged |
+| OpenCode | `freedeepseek` entry in `~/.config/opencode/opencode.json` plus autonomy rules in `~/.config/opencode/AGENTS.md` | Select `freedeepseek/<id>`; existing `model` remains unchanged |
 | Hermes | `~/.hermes/freedeepseek.yaml` | Separate profile file; native config remains unchanged |
 | OpenClaw | `freedeepseek` provider in `~/.openclaw/openclaw.json` | Select explicitly; existing primary model remains unchanged |
 | Cursor | Template + optional launcher in `integrations/cursor/` | Existing editor settings remain unchanged |

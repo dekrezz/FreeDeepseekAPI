@@ -12,7 +12,7 @@ npm run setup:agents -- --target claude-code --model deepseek-v4-pro
 |---|---|
 | Claude Code | `~/.claude/freedeepseek.settings.json`; запуск через `claude --settings …` |
 | Codex | профиль `freedeepseek`; запуск через `codex --profile freedeepseek` |
-| OpenCode | provider `freedeepseek`; текущий `model` сохраняется |
+| OpenCode | provider `freedeepseek` и правило автономности в `~/.config/opencode/AGENTS.md`; текущий `model` сохраняется |
 | Hermes | отдельный `~/.hermes/freedeepseek.yaml` |
 | OpenClaw | provider `freedeepseek`; текущий primary сохраняется |
 | Cursor | сниппет + launcher; настройки редактора не меняются |

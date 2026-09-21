@@ -519,6 +519,128 @@ test('client-provided multi-turn history suppresses server recovery-history inje
   ]), true);
 });
 
+test('OpenCode session-title requests are answered locally without DeepSeek', () => {
+  const messages = [
+    { role: 'user', content: 'Generate a title for this conversation:\n' },
+    { role: 'user', content: 'What is the tech stack of this project?' },
+  ];
+  assert.equal(serverInternals.isSessionTitleRequest(messages), true);
+  assert.equal(serverInternals.localSessionTitle(messages), 'What is the tech stack of this project?');
+  assert.equal(serverInternals.isSessionTitleRequest([
+    { role: 'user', content: 'What is the tech stack of this project?' },
+  ]), false);
+});
+
+test('sticky continuation omits repeated system prompt and prior turns', () => {
+  const session = serverInternals.createSession();
+  const firstMessages = [
+    { role: 'system', content: 'You are OpenCode. Huge standing instructions.' },
+    { role: 'user', content: 'what is the stack' },
+  ];
+  const first = serverInternals.resolveUpstreamPrompt(session, firstMessages, [], '');
+  assert.match(first.systemPrompt, /You are OpenCode/);
+  assert.match(first.conversation, /what is the stack/);
+  assert.equal(first.omittedSystem, false);
+
+  session.id = 'remote-1';
+  session.sentSystemFingerprint = first.fingerprint;
+  const next = serverInternals.resolveUpstreamPrompt(session, [
+    { role: 'system', content: 'You are OpenCode. Huge standing instructions.' },
+    { role: 'user', content: 'what is the stack' },
+    { role: 'assistant', content: 'Node proxy' },
+    { role: 'user', content: 'and the tests?' },
+  ], [], '');
+  assert.equal(next.systemPrompt, '');
+  assert.equal(next.omittedSystem, true);
+  assert.equal(next.omittedPriorTurns, true);
+  assert.match(next.conversation, /and the tests/);
+  assert.doesNotMatch(next.conversation, /what is the stack/);
+  assert.doesNotMatch(next.conversation, /You are OpenCode/);
+  assert.match(next.fullSystemPrompt, /You are OpenCode/);
+});
+
+test('sticky continuation omits system even when the client restates new instructions', () => {
+  const session = serverInternals.createSession();
+  session.id = 'remote-1';
+  session.sentSystemFingerprint = serverInternals.fingerprintPrompt('old instructions');
+  const next = serverInternals.resolveUpstreamPrompt(session, [
+    { role: 'system', content: 'new instructions' },
+    { role: 'user', content: 'hello' },
+    { role: 'assistant', content: 'hi' },
+    { role: 'user', content: 'follow up' },
+  ], [], '');
+  assert.equal(next.omittedSystem, true);
+  assert.equal(next.systemPrompt, '');
+  assert.match(next.conversation, /follow up/);
+  assert.doesNotMatch(next.conversation, /\bhello\b/);
+});
+
+test('agent requests drop harness websearch and force native DeepSeek Search + DeepThink', () => {
+  const stripped = serverInternals.stripHarnessWebSearchTools([
+    { type: 'function', function: { name: 'bash', parameters: { type: 'object' } } },
+    { type: 'function', function: { name: 'websearch', parameters: { type: 'object' } } },
+    { type: 'function', function: { name: 'webfetch', parameters: { type: 'object' } } },
+  ]);
+  assert.deepEqual(stripped.names.sort(), ['webfetch', 'websearch']);
+  assert.equal(stripped.tools.length, 1);
+  assert.equal(stripped.tools[0].function.name, 'bash');
+  assert.deepEqual(serverInternals.agentNativeWebFlags(stripped.tools, stripped.names), {
+    thinking_enabled: true,
+    search_enabled: true,
+  });
+  const formatted = serverInternals.formatMessages(
+    [{ role: 'system', content: 'You are opencode' }, { role: 'user', content: 'search the docs' }],
+    stripped.tools,
+    { nativeSearchNotice: true },
+  );
+  assert.match(formatted.systemPrompt, /DeepSeek native Web Search and DeepThink/);
+  assert.doesNotMatch(formatted.systemPrompt, /## websearch/);
+  assert.match(formatted.systemPrompt, /## bash/);
+});
+
+test('OpenCode system prompt keeps the agent role and replaces token-economy with autonomy', () => {
+  const original = [
+    'You are opencode, an interactive CLI tool that helps users with software engineering tasks.',
+    '# Tone and style',
+    'You should be concise, direct, and to the point.',
+    'IMPORTANT: You should minimize output tokens as much as possible while maintaining helpfulness, quality, and accuracy. If you can answer in 1-3 sentences or a short paragraph, please do.',
+    'IMPORTANT: You should NOT answer with unnecessary preamble or postamble (such as explaining your code or summarizing your action), unless the user asks you to.',
+    'IMPORTANT: Keep your responses short, since they will be displayed on a command line interface. You MUST answer concisely with fewer than 4 lines (not including tool use or code generation), unless user asks for detail. One word answers are best.',
+    'Here are some examples to demonstrate appropriate verbosity:',
+    'user: what is 2+2?',
+    'assistant: 4',
+    '# Proactiveness',
+    'You are allowed to be proactive, but only when the user asks you to do something.',
+    '2. Not surprising the user with actions you take without asking',
+    '# Doing tasks',
+    'If you are unable to find the correct command, ask the user for the command to run and if they supply it, proactively suggest writing it to AGENTS.md so that you will know to run it next time.',
+    'You MUST answer concisely with fewer than 4 lines of text (not including tool use or code generation), unless user asks for detail.',
+  ].join('\n');
+
+  const adapted = serverInternals.adaptOpenCodeSystemPrompt(original);
+  assert.match(adapted, /^You are opencode,/);
+  assert.match(adapted, /# Doing tasks/);
+  assert.match(adapted, /Finish the user's task autonomously/);
+  assert.match(adapted, /Do not ask clarifying questions/);
+  assert.match(adapted, /complete the whole task/);
+  assert.match(adapted, /search the repo/);
+  assert.doesNotMatch(adapted, /minimize output tokens/i);
+  assert.doesNotMatch(adapted, /fewer than 4 lines/i);
+  assert.doesNotMatch(adapted, /One word answers are best/i);
+  assert.doesNotMatch(adapted, /unable to find the correct command, ask the user/i);
+  assert.doesNotMatch(adapted, /without asking/);
+  assert.doesNotMatch(adapted, /command\.md/);
+  assert.equal(serverInternals.adaptOpenCodeSystemPrompt('You are a helpful assistant. Be brief.'), 'You are a helpful assistant. Be brief.');
+
+  const formatted = serverInternals.formatMessages(
+    [{ role: 'system', content: original }, { role: 'user', content: 'fix the tests' }],
+    [],
+  );
+  assert.match(formatted.systemPrompt, /Finish the user's task autonomously/);
+  assert.doesNotMatch(formatted.systemPrompt, /minimize output tokens/i);
+  assert.match(formatted.prompt, /fix the tests/);
+});
+
 test('context-too-long detector recognizes DeepSeek localized errors', () => {
   assert.equal(serverInternals.isContextTooLongError({ content: 'Содержание слишком длинное. Сократите его и попробуйте снова.' }), true);
   assert.equal(serverInternals.isContextTooLongError({ content: 'Maximum context length exceeded' }), true);
@@ -648,7 +770,37 @@ test('simultaneous holders are routed onto different idle accounts', (t) => {
   assert.equal(serverInternals.listAccountChatLocks().length, 2);
 });
 
-test('a second holder cannot share a busy sticky account', (t) => {
+test('a second holder queues on a busy sticky account instead of failing immediately', async (t) => {
+  const originalAccounts = serverInternals.accounts.splice(0);
+  const h1 = { id: 'req-1', agentId: 'agent-1' };
+  const h2 = { id: 'req-2', agentId: 'agent-2' };
+  t.after(() => {
+    serverInternals.releaseAccountChatLock(h1);
+    serverInternals.releaseAccountChatLock(h2);
+    serverInternals.accounts.splice(0, serverInternals.accounts.length, ...originalAccounts);
+  });
+  serverInternals.accounts.push(
+    { id: 'acct_a', config: { token: 'a', cookie: 'a' }, cooldownUntil: 0, lastUsedAt: 0, headers: {} },
+  );
+  const first = serverInternals.selectAccountForSession(serverInternals.createSession(), h1);
+  await serverInternals.acquireAccountChatLock(first, h1);
+  const sticky = serverInternals.createSession();
+  sticky.accountId = 'acct_a';
+  const selected = serverInternals.selectAccountForSession(sticky, h2);
+  assert.equal(selected.id, 'acct_a');
+
+  let acquired = false;
+  const waiting = serverInternals.acquireAccountChatLock(selected, h2, 1000).then((waited) => {
+    acquired = true;
+    return waited;
+  });
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(acquired, false);
+  serverInternals.releaseAccountChatLock(h1);
+  assert.equal(await waiting, true);
+});
+
+test('account lock wait times out with concurrent_chat_blocked', async (t) => {
   const originalAccounts = serverInternals.accounts.splice(0);
   const h1 = { id: 'req-1', agentId: 'agent-1' };
   t.after(() => {
@@ -659,11 +811,9 @@ test('a second holder cannot share a busy sticky account', (t) => {
     { id: 'acct_a', config: { token: 'a', cookie: 'a' }, cooldownUntil: 0, lastUsedAt: 0, headers: {} },
   );
   const first = serverInternals.selectAccountForSession(serverInternals.createSession(), h1);
-  serverInternals.acquireAccountChatLock(first, h1);
-  const sticky = serverInternals.createSession();
-  sticky.accountId = 'acct_a';
-  assert.throws(
-    () => serverInternals.selectAccountForSession(sticky, { id: 'req-2', agentId: 'agent-2' }),
+  await serverInternals.acquireAccountChatLock(first, h1);
+  await assert.rejects(
+    () => serverInternals.acquireAccountChatLock(first, { id: 'req-2', agentId: 'agent-2' }, 30),
     (err) => err.status === 429 && err.type === 'concurrent_chat_blocked',
   );
 });
@@ -964,8 +1114,15 @@ test('one-click agent setup adds opt-in providers without replacing native defau
 
   const opencode = JSON.parse(fs.readFileSync(path.join(dir, '.config', 'opencode', 'opencode.json'), 'utf8'));
   assert.equal(opencode.model, 'openai/gpt-native');
+  assert.equal(opencode.tools.websearch, false);
+  assert.equal(opencode.tools.webfetch, false);
+  assert.equal(opencode.permission.websearch, 'deny');
   assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-pro'].attachment, true);
   assert.deepEqual(opencode.provider.freedeepseek.models['deepseek-v4-pro'].modalities.input, ['text', 'image']);
+  const agentsMd = fs.readFileSync(path.join(dir, '.config', 'opencode', 'AGENTS.md'), 'utf8');
+  assert.match(agentsMd, /<!-- freedeepseek-autonomy -->/);
+  assert.match(agentsMd, /Finish the user's task autonomously/);
+  assert.match(agentsMd, /Token cost does not matter/);
 });
 
 test('account patch persists display name and skips paused logins', (t) => {

@@ -159,6 +159,7 @@ let inFlight = 0;  // concurrent in-flight completions (backpressure cap)
 // Overall wall-clock budget for one inbound request (caps the retry/continuation
 // loops), max concurrent completions, and the empty-response retry cap.
 const REQUEST_DEADLINE_MS = Number(process.env.DEEPSEEK_REQUEST_DEADLINE_MS || 120000);
+const ACCOUNT_LOCK_WAIT_MS = Number(process.env.DEEPSEEK_ACCOUNT_LOCK_WAIT_MS || REQUEST_DEADLINE_MS);
 const MAX_CONCURRENT = Number(process.env.DEEPSEEK_MAX_CONCURRENT || 24);
 const configuredEmptyRetries = Number(process.env.DEEPSEEK_MAX_RETRIES);
 const MAX_EMPTY_RETRIES = Number.isFinite(configuredEmptyRetries)
@@ -291,23 +292,50 @@ function isLockedByOther(account, holder) {
     const lock = accountLocks.get(account.id);
     return Boolean(lock && holder && lock.holder !== holder);
 }
-function acquireAccountChatLock(account, holder) {
-    if (!account || !holder) return;
-    const current = accountLocks.get(account.id);
-    if (current && current.holder !== holder) {
-        const err = new Error(`DeepSeek account ${account.id} is already serving another chat. Two chats on one Web login can trigger a multi-day ban.`);
-        err.status = 429;
-        err.retryAfter = 5;
-        err.type = 'concurrent_chat_blocked';
-        err.busy_agent = current.agentId;
-        throw err;
+function concurrentChatBlocked(message, extra = {}) {
+    const err = new Error(message);
+    err.status = 429;
+    err.retryAfter = extra.retryAfter || 1;
+    err.type = 'concurrent_chat_blocked';
+    if (extra.busy_agent) err.busy_agent = extra.busy_agent;
+    return err;
+}
+function createAccountLock(holder) {
+    let notify;
+    const released = new Promise(resolve => { notify = resolve; });
+    return { holder, agentId: holder.agentId || null, since: Date.now(), released, notify };
+}
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+async function acquireAccountChatLock(account, holder, timeoutMs = ACCOUNT_LOCK_WAIT_MS) {
+    if (!account || !holder) return false;
+    const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+    let waited = false;
+    while (true) {
+        const current = accountLocks.get(account.id);
+        if (!current || current.holder === holder) {
+            if (!current) accountLocks.set(account.id, createAccountLock(holder));
+            return waited;
+        }
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+            throw concurrentChatBlocked(
+                `Account ${account.id} is busy with another request. One DeepSeek login serves one in-flight chat.`,
+                { retryAfter: 1, busy_agent: current.agentId },
+            );
+        }
+        waited = true;
+        await Promise.race([current.released, sleep(Math.min(remaining, 50))]);
     }
-    accountLocks.set(account.id, { holder, agentId: holder.agentId || null, since: Date.now() });
 }
 function releaseAccountChatLock(holder) {
     if (!holder) return;
     for (const [id, lock] of accountLocks) {
-        if (lock.holder === holder) accountLocks.delete(id);
+        if (lock.holder === holder) {
+            accountLocks.delete(id);
+            lock.notify();
+        }
     }
 }
 function listAccountChatLocks() {
@@ -323,13 +351,6 @@ function selectAccountForSession(session, holder = null) {
     if (session.accountId) {
         const sticky = accounts.find(a => a.id === session.accountId);
         if (sticky && accountCanServe(sticky, now)) {
-            if (isLockedByOther(sticky, holder)) {
-                const err = new Error(`Account ${sticky.id} is busy with another request. One DeepSeek login serves one in-flight chat.`);
-                err.status = 429;
-                err.retryAfter = 5;
-                err.type = 'concurrent_chat_blocked';
-                throw err;
-            }
             return sticky;
         }
         // A DeepSeek chat_session belongs to the auth account that created it.
@@ -354,15 +375,9 @@ function selectAccountForSession(session, holder = null) {
         throw noAuth;
     }
     const idle = holder ? ready.filter(a => !isLockedByOther(a, holder)) : ready;
-    if (idle.length === 0) {
-        const err = new Error(`All DeepSeek accounts are busy (${ready.length} in flight). Concurrent chats on one login are blocked. Retry shortly or add another account.`);
-        err.status = 429;
-        err.retryAfter = 5;
-        err.type = 'concurrent_chat_blocked';
-        throw err;
-    }
-    idle.sort((a, b) => (a.lastUsedAt || 0) - (b.lastUsedAt || 0) || a.id.localeCompare(b.id));
-    const account = idle[0];
+    const pool = idle.length > 0 ? idle : ready;
+    pool.sort((a, b) => (a.lastUsedAt || 0) - (b.lastUsedAt || 0) || a.id.localeCompare(b.id));
+    const account = pool[0];
     accountRoundRobin++;
     session.accountId = account.id;
     return account;
@@ -513,6 +528,7 @@ function createSession() {
         messageCount: 0,
         accountId: null,
         history: [],
+        sentSystemFingerprint: null,
         lastActivityAt: Date.now(),
     };
 }
@@ -527,6 +543,7 @@ function resetRemoteSession(session) {
     session.parentMessageId = null;
     session.createdAt = null;
     session.messageCount = 0;
+    session.sentSystemFingerprint = null;
     // Keep local recovery history and the sticky account assignment. A remote
     // chat can be unhealthy without invalidating either of those local hints.
     return failed;
@@ -973,12 +990,91 @@ async function uploadDeepSeekImage(account, modelCfg, input, index) {
     return (await waitForDeepSeekFile(account, file)).id;
 }
 
-async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, freshSessionPrompt = prompt, lockHolder = null, imageContext = null) {
+function nativeSearchAndThinkNotice() {
+    return '\n\nDeepSeek native Web Search and DeepThink are enabled. Do not call harness websearch/webfetch. Use DeepSeek Search for the live web and include those findings in your reply.\n';
+}
+
+const OPENCODE_AUTONOMY_INSTRUCTION = 'IMPORTANT: Token cost does not matter on this connection. Finish the user\'s task autonomously: inspect the repo, make the changes, run the relevant checks, and keep going until the work is done or a real blocker (missing credential, destructive action, or a choice only the user can make). Do not ask clarifying questions, do not stop at a plan or a first step, and do not wait for permission. Finish every unblocked part first.';
+
+const OPENCODE_PROACTIVENESS = `# Proactiveness
+When the user asks you to do something, complete the whole task. Do not pause to ask how, whether, or what next. Use tools, inspect the repo, and pick reasonable defaults. Do not ask the user questions that files or commands can answer. Do not hand back a partial result with follow-up questions.`;
+
+function isOpenCodeSystemPrompt(text) {
+    return /^You are opencode\b/im.test(String(text || ''));
+}
+
+function adaptOpenCodeSystemPrompt(text) {
+    const value = String(text || '');
+    if (!isOpenCodeSystemPrompt(value)) return value;
+
+    let next = value.replace(
+        /You should be concise, direct, and to the point\./i,
+        'Be direct and to the point. Completing the task beats saving tokens.',
+    );
+
+    next = next.replace(
+        /IMPORTANT:\s*You should minimize output tokens[\s\S]*?(?=\n# [A-Z])/i,
+        `${OPENCODE_AUTONOMY_INSTRUCTION}\n\n`,
+    );
+    next = next.replace(
+        /IMPORTANT:\s*Keep your responses short[\s\S]*?(?=\n# [A-Z])/i,
+        '',
+    );
+    next = next.replace(/IMPORTANT:\s*You should NOT answer with unnecessary preamble[^\n]*\n?/gi, '');
+    next = next.replace(/You MUST answer concisely with fewer than 4 lines[^\n]*\n?/gi, '');
+
+    if (/# Proactiveness\b/i.test(next)) {
+        next = next.replace(/# Proactiveness\n[\s\S]*?(?=\n# [A-Z]|$)/i, `${OPENCODE_PROACTIVENESS}\n\n`);
+    }
+
+    next = next.replace(
+        /If you are unable to find the correct command, ask the user[\s\S]*?next time\./i,
+        'If you cannot find the correct command, search the repo (package.json, Makefile, README, CI) and run the closest match. Do not ask the user which command to run.',
+    );
+
+    if (!/Finish the user's task autonomously/i.test(next)) {
+        next = `${next.trim()}\n\n${OPENCODE_AUTONOMY_INSTRUCTION}`;
+    }
+
+    return next.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function adaptUpstreamMessageContent(role, content) {
+    const text = normalizeMessageContent(content);
+    if (role === 'system' || isOpenCodeSystemPrompt(text)) return adaptOpenCodeSystemPrompt(text);
+    return text;
+}
+
+function isHarnessWebSearchTool(name) {
+    return /^(web_?search|webfetch|web_fetch|browser_search)$/i.test(String(name || ''));
+}
+
+function stripHarnessWebSearchTools(tools) {
+    const kept = [];
+    const names = [];
+    for (const tool of tools || []) {
+        const name = tool?.function?.name || tool?.name || '';
+        if (isHarnessWebSearchTool(name)) names.push(name);
+        else kept.push(tool);
+    }
+    return { tools: kept, names };
+}
+
+function agentNativeWebFlags(tools, strippedNames = []) {
+    if ((Array.isArray(tools) && tools.length > 0) || (strippedNames && strippedNames.length > 0)) {
+        return { thinking_enabled: true, search_enabled: true };
+    }
+    return null;
+}
+
+async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, freshSessionPrompt = prompt, lockHolder = null, imageContext = null, webFlags = null) {
     const modelCfg = resolveModelConfig(model);
+    const thinking_enabled = webFlags?.thinking_enabled ?? modelCfg.thinking_enabled;
+    const search_enabled = webFlags?.search_enabled ?? modelCfg.search_enabled;
     const session = getOrCreateAgentSession(agentId);
     const hadRemoteSession = Boolean(session.id);
     const account = selectAccountForSession(session, lockHolder);
-    acquireAccountChatLock(account, lockHolder);
+    await acquireAccountChatLock(account, lockHolder);
     const dsHeaders = account.headers;
     account.lastUsedAt = Date.now();
     const agentTag = `[${agentId}/acct:${account.id}]`;
@@ -1033,7 +1129,7 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
             parent_message_id: session.parentMessageId,
             model_type: modelCfg.model_type,
             prompt: effectivePrompt, ref_file_ids: refFileIds,
-            thinking_enabled: modelCfg.thinking_enabled, search_enabled: modelCfg.search_enabled,
+            thinking_enabled, search_enabled,
             action: null, preempt: false,
         })
     });
@@ -1072,7 +1168,7 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
                     parent_message_id: null,
                     model_type: modelCfg.model_type,
                     prompt: freshSessionPrompt, ref_file_ids: refFileIds,
-                    thinking_enabled: modelCfg.thinking_enabled, search_enabled: modelCfg.search_enabled,
+                    thinking_enabled, search_enabled,
                     action: null, preempt: false,
                 })
             });
@@ -1152,7 +1248,9 @@ function formatToolDefinitions(tools) {
     text += '3. The tool runs on ' + SERVER_HOST + ' (' + SERVER_PUBLIC_IP + '), the local server — NOT on DeepSeek\n';
     text += '4. After the tool executes, the result will be sent to you as a new user/tool message\n';
     text += '5. Never add explanation before or after the tool request when requesting a tool\n';
-    text += '6. Keep arguments compact. Do not include large file contents unless the tool schema requires it.\n\n';
+    text += '6. Keep arguments compact. Do not include large file contents unless the tool schema requires it.\n';
+    text += '7. Do not call websearch, webfetch, web_search, or any other harness web-search tool. Those are disabled.\n';
+    text += '8. DeepSeek native Web Search and DeepThink are enabled. Use them for live web data and include the findings in your reply.\n\n';
     text += 'Available functions:\n';
     for (const tool of tools) {
         if (tool.type === 'function' && tool.function) {
@@ -1762,6 +1860,37 @@ function normalizeMessageContent(content) {
     return String(content);
 }
 
+function isSessionTitleRequest(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) return false;
+    const firstUser = messages.find(message => message && message.role === 'user');
+    const text = normalizeMessageContent(firstUser?.content).trim();
+    if (!text) return false;
+    if (/^Generate a title for this conversation:?$/i.test(text)) return true;
+    return /Generate a title for this conversation/i.test(text)
+        && /NEVER respond to questions, just generate a title/i.test(text);
+}
+
+function localSessionTitle(messages) {
+    const snippets = [];
+    for (const message of messages || []) {
+        if (!message || message.role !== 'user') continue;
+        let text = normalizeMessageContent(message.content).trim();
+        if (!text) continue;
+        if (/Generate a title for this conversation/i.test(text)) {
+            text = text
+                .replace(/^Generate a title for this conversation:\s*/i, '')
+                .replace(/NEVER respond to questions[\s\S]*$/i, '')
+                .trim();
+            if (!text) continue;
+        }
+        snippets.push(text);
+    }
+    const source = snippets[0] || 'New conversation';
+    const firstLine = source.split(/\r?\n/).map(line => line.trim()).find(Boolean) || 'New conversation';
+    const cleaned = firstLine.replace(/^#+\s*/, '').replace(/^["“«]+|["”»]+$/g, '').trim() || 'New conversation';
+    return cleaned.length > 100 ? `${cleaned.slice(0, 97)}...` : cleaned;
+}
+
 function normalizeAnthropicTools(tools = []) {
     return (tools || []).map(tool => ({
         type: 'function',
@@ -2221,21 +2350,22 @@ function isTimeoutError(error) {
     return name === 'TimeoutError' || name === 'AbortError' || /(?:timed?\s*out|timeout)/i.test(message);
 }
 
-function formatMessages(messages, tools) {
+function formatMessages(messages, tools, options = {}) {
     let systemPrompt = '';
     for (const msg of messages) {
         if (msg.role === 'system' && msg.content) {
-            systemPrompt += normalizeMessageContent(msg.content) + '\n';
+            systemPrompt += adaptUpstreamMessageContent(msg.role, msg.content) + '\n';
         }
     }
     systemPrompt += formatToolDefinitions(tools);
+    if (options.nativeSearchNotice) systemPrompt += nativeSearchAndThinkNotice();
 
     // Build full conversation history for DeepSeek's context
     let conversation = '';
     for (const msg of messages) {
         if (msg.role === 'system') continue;  // already in systemPrompt
         if (msg.role === 'user' && msg.content) {
-            conversation += `User: ${normalizeMessageContent(msg.content)}\n\n`;
+            conversation += `User: ${adaptUpstreamMessageContent(msg.role, msg.content)}\n\n`;
         } else if (msg.role === 'assistant') {
             if (msg.tool_calls && msg.tool_calls.length > 0) {
                 // This was a tool call response from a previous turn
@@ -2256,6 +2386,51 @@ function formatMessages(messages, tools) {
     }
     // The last user message + full conversation context
     return { prompt: conversation.trim(), systemPrompt: systemPrompt.trim() };
+}
+
+function fingerprintPrompt(text) {
+    return crypto.createHash('sha256').update(String(text || ''), 'utf8').digest('hex');
+}
+
+function isReplayedAgentSystem(text) {
+    const value = String(text || '');
+    return value.length > 400 && isOpenCodeSystemPrompt(value);
+}
+
+function continuationMessages(messages) {
+    const turns = (messages || []).filter(msg => {
+        if (!msg || msg.role === 'system') return false;
+        if (msg.role === 'user' && isReplayedAgentSystem(normalizeMessageContent(msg.content))) return false;
+        return true;
+    });
+    let lastAssistant = -1;
+    for (let i = 0; i < turns.length; i++) {
+        if (turns[i].role === 'assistant') lastAssistant = i;
+    }
+    if (lastAssistant === -1) return turns;
+    const delta = turns.slice(lastAssistant + 1);
+    if (delta.length > 0) return delta;
+    const lastUser = [...turns].reverse().find(msg => msg.role === 'user' || msg.role === 'tool');
+    return lastUser ? [lastUser] : turns;
+}
+
+function resolveUpstreamPrompt(session, messages, tools, recoveryHistoryPrefix = '', options = {}) {
+    const formatted = formatMessages(messages, tools, options);
+    const fingerprint = fingerprintPrompt(formatted.systemPrompt);
+    const remoteLive = Boolean(session?.id);
+    const omitSystem = remoteLive && Boolean(session.sentSystemFingerprint);
+    const delta = continuationMessages(messages);
+    const conversation = remoteLive ? formatMessages(delta, [], options).prompt : formatted.prompt;
+    return {
+        systemPrompt: omitSystem ? '' : formatted.systemPrompt,
+        conversation,
+        historyPrefix: remoteLive ? '' : String(recoveryHistoryPrefix || ''),
+        fullSystemPrompt: formatted.systemPrompt,
+        fullConversation: formatted.prompt,
+        fingerprint,
+        omittedSystem: omitSystem && formatted.systemPrompt.length > 0,
+        omittedPriorTurns: remoteLive,
+    };
 }
 
 // === HTTP Server ===
@@ -2423,7 +2598,10 @@ const server = http.createServer(async (req, res) => {
             const params = normalizeApiParams(rawParams, apiMode);
             const messages = params.messages || [];
             const imageContext = { inputs: extractImageInputs(messages), refFileIds: [] };
-            const tools = params.tools || [];
+            const strippedSearch = stripHarnessWebSearchTools(params.tools || []);
+            const tools = strippedSearch.tools;
+            const webFlags = agentNativeWebFlags(tools, strippedSearch.names);
+            const promptOptions = { nativeSearchNotice: Boolean(webFlags) };
             const stream = params.stream === true;
             const requestedModel = canonicalizeModelId(params.model || DEFAULT_MODEL_ID);
             logRow.model = requestedModel;
@@ -2436,6 +2614,9 @@ const server = http.createServer(async (req, res) => {
             activeAgentId = agentId;
             lockHolder.agentId = agentId;
             logRow.agent = agentId;
+            if (strippedSearch.names.length || webFlags) {
+                console.log(`${agentTag} Native DeepSeek Search + DeepThink on${strippedSearch.names.length ? `; stripped harness tools: ${strippedSearch.names.join(', ')}` : ''}`);
+            }
             if (!isKnownModel(requestedModel)) {
                 logRow.status = 400;
                 res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2483,7 +2664,34 @@ const server = http.createServer(async (req, res) => {
                 return;
             }
 
-            const { prompt, systemPrompt } = formatMessages(messages, tools);
+            if (isSessionTitleRequest(messages)) {
+                const title = localSessionTitle(messages);
+                console.log(`${agentTag} Answered session-title request locally: ${title}`);
+                const confirmation = buildTextResponse(title, normalizeMessageContent(lastUserMessage?.content), requestedModel);
+                logRow.status = 200;
+                logRow.ok = true;
+                if (stream) {
+                    if (apiMode === 'anthropic') {
+                        sendAnthropicStream(res, confirmation);
+                    } else if (apiMode === 'responses') {
+                        sendResponsesStream(res, confirmation);
+                    } else {
+                        sendOpenAIStream(res, confirmation);
+                    }
+                } else {
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    if (apiMode === 'anthropic') {
+                        res.end(JSON.stringify(toAnthropicResponse(confirmation)));
+                    } else if (apiMode === 'responses') {
+                        res.end(JSON.stringify(toResponsesResponse(confirmation)));
+                    } else {
+                        res.end(JSON.stringify(confirmation));
+                    }
+                }
+                return;
+            }
+
+            const { prompt, systemPrompt } = formatMessages(messages, tools, promptOptions);
             // For usage accounting, count the CLIENT's original input — not the
             // proxy-expanded fullPrompt (system + injected tools + history) — so
             // prompt_tokens reflects what the caller actually sent.
@@ -2505,19 +2713,24 @@ const server = http.createServer(async (req, res) => {
             const recoveryHistoryPrefix = hasExplicitConversationHistory(messages)
                 ? ''
                 : buildRecoveryHistoryPrefix(session.history);
-            const historyPrefix = !session.id ? recoveryHistoryPrefix : '';
+            const resolved = resolveUpstreamPrompt(session, messages, tools, recoveryHistoryPrefix, promptOptions);
+            const historyPrefix = resolved.historyPrefix;
 
-            const promptBuild = buildBoundedPrompt(systemPrompt, historyPrefix, prompt);
+            const promptBuild = buildBoundedPrompt(resolved.systemPrompt, historyPrefix, resolved.conversation);
             const freshPromptBuild = buildBoundedPrompt(systemPrompt, recoveryHistoryPrefix, prompt);
             let fullPrompt = promptBuild.prompt;
             let promptCompacted = promptBuild.compacted;
+            if (!resolved.omittedSystem) session.sentSystemFingerprint = resolved.fingerprint;
+            if (resolved.omittedSystem || resolved.omittedPriorTurns) {
+                console.log(`${agentTag} Sticky continuation omitted ${resolved.omittedSystem ? `system prompt (${systemPrompt.length} chars)` : 'no system change'}${resolved.omittedPriorTurns ? ' and prior turns' : ''}; upstream ${promptBuild.promptChars} chars`);
+            }
             if (promptBuild.compacted) {
                 markContextCompacted(res);
                 console.log(`${agentTag} Compacted upstream prompt ${promptBuild.originalChars} -> ${promptBuild.promptChars} chars${promptBuild.historyDropped ? ' (recovery history dropped)' : ''}`);
             }
 
             const startTime = Date.now();
-            const initialCall = await askDeepSeekStream(fullPrompt, agentId, requestedModel, freshPromptBuild.prompt, lockHolder, imageContext);
+            const initialCall = await askDeepSeekStream(fullPrompt, agentId, requestedModel, freshPromptBuild.prompt, lockHolder, imageContext, webFlags);
             const dsResp = initialCall.resp;
             if (initialCall.promptUsed !== fullPrompt) {
                 fullPrompt = initialCall.promptUsed;
@@ -2653,9 +2866,10 @@ const server = http.createServer(async (req, res) => {
                 const reason = contextTooLong ? 'context-too-long response' : 'empty response';
                 console.log(`${agentTag} ${reason} (msg#${session.messageCount}, retry ${retryAttempt}/${MAX_EMPTY_RETRIES}, prompt=${retryPrompt.length} chars). Resetting session...`);
                 resetRemoteSession(session);
+                session.sentSystemFingerprint = fingerprintPrompt(systemPrompt);
                 // Brief delay before retry to let DeepSeek breathe
                 await new Promise(r => setTimeout(r, Math.min(500 * retryAttempt, 1500)));
-                const { resp: retryResp } = await askDeepSeekStream(retryPrompt, agentId, requestedModel, retryPrompt, lockHolder, imageContext);
+                const { resp: retryResp } = await askDeepSeekStream(retryPrompt, agentId, requestedModel, retryPrompt, lockHolder, imageContext, webFlags);
                 const retryResult = await readDeepSeekResponse(retryResp.body);
                 const retryState = normalizeRetryResponse(retryResult);
                 fullPrompt = retryPrompt;
@@ -2720,7 +2934,8 @@ const server = http.createServer(async (req, res) => {
                     requestedModel,
                     continuationRecoveryPrompt,
                     lockHolder,
-                    imageContext
+                    imageContext,
+                    webFlags
                 );
                 const { resp: contResp, account: contAccount } = continuationCall;
                 // A cross-account continuation is valid only when the call
@@ -2749,23 +2964,25 @@ const server = http.createServer(async (req, res) => {
             const allowedToolNames = new Set(tools
                 .filter(tool => tool?.type === 'function' && tool.function?.name)
                 .map(tool => tool.function.name));
-            let toolCall = allowedToolNames.size > 0 ? parseToolCall(fullContent) : null;
-            if (toolCall && !allowedToolNames.has(toolCall.name)) {
-                console.log(`${agentTag} Model requested unknown tool ${toolCall.name}; attempting format repair.`);
+            let toolCall = parseToolCall(fullContent);
+            let ignoredHarnessSearch = false;
+            if (toolCall && isHarnessWebSearchTool(toolCall.name)) {
+                console.log(`${agentTag} Ignoring harness ${toolCall.name}; native DeepSeek Search is enabled`);
+                ignoredHarnessSearch = true;
+                toolCall = null;
+            } else if (toolCall && (allowedToolNames.size === 0 || !allowedToolNames.has(toolCall.name))) {
+                if (allowedToolNames.size > 0) {
+                    console.log(`${agentTag} Model requested unknown tool ${toolCall.name}; attempting format repair.`);
+                }
                 toolCall = null;
             }
             
             // Retry once if legacy, XML, or DSML tool markup was truncated or
             // malformed. Never pass raw DSML through as a normal assistant turn.
-            if (allowedToolNames.size > 0 && !toolCall && looksLikeToolCallMarkup(fullContent) && !clientGone && !deadlineHit()) {
-                console.log(`${agentTag} Tool-call markup detected but invalid/truncated (${fullContent.length} chars). Retrying with stricter prompt...`);
-                resetRemoteSession(session);
-                await new Promise(r => setTimeout(r, 1000));
-                const strictPrompt = appendPromptInstruction(
-                    freshPromptBuild.prompt,
-                    '[STRICT INSTRUCTION] Your previous response contained incomplete tool-call markup. Keep arguments short and output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}'
-                );
-                const { resp: retryResp2 } = await askDeepSeekStream(strictPrompt, agentId, requestedModel, strictPrompt, lockHolder, imageContext);
+            if (allowedToolNames.size > 0 && !toolCall && !ignoredHarnessSearch && looksLikeToolCallMarkup(fullContent) && !clientGone && !deadlineHit()) {
+                console.log(`${agentTag} Tool-call markup detected but invalid/truncated (${fullContent.length} chars). Retrying with stricter prompt on the same session...`);
+                const strictPrompt = '[STRICT INSTRUCTION] Your previous response contained incomplete tool-call markup. Keep arguments short and output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}';
+                const { resp: retryResp2 } = await askDeepSeekStream(strictPrompt, agentId, requestedModel, strictPrompt, lockHolder, imageContext, webFlags);
                 const retryResult2 = await readDeepSeekResponse(retryResp2.body);
                 const retryContent2 = retryResult2 && retryResult2.content ? sanitizeContent(retryResult2.content) : '';
                 if (retryContent2 && retryContent2.trim()) {
@@ -2782,7 +2999,7 @@ const server = http.createServer(async (req, res) => {
                 }
             }
 
-            if (allowedToolNames.size > 0 && !toolCall && looksLikeToolCallMarkup(fullContent)) {
+            if (allowedToolNames.size > 0 && !toolCall && !ignoredHarnessSearch && looksLikeToolCallMarkup(fullContent)) {
                 const failure = resetRemoteSession(session);
                 res.writeHead(502, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: {
@@ -3004,6 +3221,16 @@ module.exports = {
         extractImageInputs,
         materializeImageInput,
         formatMessages,
+        isOpenCodeSystemPrompt,
+        adaptOpenCodeSystemPrompt,
+        OPENCODE_AUTONOMY_INSTRUCTION,
+        fingerprintPrompt,
+        continuationMessages,
+        resolveUpstreamPrompt,
+        stripHarnessWebSearchTools,
+        isHarnessWebSearchTool,
+        agentNativeWebFlags,
+        nativeSearchAndThinkNotice,
         createSession,
         resetRemoteSession,
         prepareSessionForPrompt,
@@ -3014,6 +3241,8 @@ module.exports = {
         acquireAccountChatLock,
         releaseAccountChatLock,
         listAccountChatLocks,
+        isSessionTitleRequest,
+        localSessionTitle,
         discoverAuthPaths,
         applyAccountPatch,
         persistAccountConfig,

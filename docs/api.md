@@ -35,7 +35,11 @@ curl -sS http://127.0.0.1:9655/v1/chat/completions \
 | `stream` | SSE chunks; last chunk includes `usage` |
 | `x-account-id` (response) | Which Web login served the request |
 
-Loopback clients without `x-agent-session` share `dev-agent`. Two parallel jobs on that id serialize on one account (or `429`).
+Loopback clients without `x-agent-session` share `dev-agent`. Overlapping real chats on one login wait in a per-account queue (`DEEPSEEK_ACCOUNT_LOCK_WAIT_MS`, default matches the request deadline). OpenCode session-title completions are answered locally and do not occupy the login.
+
+On a live sticky Web chat the proxy sends the system prompt and tool list **once**. Later OpenCode / Claude Code / Codex turns omit that system blob and replayed history; only the new user/tool turn goes upstream. A changed system prompt is sent again. Remote session reset (TTL, `/new`, empty-response retry) sends the full prompt.
+
+OpenCode's bundled prompt is kept, but token-economy / "ask first" lines are rewritten for DeepSeek Web: finish the task autonomously and do not ask clarifying questions. `npm run setup:agents -- --target opencode` writes the same rule to `~/.config/opencode/AGENTS.md`.
 
 ## Image input
 
@@ -96,8 +100,9 @@ DeepSeek issues a multi-day ban if two chats send on the **same** Web login at o
 | Situation | Behavior |
 |---|---|
 | Two requests, two free accounts | Routed to different logins |
-| Same `x-agent-session` overlapping | `429 concurrent_chat_blocked`, `Retry-After: 5` |
-| All logins busy | `429 concurrent_chat_blocked` |
+| Same `x-agent-session` overlapping | Queued on that login until the in-flight chat finishes |
+| All logins busy | Queued on the sticky/LRU login |
+| OpenCode session-title request | Local short title; DeepSeek is not called |
 | Account 401/403/429 | Cooldown, next request uses another ready login |
 | Global flood | `503 overloaded` when `in_flight` ≥ `DEEPSEEK_MAX_CONCURRENT` (default 24) |
 
@@ -132,7 +137,7 @@ Then restart so the pool reloads.
 |---|---|---|
 | 400 | `invalid_model` | Use an id from `GET /v1/models` |
 | 401 | `authentication_error` | Proxy key |
-| 429 | `concurrent_chat_blocked` | Retry; add another login; unique `x-agent-session` |
+| 429 | `concurrent_chat_blocked` | Wait exceeded `DEEPSEEK_ACCOUNT_LOCK_WAIT_MS`; add another login or retry |
 | 429 | `rate_limit` | All logins in cooldown; honor `Retry-After` |
 | 503 | `overloaded` / `no_auth` | Backpressure, or no `deepseek-auth.json` |
 | 504 | `request_timeout` | `DEEPSEEK_REQUEST_DEADLINE_MS` (default 120000) |
@@ -146,6 +151,7 @@ Then restart so the pool reloads.
 | `DEEPSEEK_AUTH_PATH` | `./deepseek-auth.json` | One file, or comma-separated list |
 | `DEEPSEEK_AUTH_DIR` | `./accounts` if present | All `*.json` in that directory |
 | `DEEPSEEK_MAX_CONCURRENT` | `24` | Process-wide cap. Real parallelism is **number of idle logins** |
+| `DEEPSEEK_ACCOUNT_LOCK_WAIT_MS` | `120000` | How long a second chat waits for a busy login |
 | `DEEPSEEK_ACCOUNT_COOLDOWN_MS` | `600000` | After 401/403/429 |
 | `TRUST_PROXY` | off | If `1`, client IP uses `X-Forwarded-For` |
 | `MAX_REQUEST_BODY_BYTES` | `31457280` | Maximum JSON body size, including base64 images |
