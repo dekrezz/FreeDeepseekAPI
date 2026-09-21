@@ -951,9 +951,16 @@ function adaptUpstreamMessageContent(role, content) {
     return text;
 }
 
-function isHarnessWebSearchTool(name) {
-    return /^(web_?search|webfetch|web_fetch|browser_search)$/i.test(String(name || ''));
+function isDeepSeekNativeTool(name) {
+    return /^(web_?search|webfetch|web_fetch|browser_search|execute_code|code_interpreter)$/i.test(String(name || ''));
 }
+
+function isHarnessWebSearchTool(name) {
+    return isDeepSeekNativeTool(name) && !/^(execute_code|code_interpreter)$/i.test(String(name || ''));
+}
+
+const EMPTY_RESPONSE_NUDGE = 'Your previous reply was empty. Output the next user-visible answer or exactly one gateway tool request as {"tool_call":{"name":"<function>","arguments":{...}}}. Do not call execute_code or web_search.';
+const NATIVE_TOOL_REPAIR_PROMPT = '[STRICT INSTRUCTION] You called a DeepSeek-internal tool (execute_code or web_search). The local agent cannot run those. Request exactly one gateway tool as {"tool_call":{"name":"<function>","arguments":{...}}} or answer in plain text if no tool is needed.';
 
 function stripHarnessWebSearchTools(tools) {
     const kept = [];
@@ -1172,6 +1179,35 @@ function formatToolDefinitions(tools) {
     text += '\n--- END TOOL REQUEST SYSTEM ---\n';
     text += '\nREMEMBER: Request tools only with strict JSON or TOOL_CALL legacy format. Never simulate results.';
     return text;
+}
+
+function toolFunctionNames(tools) {
+    const names = [];
+    for (const tool of tools || []) {
+        const name = tool?.function?.name || tool?.name;
+        if (typeof name === 'string' && name.trim()) names.push(name.trim());
+    }
+    return names;
+}
+
+function formatToolReminder(tools) {
+    const names = toolFunctionNames(tools);
+    if (!names.length) return '';
+    return [
+        '--- TOOL REMINDER ---',
+        'You are in a tool loop. Do not paste source files, Unity scripts, or diffs as your reply.',
+        'Do not call execute_code, web_search, or any DeepSeek-internal tool. Those never reach the local agent.',
+        'If you need to read, write, edit, or run something, output ONLY this JSON:',
+        '{"tool_call":{"name":"<function_name>","arguments":{...}}}',
+        `Available tools: ${names.join(', ')}`,
+        '--- END TOOL REMINDER ---',
+    ].join('\n');
+}
+
+function pinToolReminder(promptText, tools, maxChars = MAX_UPSTREAM_PROMPT_CHARS) {
+    const reminder = formatToolReminder(tools);
+    if (!reminder) return String(promptText || '');
+    return appendPromptInstruction(promptText, reminder, maxChars);
 }
 
 const MAX_TOOL_MARKUP_CHARS = 256 * 1024;
@@ -1476,10 +1512,17 @@ function extractToolCallScope(normalized) {
     const openings = wrappers.filter(tag => !tag.closing);
     const closings = wrappers.filter(tag => tag.closing);
     if (openings.length > 0) {
-        if (openings.length !== 1 || openings[0].selfClosing || closings.length === 0) return null;
+        if (openings.length !== 1 || openings[0].selfClosing) return null;
         const opening = openings[0];
+        if (wrappers.some(tag => tag.closing && tag.start < opening.end)) return null;
+        if (closings.length === 0) {
+            // Issue #19: Web DSML often omits the closing wrapper and then
+            // stacks execute_code + web_search. Keep the tail as the scope.
+            if (tags.some(tag => tag.name !== 'tool_calls' && tag.start < opening.end)) return null;
+            return normalized.substring(opening.end);
+        }
         const closing = closings[closings.length - 1];
-        if (wrappers.some(tag => tag.closing && tag.start < opening.end) || closing.start < opening.end) return null;
+        if (closing.start < opening.end) return null;
         if (tags.some(tag => tag.name !== 'tool_calls' && (tag.start < opening.end || tag.start >= closing.start))) return null;
         return normalized.substring(opening.end, closing.start);
     }
@@ -1530,8 +1573,79 @@ function parseDsmlToolCall(text) {
     return null;
 }
 
+function listDsmlToolCalls(text) {
+    if (!text || String(text).length > MAX_TOOL_MARKUP_CHARS) return [];
+    if (!/[|｜]+\s*DSML\s*[|｜]+|[<＜]\s*\/?\s*(?:DSML)?(?:[\w.-]+:)?(?:tool[\s_-]*calls|function[\s_-]*calls|invoke)\b/i.test(text)) {
+        return [];
+    }
+    const normalized = normalizeToolMarkupTags(text);
+    const scope = extractToolCallScope(normalized);
+    if (scope === null) return [];
+    const tags = scanDsmlStructuralTags(scope);
+    if (!tags || tags.length === 0) return [];
+    const calls = [];
+    const consumed = new Set();
+    for (let i = 0; i < tags.length; i++) {
+        if (consumed.has(i)) continue;
+        const tag = tags[i];
+        if (tag.name === 'invoke' && !tag.closing && !tag.selfClosing) {
+            const closeIdx = tags.findIndex((candidate, index) => index > i && candidate.name === 'invoke' && candidate.closing);
+            if (closeIdx === -1) continue;
+            consumed.add(closeIdx);
+            const parsed = parseDsmlInvoke(
+                getMarkupAttribute(tag.attrs, 'name'),
+                scope.substring(tag.end, tags[closeIdx].start),
+            );
+            if (parsed) calls.push(parsed);
+            continue;
+        }
+        if (tag.name === 'direct' && !tag.closing) {
+            const nextIdx = tags.findIndex((candidate, index) => index > i && (candidate.name === 'direct' || candidate.name === 'invoke'));
+            const end = nextIdx === -1 ? scope.length : tags[nextIdx].start;
+            const parsed = parseDsmlInvoke(
+                getMarkupAttribute(tag.attrs, 'name'),
+                scope.substring(tag.end, end),
+            );
+            if (parsed) calls.push(parsed);
+        }
+    }
+    return calls;
+}
+
+function selectAgentToolCall(text, allowedToolNames) {
+    const allowed = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
+    const listed = listDsmlToolCalls(text);
+    const allowedHit = listed.find(call => allowed.has(call.name));
+    if (allowedHit) return allowedHit;
+    const parsed = parseToolCall(text);
+    if (parsed && allowed.has(parsed.name)) return parsed;
+    const nonNative = listed.find(call => !isDeepSeekNativeTool(call.name))
+        || (parsed && !isDeepSeekNativeTool(parsed.name) ? parsed : null);
+    if (nonNative && (allowed.size === 0 || allowed.has(nonNative.name))) return nonNative;
+    if (allowed.size === 0) return parsed || listed[0] || null;
+    return null;
+}
+
 function looksLikeToolCallMarkup(text) {
     return /TOOL_CALL:\s*[\w-]+|<\s*tool_call\b|[|｜]+\s*DSML\s*[|｜]+|[<＜]\s*\/?\s*(?:DSML)?(?:[\w.-]+:)?(?:tool[\s_-]*calls|function[\s_-]*calls|invoke)\b|["'](?:tool_call|tool_calls|function_call)["']\s*:/i.test(String(text || ''));
+}
+
+function looksLikeCodeDumpInsteadOfTool(text) {
+    const value = String(text || '');
+    if (!value || looksLikeToolCallMarkup(value)) return false;
+    let codeChars = 0;
+    let codeFences = 0;
+    const fenceRe = /```([a-zA-Z0-9#+_-]*)\r?\n([\s\S]*?)```/g;
+    let fence;
+    while ((fence = fenceRe.exec(value)) !== null) {
+        const lang = String(fence[1] || '').toLowerCase();
+        if (!lang || lang === 'json' || lang === 'text' || lang === 'txt' || lang === 'markdown' || lang === 'md') continue;
+        codeFences += 1;
+        codeChars += fence[2].length;
+    }
+    if (codeChars >= 400 || codeFences >= 2) return true;
+    if (codeFences === 1 && codeChars >= 200) return true;
+    return value.length >= 800 && /(?:^|\n)\s*(?:using\s+[\w.]+;|namespace\s+[\w.]+|public\s+(?:sealed\s+|partial\s+|static\s+|abstract\s+)*(?:class|struct|interface|enum)\b)/.test(value);
 }
 
 function parseToolCall(text) {
@@ -1556,11 +1670,14 @@ function parseToolCall(text) {
         if (tc) return tc;
     }
 
-    // Fenced JSON blocks.
-    const fenceRe = /```(?:json)?\s*([\s\S]*?)```/gi;
+    // Fenced JSON blocks. Skip language-tagged source fences (```csharp, ```python)
+    // so a code dump is not scanned as a tool envelope.
+    const fenceRe = /```([a-zA-Z0-9#+_-]*)\s*([\s\S]*?)```/gi;
     let fence;
     while ((fence = fenceRe.exec(text)) !== null) {
-        const tc = parseJsonToolCandidate(fence[1].trim(), 'fenced');
+        const lang = String(fence[1] || '').toLowerCase();
+        if (lang && lang !== 'json') continue;
+        const tc = parseJsonToolCandidate(fence[2].trim(), 'fenced');
         if (tc) return tc;
     }
 
@@ -2140,6 +2257,37 @@ function truncatePromptMiddle(text, maxChars, headRatio = 0.35) {
     return value.substring(0, headChars) + PROMPT_COMPACTION_MARKER + value.substring(value.length - tailChars);
 }
 
+function splitConversationTurns(text) {
+    const value = String(text || '');
+    if (!value) return [];
+    return value.split(/(?=^User: |^Assistant: |^\[Tool Result\])/m).filter(Boolean);
+}
+
+function compactConversation(conversation, maxChars) {
+    const value = String(conversation || '');
+    if (value.length <= maxChars) return value;
+    const turns = splitConversationTurns(value);
+    if (turns.length <= 1) return truncatePromptMiddle(value, maxChars, 0.25);
+
+    const joinedLength = (items) => items.reduce((sum, turn) => sum + turn.length, 0);
+    const perToolCap = Math.max(4000, Math.floor(maxChars * 0.25));
+    let next = turns.map((turn) => {
+        if (!/^\[Tool Result\]/.test(turn) || turn.length <= perToolCap) return turn;
+        return truncatePromptMiddle(turn, perToolCap, 0.2);
+    });
+    if (joinedLength(next) <= maxChars) return next.join('');
+
+    // Drop the oldest middle turns first so the original task and the latest
+    // tool loop stay intact. A single middle-out slice through 300k of file
+    // reads is what makes long Hermes sessions stop calling tools.
+    while (next.length > 2 && joinedLength(next) > maxChars) {
+        next.splice(1, 1);
+    }
+    const joined = next.join('');
+    if (joined.length <= maxChars) return joined;
+    return truncatePromptMiddle(joined, maxChars, 0.25);
+}
+
 function hasExplicitConversationHistory(messages) {
     const turns = (messages || []).filter(msg => msg && msg.role !== 'system');
     return turns.length > 1 || turns.some(msg => msg.role === 'assistant' || msg.role === 'tool');
@@ -2184,7 +2332,7 @@ function buildBoundedPrompt(systemPrompt, historyPrefix, conversationPrompt, max
     // Preserve the start of the task/system instructions and the most recent
     // tool loop. The injected tool adapter lives at the end of systemPrompt.
     const boundedSystem = truncatePromptMiddle(system, systemBudget, 0.35);
-    const boundedConversation = truncatePromptMiddle(currentConversation, conversationBudget, 0.25);
+    const boundedConversation = compactConversation(currentConversation, conversationBudget);
     let bounded = boundedSystem && boundedConversation
         ? `${boundedSystem}\n\n${boundedConversation}`
         : (boundedSystem || boundedConversation);
@@ -2280,9 +2428,8 @@ function formatMessages(messages, tools, options = {}) {
         } else if (msg.role === 'tool' && msg.content) {
             // Tool execution result — send back to DeepSeek as context
             const toolContent = normalizeMessageContent(msg.content);
-            // Do not impose a second, per-result 8k limit: one large tool result
-            // may be the essential input. buildBoundedPrompt applies the single
-            // global request cap while preserving the latest conversation tail.
+            // Do not impose an unconditional per-result cap here. compactConversation
+            // shrinks oversized tool results only when the global request cap is hit.
             conversation += `[Tool Result]\n${toolContent}\n\n`;
         }
     }
@@ -2620,7 +2767,8 @@ const server = http.createServer(async (req, res) => {
 
             const promptBuild = buildBoundedPrompt(resolved.systemPrompt, historyPrefix, resolved.conversation);
             const freshPromptBuild = buildBoundedPrompt(systemPrompt, recoveryHistoryPrefix, prompt);
-            let fullPrompt = promptBuild.prompt;
+            let fullPrompt = pinToolReminder(promptBuild.prompt, tools);
+            const freshPrompt = pinToolReminder(freshPromptBuild.prompt, tools);
             let promptCompacted = promptBuild.compacted;
             if (!resolved.omittedSystem) session.sentSystemFingerprint = resolved.fingerprint;
             if (resolved.omittedSystem || resolved.omittedPriorTurns) {
@@ -2632,7 +2780,7 @@ const server = http.createServer(async (req, res) => {
             }
 
             const startTime = Date.now();
-            const initialCall = await askDeepSeekStream(fullPrompt, agentId, requestedModel, freshPromptBuild.prompt, lockHolder, imageContext, webFlags);
+            const initialCall = await askDeepSeekStream(fullPrompt, agentId, requestedModel, freshPrompt, lockHolder, imageContext, webFlags);
             const dsResp = initialCall.resp;
             if (initialCall.promptUsed !== fullPrompt) {
                 fullPrompt = initialCall.promptUsed;
@@ -2748,7 +2896,18 @@ const server = http.createServer(async (req, res) => {
             while (!fullContent || fullContent.trim().length === 0) {
                 // Stop early if the client hung up or we've blown the request budget —
                 // no point burning more PoW solves + account quota for a dead socket.
-                if (clientGone) { console.log(`${agentTag} client disconnected; abandoning empty-retry loop`); return; }
+                if (clientGone) {
+                    console.log(`${agentTag} client disconnected; abandoning empty-retry loop`);
+                    if (!res.headersSent) {
+                        res.writeHead(499, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: {
+                            message: 'Client disconnected while recovering an empty DeepSeek response',
+                            type: 'client_disconnected',
+                            agent: agentId,
+                        } }));
+                    }
+                    return;
+                }
                 if (deadlineHit()) { console.log(`${agentTag} request deadline hit; stopping empty-retry loop`); break; }
                 const contextTooLong = isContextTooLongError(modelError);
                 if (modelError && !contextTooLong) break;
@@ -2760,7 +2919,11 @@ const server = http.createServer(async (req, res) => {
                     : Math.max(0.5, 1 - retryAttempt * 0.2);
                 const retryBudget = Math.max(MIN_UPSTREAM_PROMPT_CHARS, Math.floor(MAX_UPSTREAM_PROMPT_CHARS * retryRatio));
                 const retryBuild = buildRetryPrompt(systemPrompt, recoveryHistoryPrefix, prompt, fullPrompt, retryBudget);
-                const retryPrompt = retryBuild.prompt;
+                const retryPrompt = pinToolReminder(
+                    appendPromptInstruction(retryBuild.prompt, EMPTY_RESPONSE_NUDGE, retryBudget),
+                    tools,
+                    retryBudget,
+                );
                 if (retryBuild.compacted) {
                     promptCompacted = true;
                     markContextCompacted(res);
@@ -2827,7 +2990,7 @@ const server = http.createServer(async (req, res) => {
                 await new Promise(r => setTimeout(r, 500));
                 const contBeforeId = session.accountId;
                 const continuationRecoveryPrompt = appendPromptInstruction(
-                    `${freshPromptBuild.prompt}\n\n[Assistant response so far]\n${fullContent}`,
+                    `${freshPrompt}\n\n[Assistant response so far]\n${fullContent}`,
                     'Continue the assistant response from exactly where it stopped. Do not restart or repeat completed sections.'
                 );
                 const continuationCall = await askDeepSeekStream(
@@ -2866,46 +3029,68 @@ const server = http.createServer(async (req, res) => {
             const allowedToolNames = new Set(tools
                 .filter(tool => tool?.type === 'function' && tool.function?.name)
                 .map(tool => tool.function.name));
-            let toolCall = parseToolCall(fullContent);
-            let ignoredHarnessSearch = false;
-            if (toolCall && isHarnessWebSearchTool(toolCall.name)) {
-                console.log(`${agentTag} Ignoring harness ${toolCall.name}; native DeepSeek Search is enabled`);
-                ignoredHarnessSearch = true;
+            let toolCall = selectAgentToolCall(fullContent, allowedToolNames);
+            let ignoredNativeTool = null;
+            if (toolCall && isDeepSeekNativeTool(toolCall.name) && !allowedToolNames.has(toolCall.name)) {
+                console.log(`${agentTag} Ignoring DeepSeek-native ${toolCall.name}; gateway tools cannot run it`);
+                ignoredNativeTool = toolCall.name;
                 toolCall = null;
-            } else if (toolCall && (allowedToolNames.size === 0 || !allowedToolNames.has(toolCall.name))) {
-                if (allowedToolNames.size > 0) {
-                    console.log(`${agentTag} Model requested unknown tool ${toolCall.name}; attempting format repair.`);
-                }
+            } else if (toolCall && allowedToolNames.size > 0 && !allowedToolNames.has(toolCall.name)) {
+                console.log(`${agentTag} Model requested unknown tool ${toolCall.name}; attempting format repair.`);
+                toolCall = null;
+            } else if (toolCall && allowedToolNames.size === 0 && looksLikeToolCallMarkup(fullContent)) {
+                // Chat-only clients must not receive raw DSML as the answer.
+                ignoredNativeTool = toolCall.name;
                 toolCall = null;
             }
-            
-            // Retry once if legacy, XML, or DSML tool markup was truncated or
-            // malformed. Never pass raw DSML through as a normal assistant turn.
-            if (allowedToolNames.size > 0 && !toolCall && !ignoredHarnessSearch && looksLikeToolCallMarkup(fullContent) && !clientGone && !deadlineHit()) {
-                console.log(`${agentTag} Tool-call markup detected but invalid/truncated (${fullContent.length} chars). Retrying with stricter prompt on the same session...`);
-                const strictPrompt = '[STRICT INSTRUCTION] Your previous response contained incomplete tool-call markup. Keep arguments short and output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}';
+
+            const dsmlCalls = listDsmlToolCalls(fullContent);
+            const nativeOnlyDsml = dsmlCalls.length > 0 && dsmlCalls.every(call => isDeepSeekNativeTool(call.name));
+            const shouldRepairNative = !toolCall && (Boolean(ignoredNativeTool) || nativeOnlyDsml);
+            const shouldRepairMarkup = !toolCall && !shouldRepairNative && looksLikeToolCallMarkup(fullContent);
+            const shouldRepairCodeDump = allowedToolNames.size > 0 && !toolCall && !shouldRepairMarkup && !shouldRepairNative && looksLikeCodeDumpInsteadOfTool(fullContent);
+            if ((shouldRepairMarkup || shouldRepairCodeDump || shouldRepairNative) && !clientGone && !deadlineHit()) {
+                const reason = shouldRepairNative
+                    ? `Model called DeepSeek-native ${ignoredNativeTool || dsmlCalls.map(call => call.name).join(', ') || 'tool'}`
+                    : (shouldRepairMarkup
+                        ? 'Tool-call markup detected but invalid/truncated'
+                        : 'Model dumped source code instead of a tool request');
+                console.log(`${agentTag} ${reason} (${fullContent.length} chars). Retrying with stricter prompt on the same session...`);
+                const strictPrompt = shouldRepairNative
+                    ? NATIVE_TOOL_REPAIR_PROMPT
+                    : (shouldRepairMarkup
+                        ? '[STRICT INSTRUCTION] Your previous response contained incomplete tool-call markup. Keep arguments short and output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}'
+                        : '[STRICT INSTRUCTION] You pasted source code as plain text. This gateway cannot apply pasted files. Request exactly one tool to write or edit the file. Output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}. Put file contents in the tool arguments, not in markdown fences.');
                 const { resp: retryResp2 } = await askDeepSeekStream(strictPrompt, agentId, requestedModel, strictPrompt, lockHolder, imageContext, webFlags);
                 const retryResult2 = await readDeepSeekResponse(retryResp2.body);
                 const retryContent2 = retryResult2 && retryResult2.content ? sanitizeContent(retryResult2.content) : '';
                 if (retryContent2 && retryContent2.trim()) {
-                    const retryTc = parseToolCall(retryContent2);
-                    if (retryTc && allowedToolNames.has(retryTc.name)) {
+                    const retryTc = selectAgentToolCall(retryContent2, allowedToolNames);
+                    const retryAccepted = retryTc && (
+                        (allowedToolNames.size > 0 && allowedToolNames.has(retryTc.name))
+                        || (allowedToolNames.size === 0 && !isDeepSeekNativeTool(retryTc.name))
+                    );
+                    if (retryAccepted) {
                         console.log(`${agentTag} Retry with strict prompt succeeded: ${retryTc.name}`);
                         fullContent = retryContent2;
                         reasoningContent = retryResult2.reasoningContent ? sanitizeContent(retryResult2.reasoningContent) : '';
                         toolCall = retryTc;
+                    } else if (!looksLikeToolCallMarkup(retryContent2) && !looksLikeCodeDumpInsteadOfTool(retryContent2)) {
+                        console.log(`${agentTag} Retry produced a plain-text answer; using it.`);
+                        fullContent = retryContent2;
+                        reasoningContent = retryResult2.reasoningContent ? sanitizeContent(retryResult2.reasoningContent) : reasoningContent;
                     } else {
-                        console.log(`${agentTag} Retry still has broken tool markup. Returning a safe error instead of leaking it as text.`);
+                        console.log(`${agentTag} Retry still has ${shouldRepairMarkup || shouldRepairNative ? 'broken/native tool markup' : 'no tool request'}. ${shouldRepairCodeDump ? 'Passing the original text through.' : 'Returning a safe error instead of leaking it as text.'}`);
                         reasoningContent = retryResult2.reasoningContent ? sanitizeContent(retryResult2.reasoningContent) : reasoningContent;
                     }
                 }
             }
 
-            if (allowedToolNames.size > 0 && !toolCall && !ignoredHarnessSearch && looksLikeToolCallMarkup(fullContent)) {
+            if (!toolCall && looksLikeToolCallMarkup(fullContent)) {
                 const failure = resetRemoteSession(session);
                 res.writeHead(502, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: {
-                    message: 'DeepSeek returned malformed tool-call markup after one repair attempt',
+                    message: 'DeepSeek returned malformed or native-only tool-call markup after one repair attempt',
                     type: 'malformed_tool_call',
                     agent: agentId,
                     failed_session_id: failure.failedSessionId,
@@ -3140,9 +3325,18 @@ module.exports = {
         applyResponsePatchOperations,
         compactToolSchema,
         formatToolDefinitions,
+        formatToolReminder,
+        pinToolReminder,
         parseToolCall,
+        listDsmlToolCalls,
+        selectAgentToolCall,
         parseDsmlToolCall,
         looksLikeToolCallMarkup,
+        looksLikeCodeDumpInsteadOfTool,
+        isDeepSeekNativeTool,
+        EMPTY_RESPONSE_NUDGE,
+        splitConversationTurns,
+        compactConversation,
         truncatePromptMiddle,
         hasExplicitConversationHistory,
         buildRecoveryHistoryPrefix,

@@ -342,6 +342,27 @@ test('parseToolCall accepts the doubled-bar DSML Web variant from issue #19', ()
   assert.deepEqual(JSON.parse(call.arguments), { query: 'DeepSeek DSML' });
 });
 
+test('issue #19 stacked native DSML is listed and never treated as a gateway tool', () => {
+  const dsml = [
+    '<｜｜DSML｜｜ Tool Calls> <｜｜DSML｜｜ name="execute_code">{"code":"print(1)"}',
+    '<｜｜DSML｜｜ name="web_search">{"query":"Unity player controller"}',
+  ].join('\n');
+
+  assert.equal(serverInternals.looksLikeToolCallMarkup(dsml), true);
+  assert.equal(serverInternals.isDeepSeekNativeTool('execute_code'), true);
+  assert.equal(serverInternals.isDeepSeekNativeTool('web_search'), true);
+  assert.equal(serverInternals.isDeepSeekNativeTool('write_file'), false);
+
+  const listed = serverInternals.listDsmlToolCalls(dsml);
+  assert.deepEqual(listed.map(call => call.name), ['execute_code', 'web_search']);
+  assert.equal(serverInternals.selectAgentToolCall(dsml, ['write_file', 'read_file']), null);
+  assert.equal(serverInternals.selectAgentToolCall(dsml, ['execute_code'])?.name, 'execute_code');
+  assert.match(serverInternals.EMPTY_RESPONSE_NUDGE, /empty/);
+  assert.match(serverInternals.formatToolReminder([
+    { type: 'function', function: { name: 'write_file' } },
+  ]), /execute_code/);
+});
+
 test('parseToolCall accepts zero-argument, CDATA, legacy, collapsed, and prefixed wrappers', () => {
   const zeroArg = serverInternals.parseToolCall(
     '<|DSML|tool_calls><|DSML|invoke name="ping"></|DSML|invoke></|DSML|tool_calls>'
@@ -384,6 +405,51 @@ test('parseToolCall rejects bare invokes and bare JSON examples', () => {
   const prose = 'For example return {"name":"execute_code","arguments":{"code":"danger()"}} when appropriate.';
   assert.equal(serverInternals.parseToolCall(prose), null);
   assert.equal(serverInternals.parseToolCall('```json\n{"name":"execute_code","arguments":{"code":"danger()"}}\n```'), null);
+});
+
+test('parseToolCall ignores language-tagged source fences and still accepts fenced JSON envelopes', () => {
+  const csharpDump = [
+    'Here is the script',
+    '```csharp',
+    'using UnityEngine;',
+    'public class PlayerController : MonoBehaviour {',
+    '    [SerializeField] float speed = 6f;',
+    '    void Update() {',
+    '        var input = new Vector2(Input.GetAxis("Horizontal"), Input.GetAxis("Vertical"));',
+    '        transform.position += (Vector3)(input.normalized * speed * Time.deltaTime);',
+    '    }',
+    '}',
+    '```',
+  ].join('\n');
+  assert.equal(serverInternals.parseToolCall(csharpDump), null);
+  assert.equal(serverInternals.looksLikeCodeDumpInsteadOfTool(csharpDump), true);
+
+  const fencedEnvelope = [
+    '```json',
+    '{"tool_call":{"name":"write_file","arguments":{"path":"Assets/Scripts/PlayerController.cs","content":"class X {}"}}}',
+    '```',
+  ].join('\n');
+  const call = serverInternals.parseToolCall(fencedEnvelope);
+  assert.equal(call.name, 'write_file');
+  assert.deepEqual(JSON.parse(call.arguments), {
+    path: 'Assets/Scripts/PlayerController.cs',
+    content: 'class X {}',
+  });
+});
+
+test('code-dump detector catches Hermes-style C# pastes but not ordinary answers', () => {
+  const unfenced = [
+    'using UnityEngine;',
+    'namespace Game.Player {',
+    'public class PlayerController : MonoBehaviour {',
+    `    ${'void Tick() {}\n'.repeat(80)}`,
+    '}',
+    '}',
+  ].join('\n');
+  assert.equal(serverInternals.looksLikeCodeDumpInsteadOfTool(unfenced), true);
+  assert.equal(serverInternals.looksLikeCodeDumpInsteadOfTool('The file is already updated. I will run tests next.'), false);
+  assert.equal(serverInternals.looksLikeCodeDumpInsteadOfTool('```json\n{"ok":true}\n```'), false);
+  assert.equal(serverInternals.looksLikeToolCallMarkup(unfenced), false);
 });
 
 test('parseToolCall accepts only explicit JSON envelopes with valid object arguments', () => {
@@ -535,6 +601,38 @@ test('buildBoundedPrompt preserves task edges and drops duplicate recovery histo
   assert.match(bounded.prompt, /TASK_START/);
   assert.match(bounded.prompt, /LATEST_TOOL_RESULT/);
   assert.doesNotMatch(bounded.prompt, /Previous conversation/);
+});
+
+test('conversation compaction shrinks huge tool results and keeps the latest user turn', () => {
+  const conversation = [
+    'User: implement the player controller\n\n',
+    `[Tool Result]\n${'OLD_FILE'.repeat(8000)}\n\n`,
+    `[Tool Result]\n${'NEW_FILE'.repeat(8000)}\nRESULT_END\n\n`,
+    'User: now write the edited script with a tool\n',
+  ].join('');
+  const compacted = serverInternals.compactConversation(conversation, 12000);
+  assert.ok(compacted.length <= 12000);
+  assert.match(compacted, /implement the player controller/);
+  assert.match(compacted, /now write the edited script with a tool/);
+  assert.match(compacted, /RESULT_END/);
+  const oldRepeats = compacted.split('OLD_FILE').length - 1;
+  assert.ok(oldRepeats < 800, `oldest tool result should be shrunk, got ${oldRepeats} repeats`);
+});
+
+test('tool reminder is pinned after compaction so sticky sessions keep the tool format', () => {
+  const tools = [
+    { type: 'function', function: { name: 'write_file', parameters: { type: 'object' } } },
+    { type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } },
+  ];
+  const reminder = serverInternals.formatToolReminder(tools);
+  assert.match(reminder, /write_file, read_file/);
+  assert.match(reminder, /Do not paste source files/);
+
+  const pinned = serverInternals.pinToolReminder(`TASK\n${'x'.repeat(5000)}`, tools, 800);
+  assert.ok(pinned.length <= 800);
+  assert.match(pinned, /--- END TOOL REMINDER ---$/);
+  assert.match(pinned, /Available tools: write_file, read_file/);
+  assert.equal(serverInternals.formatToolReminder([]), '');
 });
 
 test('client-provided multi-turn history suppresses server recovery-history injection', () => {
