@@ -2407,6 +2407,15 @@ function classifyRecoveryFailure(modelError, timedOut = false, overflow = false)
     return { status: 502, type: modelError?.type || 'empty_response' };
 }
 
+// A live DeepSeek chat already holds the transcript. Empty replies, tool-markup
+// failures, and timeouts are not a reason to open a new chat and resend it.
+// Only a real context overflow, or a session that no longer exists, starts over.
+function remoteSessionShouldStay(session, { overflow = false, modelError = null } = {}) {
+    if (!session?.id) return false;
+    if (overflow || isContextTooLongError(modelError)) return false;
+    return true;
+}
+
 function isInstantEmptyResponse({ content, reasoningContent, messageId, elapsedMs }) {
     const empty = !String(content || '').trim() && !String(reasoningContent || '').trim();
     return empty && !messageId && Number(elapsedMs) >= 0 && Number(elapsedMs) < INSTANT_EMPTY_MS;
@@ -2980,7 +2989,8 @@ const server = http.createServer(async (req, res) => {
                         messageId: lastMessageId,
                         elapsedMs: lastReadMs,
                     });
-                if (modelError && !overflow && !isContextTooLongError(modelError)) break;
+                const keepSession = remoteSessionShouldStay(session, { overflow, modelError });
+                if (modelError && !overflow && !isContextTooLongError(modelError) && !keepSession) break;
                 const retryCap = overflow ? MAX_OVERFLOW_RETRIES : MAX_EMPTY_RETRIES;
                 if (retryAttempt >= retryCap) break;
                 retryAttempt++;
@@ -2990,24 +3000,33 @@ const server = http.createServer(async (req, res) => {
                     : Math.max(0.5, 1 - retryAttempt * 0.2);
                 const minChars = overflow ? CONTEXT_OVERFLOW_MIN_CHARS : MIN_UPSTREAM_PROMPT_CHARS;
                 const retryBudget = Math.max(minChars, Math.floor(MAX_UPSTREAM_PROMPT_CHARS * retryRatio));
-                const retryBuild = buildRetryPrompt(systemPrompt, recoveryHistoryPrefix, prompt, fullPrompt, retryBudget);
-                const retryPrompt = pinToolReminder(
-                    appendPromptInstruction(retryBuild.prompt, EMPTY_RESPONSE_NUDGE, retryBudget),
-                    tools,
-                    retryBudget,
-                );
-                if (retryBuild.compacted) {
+                const retryBuild = keepSession
+                    ? null
+                    : buildRetryPrompt(systemPrompt, recoveryHistoryPrefix, prompt, fullPrompt, retryBudget);
+                const retryPrompt = keepSession
+                    ? EMPTY_RESPONSE_NUDGE
+                    : pinToolReminder(
+                        appendPromptInstruction(retryBuild.prompt, EMPTY_RESPONSE_NUDGE, retryBudget),
+                        tools,
+                        retryBudget,
+                    );
+                if (retryBuild?.compacted) {
                     promptCompacted = true;
                     markContextCompacted(res);
                 }
                 const reason = overflow ? 'context-too-long or instant-empty response' : 'empty response';
-                console.log(`${agentTag} ${reason} (msg#${session.messageCount}, retry ${retryAttempt}/${retryCap}, prompt=${retryPrompt.length} chars). Resetting session...`);
-                resetRemoteSession(session);
-                session.sentSystemFingerprint = fingerprintPrompt(systemPrompt);
+                if (keepSession) {
+                    console.log(`${agentTag} ${reason} (msg#${session.messageCount}, retry ${retryAttempt}/${retryCap}). Continuing chat ${session.id}; not resending the transcript.`);
+                } else {
+                    console.log(`${agentTag} ${reason} (msg#${session.messageCount}, retry ${retryAttempt}/${retryCap}, prompt=${retryPrompt.length} chars). Resetting session...`);
+                    resetRemoteSession(session);
+                    session.sentSystemFingerprint = fingerprintPrompt(systemPrompt);
+                }
                 await new Promise(r => setTimeout(r, Math.min(500 * retryAttempt, 1500)));
                 try {
                     const retryStarted = Date.now();
-                    const { resp: retryResp } = await askDeepSeekStream(retryPrompt, agentId, requestedModel, retryPrompt, lockHolder, imageContext, webFlags);
+                    const recoveryPrompt = keepSession ? freshPrompt : retryPrompt;
+                    const { resp: retryResp } = await askDeepSeekStream(retryPrompt, agentId, requestedModel, recoveryPrompt, lockHolder, imageContext, webFlags);
                     const retryResult = await readDeepSeekResponse(retryResp.body);
                     const retryState = normalizeRetryResponse(retryResult);
                     fullPrompt = retryPrompt;
@@ -3041,7 +3060,11 @@ const server = http.createServer(async (req, res) => {
             if (!fullContent || fullContent.trim().length === 0) {
                 const timedOut = deadlineHit();
                 const failureClass = classifyRecoveryFailure(modelError, timedOut, overflow);
-                const failure = resetRemoteSession(session);
+                const keepSession = remoteSessionShouldStay(session, { overflow, modelError });
+                const failure = keepSession
+                    ? { failedSessionId: session.id, failedMessageCount: session.messageCount, accountId: session.accountId }
+                    : resetRemoteSession(session);
+                if (keepSession) console.log(`${agentTag} Keeping chat ${session.id} after an empty reply so the next turn continues it.`);
                 const errorType = failureClass.type;
                 const errorMessage = modelError?.content
                     || (timedOut
@@ -3183,7 +3206,8 @@ const server = http.createServer(async (req, res) => {
             }
 
             if (!toolCall && looksLikeToolCallMarkup(fullContent)) {
-                const failure = resetRemoteSession(session);
+                const failure = { failedSessionId: session.id, failedMessageCount: session.messageCount, accountId: session.accountId };
+                console.log(`${agentTag} Keeping chat ${session.id || '(none)'} after malformed tool markup.`);
                 res.writeHead(502, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: {
                     message: 'DeepSeek returned malformed or native-only tool-call markup after one repair attempt',
@@ -3258,7 +3282,10 @@ const server = http.createServer(async (req, res) => {
             const headers = { 'Content-Type': 'application/json' };
             if (status === 429 && e.retryAfter) headers['Retry-After'] = String(e.retryAfter);
             res.writeHead(status, headers);
-            const failure = timedOut && activeSession ? resetRemoteSession(activeSession) : null;
+            const failure = timedOut && activeSession
+                ? { failedSessionId: activeSession.id, failedMessageCount: activeSession.messageCount, accountId: activeSession.accountId }
+                : null;
+            if (timedOut && activeSession?.id) console.log(`[${activeAgentId}] Keeping chat ${activeSession.id} after timeout.`);
             res.end(JSON.stringify({ error: {
                 message: e.message,
                 type: e.type || (overflowError ? 'context_length_exceeded' : (timedOut ? 'request_timeout' : 'server_error')),
@@ -3446,6 +3473,7 @@ module.exports = {
         looksLikeAbandonedToolLoop,
         normalizeRetryResponse,
         classifyRecoveryFailure,
+        remoteSessionShouldStay,
         isTimeoutError,
         normalizeApiParams,
         extractImageInputs,

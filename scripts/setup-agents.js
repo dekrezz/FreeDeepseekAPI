@@ -21,6 +21,8 @@ const VALID_MODELS = [
   'deepseek-v4-flash-search',
   'deepseek-v4-flash-thinking-search',
 ];
+const OPENCODE_MODEL_LABEL = 'DeepSeek 4.1';
+const OPENCODE_PROVIDER_LABEL = 'Flash';
 
 function argValue(args, name, fallback = '') {
   for (let i = 0; i < args.length; i++) {
@@ -353,7 +355,7 @@ function setupOpenCode(opts) {
   const models = {};
   for (const id of VALID_MODELS) {
     models[id] = {
-      name: `${id} (FreeDeepseekAPI)`,
+      name: OPENCODE_MODEL_LABEL,
       attachment: true,
       reasoning: id.includes('thinking'),
       tool_call: true,
@@ -362,7 +364,7 @@ function setupOpenCode(opts) {
         output: ['text'],
       },
       limit: {
-        context: 128000,
+        context: 1048576,
         output: 8192,
       },
     };
@@ -371,7 +373,7 @@ function setupOpenCode(opts) {
   cfg.provider = cfg.provider && typeof cfg.provider === 'object' ? cfg.provider : {};
   cfg.provider.freedeepseek = {
     npm: '@ai-sdk/openai-compatible',
-    name: 'FreeDeepseekAPI',
+    name: OPENCODE_PROVIDER_LABEL,
     options: {
       baseURL: openaiBase(opts.baseUrl),
       apiKey: opts.apiKey,

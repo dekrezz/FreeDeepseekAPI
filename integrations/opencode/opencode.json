@@ -3,14 +3,14 @@
   "provider": {
     "freedeepseek": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "FreeDeepseekAPI",
+      "name": "Flash",
       "options": {
         "baseURL": "http://127.0.0.1:9655/v1",
         "apiKey": "local"
       },
       "models": {
         "deepseek-v4-flash": {
-          "name": "DeepSeek-V4.1-Flash (FreeDeepseekAPI)",
+          "name": "DeepSeek 4.1",
           "attachment": true,
           "reasoning": false,
           "tool_call": true,
@@ -19,12 +19,12 @@
             "output": ["text"]
           },
           "limit": {
-            "context": 128000,
+            "context": 1048576,
             "output": 8192
           }
         },
         "deepseek-v4-flash-thinking": {
-          "name": "DeepSeek-V4.1-Flash thinking (FreeDeepseekAPI)",
+          "name": "DeepSeek 4.1",
           "attachment": true,
           "reasoning": true,
           "tool_call": true,
@@ -33,12 +33,12 @@
             "output": ["text"]
           },
           "limit": {
-            "context": 128000,
+            "context": 1048576,
             "output": 8192
           }
         },
         "deepseek-v4-flash-search": {
-          "name": "DeepSeek-V4.1-Flash search (FreeDeepseekAPI)",
+          "name": "DeepSeek 4.1",
           "attachment": true,
           "reasoning": false,
           "tool_call": true,
@@ -47,12 +47,12 @@
             "output": ["text"]
           },
           "limit": {
-            "context": 128000,
+            "context": 1048576,
             "output": 8192
           }
         },
         "deepseek-v4-flash-thinking-search": {
-          "name": "DeepSeek-V4.1-Flash thinking+search (FreeDeepseekAPI)",
+          "name": "DeepSeek 4.1",
           "attachment": true,
           "reasoning": true,
           "tool_call": true,
@@ -61,7 +61,7 @@
             "output": ["text"]
           },
           "limit": {
-            "context": 128000,
+            "context": 1048576,
             "output": 8192
           }
         }

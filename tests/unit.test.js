@@ -806,6 +806,20 @@ test('too-long HTTP bodies become 400 instead of a session-reset storm', () => {
   );
 });
 
+test('an empty reply keeps a live DeepSeek chat instead of opening a new one', () => {
+  const session = serverInternals.createSession();
+  session.id = 'live-chat';
+  assert.equal(serverInternals.remoteSessionShouldStay(session, {
+    overflow: false,
+    modelError: { type: 'error', content: '' },
+  }), true);
+  assert.equal(serverInternals.remoteSessionShouldStay(session, { overflow: true }), false);
+  assert.equal(serverInternals.remoteSessionShouldStay(session, {
+    modelError: { content: 'Содержание слишком длинное. Сократите его и попробуйте снова.' },
+  }), false);
+  assert.equal(serverInternals.remoteSessionShouldStay(serverInternals.createSession(), {}), false);
+});
+
 test('abandoned tool-loop detector retries short stops after a tool result', () => {
   const afterTool = [
     { role: 'user', content: 'implement it' },
@@ -1276,6 +1290,10 @@ test('one-click agent setup adds opt-in providers without replacing native defau
   assert.equal(opencode.tools.websearch, false);
   assert.equal(opencode.tools.webfetch, false);
   assert.equal(opencode.permission.websearch, 'deny');
+  assert.equal(opencode.provider.freedeepseek.name, 'Flash');
+  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash'].name, 'DeepSeek 4.1');
+  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking-search'].name, 'DeepSeek 4.1');
+  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking-search'].limit.context, 1048576);
   assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking-search'].attachment, true);
   assert.deepEqual(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking-search'].modalities.input, ['text', 'image']);
   const agentsMd = fs.readFileSync(path.join(dir, '.config', 'opencode', 'AGENTS.md'), 'utf8');
