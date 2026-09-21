@@ -151,6 +151,9 @@ const MAX_EMPTY_RETRIES = Number.isFinite(configuredEmptyRetries)
     ? Math.max(0, Math.min(10, Math.floor(configuredEmptyRetries)))
     : 2;
 const MIN_UPSTREAM_PROMPT_CHARS = 16000;
+const CONTEXT_OVERFLOW_MIN_CHARS = 8000;
+const MAX_OVERFLOW_RETRIES = 3;
+const INSTANT_EMPTY_MS = 1500;
 const configuredPromptChars = Number(process.env.DEEPSEEK_MAX_PROMPT_CHARS);
 const MAX_UPSTREAM_PROMPT_CHARS = Number.isFinite(configuredPromptChars)
     ? Math.max(MIN_UPSTREAM_PROMPT_CHARS, Math.floor(configuredPromptChars))
@@ -558,8 +561,15 @@ function isDeepSeekModelErrorEvent(event) {
 }
 
 function createUpstreamHttpError(status, body = '', retryAfter = null) {
-    const code = Number(status) || 502;
     const detail = String(body || '').replace(/\s+/g, ' ').trim().substring(0, 300);
+    if (isContextTooLongError(detail)) {
+        const error = new Error(detail || 'DeepSeek prompt is too long');
+        error.status = 400;
+        error.type = 'context_length_exceeded';
+        if (retryAfter) error.retryAfter = retryAfter;
+        return error;
+    }
+    const code = Number(status) || 502;
     const type = code === 429
         ? 'rate_limit_error'
         : ((code === 401 || code === 403) ? 'authentication_error' : 'upstream_http_error');
@@ -1054,6 +1064,9 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
         markAccountFailure(account, resp.status, 'completion', retryAfter);
         const errText = await resp.text();
         console.log(`${agentTag} Session error (${resp.status}): ${errText.substring(0, 100)}`);
+        if (isContextTooLongError(errText)) {
+            throw createUpstreamHttpError(resp.status, errText, retryAfter);
+        }
         if (resp.status === 400 || resp.status === 404 || resp.status === 500) {
             console.log(`${agentTag} Session ${session.id} expired. Creating new session...`);
             resetRemoteSession(session);
@@ -2388,10 +2401,32 @@ function normalizeRetryResponse(result) {
     };
 }
 
-function classifyRecoveryFailure(modelError, timedOut = false) {
-    if (isContextTooLongError(modelError)) return { status: 400, type: 'context_length_exceeded' };
+function classifyRecoveryFailure(modelError, timedOut = false, overflow = false) {
+    if (overflow || isContextTooLongError(modelError)) return { status: 400, type: 'context_length_exceeded' };
     if (timedOut) return { status: 504, type: 'request_timeout' };
     return { status: 502, type: modelError?.type || 'empty_response' };
+}
+
+function isInstantEmptyResponse({ content, reasoningContent, messageId, elapsedMs }) {
+    const empty = !String(content || '').trim() && !String(reasoningContent || '').trim();
+    return empty && !messageId && Number(elapsedMs) >= 0 && Number(elapsedMs) < INSTANT_EMPTY_MS;
+}
+
+function lastTurnIsToolResult(messages) {
+    for (let i = (messages || []).length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (!msg || msg.role === 'system') continue;
+        return msg.role === 'tool';
+    }
+    return false;
+}
+
+function looksLikeAbandonedToolLoop(text, messages) {
+    if (!lastTurnIsToolResult(messages)) return false;
+    const value = String(text || '').trim();
+    if (!value || looksLikeToolCallMarkup(value) || looksLikeCodeDumpInsteadOfTool(value)) return false;
+    if (/\b(done|completed|fixed|finished|готово|сделано)\b/i.test(value)) return false;
+    return value.length < 600;
 }
 
 function isTimeoutError(error) {
@@ -2780,9 +2815,24 @@ const server = http.createServer(async (req, res) => {
             }
 
             const startTime = Date.now();
-            const initialCall = await askDeepSeekStream(fullPrompt, agentId, requestedModel, freshPrompt, lockHolder, imageContext, webFlags);
-            const dsResp = initialCall.resp;
-            if (initialCall.promptUsed !== fullPrompt) {
+            let initialCall = null;
+            let fullContent = '';
+            let reasoningContent = '';
+            let finishReason = null;
+            let modelError = null;
+            let lastMessageId = null;
+            let lastReadMs = 0;
+            let overflow = false;
+            try {
+                initialCall = await askDeepSeekStream(fullPrompt, agentId, requestedModel, freshPrompt, lockHolder, imageContext, webFlags);
+            } catch (e) {
+                if (!isContextTooLongError(e)) throw e;
+                overflow = true;
+                modelError = { type: 'context_length_exceeded', content: e.message || e.content || '' };
+                lastReadMs = Date.now() - startTime;
+                console.log(`${agentTag} Upstream rejected the prompt as too long (${lastReadMs}ms). Compacting instead of resending it.`);
+            }
+            if (initialCall && initialCall.promptUsed !== fullPrompt) {
                 fullPrompt = initialCall.promptUsed;
                 if (freshPromptBuild.compacted) {
                     promptCompacted = true;
@@ -2884,11 +2934,24 @@ const server = http.createServer(async (req, res) => {
                 return { content: fullContent, reasoningContent, messageId: newMessageId, finishReason, modelError };
             }
 
-            let { content: fullContent, reasoningContent, finishReason, modelError } = await readDeepSeekResponse(dsResp.body);
-            fullContent = sanitizeContent(fullContent);
-            reasoningContent = sanitizeContent(reasoningContent || '');
-            const elapsed = Date.now() - startTime;
-            console.log(`${agentTag} Got ${fullContent.length} chars (+${reasoningContent.length} reasoning chars) in ${elapsed}ms (msg#${session.messageCount})`);
+            if (initialCall) {
+                const firstRead = await readDeepSeekResponse(initialCall.resp.body);
+                fullContent = sanitizeContent(firstRead.content);
+                reasoningContent = sanitizeContent(firstRead.reasoningContent || '');
+                finishReason = firstRead.finishReason;
+                modelError = firstRead.modelError;
+                lastMessageId = firstRead.messageId;
+                lastReadMs = Date.now() - startTime;
+                overflow = overflow
+                    || isContextTooLongError(modelError)
+                    || isInstantEmptyResponse({
+                        content: fullContent,
+                        reasoningContent,
+                        messageId: lastMessageId,
+                        elapsedMs: lastReadMs,
+                    });
+                console.log(`${agentTag} Got ${fullContent.length} chars (+${reasoningContent.length} reasoning chars) in ${lastReadMs}ms (msg#${session.messageCount})`);
+            }
 
             // Empty/context-overflow recovery. Each retry gets a smaller prompt
             // and a fresh remote session; bounded attempts prevent retry storms.
@@ -2909,15 +2972,24 @@ const server = http.createServer(async (req, res) => {
                     return;
                 }
                 if (deadlineHit()) { console.log(`${agentTag} request deadline hit; stopping empty-retry loop`); break; }
-                const contextTooLong = isContextTooLongError(modelError);
-                if (modelError && !contextTooLong) break;
-                if (retryAttempt >= MAX_EMPTY_RETRIES) break;
+                overflow = overflow
+                    || isContextTooLongError(modelError)
+                    || isInstantEmptyResponse({
+                        content: fullContent,
+                        reasoningContent,
+                        messageId: lastMessageId,
+                        elapsedMs: lastReadMs,
+                    });
+                if (modelError && !overflow && !isContextTooLongError(modelError)) break;
+                const retryCap = overflow ? Math.min(MAX_OVERFLOW_RETRIES, MAX_EMPTY_RETRIES) : MAX_EMPTY_RETRIES;
+                if (retryAttempt >= retryCap) break;
                 retryAttempt++;
 
-                const retryRatio = contextTooLong
-                    ? Math.max(0.35, 0.8 - retryAttempt * 0.2)
+                const retryRatio = overflow
+                    ? Math.max(0.15, 0.45 - retryAttempt * 0.15)
                     : Math.max(0.5, 1 - retryAttempt * 0.2);
-                const retryBudget = Math.max(MIN_UPSTREAM_PROMPT_CHARS, Math.floor(MAX_UPSTREAM_PROMPT_CHARS * retryRatio));
+                const minChars = overflow ? CONTEXT_OVERFLOW_MIN_CHARS : MIN_UPSTREAM_PROMPT_CHARS;
+                const retryBudget = Math.max(minChars, Math.floor(MAX_UPSTREAM_PROMPT_CHARS * retryRatio));
                 const retryBuild = buildRetryPrompt(systemPrompt, recoveryHistoryPrefix, prompt, fullPrompt, retryBudget);
                 const retryPrompt = pinToolReminder(
                     appendPromptInstruction(retryBuild.prompt, EMPTY_RESPONSE_NUDGE, retryBudget),
@@ -2928,30 +3000,47 @@ const server = http.createServer(async (req, res) => {
                     promptCompacted = true;
                     markContextCompacted(res);
                 }
-                const reason = contextTooLong ? 'context-too-long response' : 'empty response';
-                console.log(`${agentTag} ${reason} (msg#${session.messageCount}, retry ${retryAttempt}/${MAX_EMPTY_RETRIES}, prompt=${retryPrompt.length} chars). Resetting session...`);
+                const reason = overflow ? 'context-too-long or instant-empty response' : 'empty response';
+                console.log(`${agentTag} ${reason} (msg#${session.messageCount}, retry ${retryAttempt}/${retryCap}, prompt=${retryPrompt.length} chars). Resetting session...`);
                 resetRemoteSession(session);
                 session.sentSystemFingerprint = fingerprintPrompt(systemPrompt);
-                // Brief delay before retry to let DeepSeek breathe
                 await new Promise(r => setTimeout(r, Math.min(500 * retryAttempt, 1500)));
-                const { resp: retryResp } = await askDeepSeekStream(retryPrompt, agentId, requestedModel, retryPrompt, lockHolder, imageContext, webFlags);
-                const retryResult = await readDeepSeekResponse(retryResp.body);
-                const retryState = normalizeRetryResponse(retryResult);
-                fullPrompt = retryPrompt;
-                modelError = retryState.modelError;
-                // A previous empty response may have carried finish_reason=length.
-                // Never leak it into a successful retry that supplied no reason.
-                finishReason = retryState.finishReason;
-                if (retryState.content && retryState.content.trim().length > 0) {
-                    console.log(`${agentTag} Retry ${retryAttempt} succeeded`);
-                    fullContent = retryState.content;
-                    reasoningContent = retryState.reasoningContent;
+                try {
+                    const retryStarted = Date.now();
+                    const { resp: retryResp } = await askDeepSeekStream(retryPrompt, agentId, requestedModel, retryPrompt, lockHolder, imageContext, webFlags);
+                    const retryResult = await readDeepSeekResponse(retryResp.body);
+                    const retryState = normalizeRetryResponse(retryResult);
+                    fullPrompt = retryPrompt;
+                    modelError = retryState.modelError;
+                    finishReason = retryState.finishReason;
+                    lastMessageId = retryResult.messageId;
+                    lastReadMs = Date.now() - retryStarted;
+                    if (retryState.content && retryState.content.trim().length > 0) {
+                        console.log(`${agentTag} Retry ${retryAttempt} succeeded`);
+                        fullContent = retryState.content;
+                        reasoningContent = retryState.reasoningContent;
+                    } else {
+                        overflow = overflow
+                            || isContextTooLongError(modelError)
+                            || isInstantEmptyResponse({
+                                content: retryState.content,
+                                reasoningContent: retryState.reasoningContent,
+                                messageId: lastMessageId,
+                                elapsedMs: lastReadMs,
+                            });
+                    }
+                } catch (e) {
+                    if (!isContextTooLongError(e)) throw e;
+                    overflow = true;
+                    modelError = { type: 'context_length_exceeded', content: e.message || e.content || '' };
+                    fullPrompt = retryPrompt;
+                    console.log(`${agentTag} Retry ${retryAttempt} still too long; shrinking further.`);
                 }
             }
 
             if (!fullContent || fullContent.trim().length === 0) {
                 const timedOut = deadlineHit();
-                const failureClass = classifyRecoveryFailure(modelError, timedOut);
+                const failureClass = classifyRecoveryFailure(modelError, timedOut, overflow);
                 const failure = resetRemoteSession(session);
                 const errorType = failureClass.type;
                 const errorMessage = modelError?.content
@@ -3049,18 +3138,23 @@ const server = http.createServer(async (req, res) => {
             const shouldRepairNative = !toolCall && (Boolean(ignoredNativeTool) || nativeOnlyDsml);
             const shouldRepairMarkup = !toolCall && !shouldRepairNative && looksLikeToolCallMarkup(fullContent);
             const shouldRepairCodeDump = allowedToolNames.size > 0 && !toolCall && !shouldRepairMarkup && !shouldRepairNative && looksLikeCodeDumpInsteadOfTool(fullContent);
-            if ((shouldRepairMarkup || shouldRepairCodeDump || shouldRepairNative) && !clientGone && !deadlineHit()) {
+            const shouldRepairAbandoned = allowedToolNames.size > 0 && !toolCall && !shouldRepairMarkup && !shouldRepairNative && !shouldRepairCodeDump && looksLikeAbandonedToolLoop(fullContent, messages);
+            if ((shouldRepairMarkup || shouldRepairCodeDump || shouldRepairNative || shouldRepairAbandoned) && !clientGone && !deadlineHit()) {
                 const reason = shouldRepairNative
                     ? `Model called DeepSeek-native ${ignoredNativeTool || dsmlCalls.map(call => call.name).join(', ') || 'tool'}`
                     : (shouldRepairMarkup
                         ? 'Tool-call markup detected but invalid/truncated'
-                        : 'Model dumped source code instead of a tool request');
+                        : (shouldRepairCodeDump
+                            ? 'Model dumped source code instead of a tool request'
+                            : 'Model stopped after a tool result without a next tool call'));
                 console.log(`${agentTag} ${reason} (${fullContent.length} chars). Retrying with stricter prompt on the same session...`);
                 const strictPrompt = shouldRepairNative
                     ? NATIVE_TOOL_REPAIR_PROMPT
                     : (shouldRepairMarkup
                         ? '[STRICT INSTRUCTION] Your previous response contained incomplete tool-call markup. Keep arguments short and output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}'
-                        : '[STRICT INSTRUCTION] You pasted source code as plain text. This gateway cannot apply pasted files. Request exactly one tool to write or edit the file. Output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}. Put file contents in the tool arguments, not in markdown fences.');
+                        : (shouldRepairCodeDump
+                            ? '[STRICT INSTRUCTION] You pasted source code as plain text. This gateway cannot apply pasted files. Request exactly one tool to write or edit the file. Output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}. Put file contents in the tool arguments, not in markdown fences.'
+                            : '[STRICT INSTRUCTION] You stopped after a tool result. Continue the task. Output exactly one gateway tool request as {"tool_call":{"name":"<function>","arguments":{...}}} or a complete final answer if the work is finished.'));
                 const { resp: retryResp2 } = await askDeepSeekStream(strictPrompt, agentId, requestedModel, strictPrompt, lockHolder, imageContext, webFlags);
                 const retryResult2 = await readDeepSeekResponse(retryResp2.body);
                 const retryContent2 = retryResult2 && retryResult2.content ? sanitizeContent(retryResult2.content) : '';
@@ -3137,7 +3231,7 @@ const server = http.createServer(async (req, res) => {
                 } else {
                     sendOpenAIStream(res, openaiResponse);
                 }
-                console.log(`${agentTag} Streamed ${apiMode} (tool=${!!toolCall}) in ${elapsed}ms`);
+                console.log(`${agentTag} Streamed ${apiMode} (tool=${!!toolCall}) in ${Date.now() - startTime}ms`);
             } else {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 if (apiMode === 'anthropic') {
@@ -3147,7 +3241,7 @@ const server = http.createServer(async (req, res) => {
                 } else {
                     res.end(JSON.stringify(openaiResponse));
                 }
-                console.log(`${agentTag} Response ${apiMode} (tool=${!!toolCall}, ${elapsed}ms, ${fullContent.length} chars)`);
+                console.log(`${agentTag} Response ${apiMode} (tool=${!!toolCall}, ${Date.now() - startTime}ms, ${fullContent.length} chars)`);
             }
         } catch (e) {
             console.log('[DS-API] Error:', e.message);
@@ -3155,7 +3249,8 @@ const server = http.createServer(async (req, res) => {
             // Pool exhaustion / no-auth carry an explicit status so integrators see
             // 429/503 (not a generic 500) and can honor Retry-After.
             const timedOut = isTimeoutError(e);
-            const status = e.status || (timedOut ? 504 : 500);
+            const overflowError = isContextTooLongError(e);
+            const status = e.status || (overflowError ? 400 : (timedOut ? 504 : 500));
             logRow.status = status;
             logRow.account = activeSession?.accountId || null;
             const headers = { 'Content-Type': 'application/json' };
@@ -3164,7 +3259,7 @@ const server = http.createServer(async (req, res) => {
             const failure = timedOut && activeSession ? resetRemoteSession(activeSession) : null;
             res.end(JSON.stringify({ error: {
                 message: e.message,
-                type: e.type || (timedOut ? 'request_timeout' : 'server_error'),
+                type: e.type || (overflowError ? 'context_length_exceeded' : (timedOut ? 'request_timeout' : 'server_error')),
                 ...(failure ? {
                     agent: activeAgentId,
                     failed_session_id: failure.failedSessionId,
@@ -3344,6 +3439,9 @@ module.exports = {
         buildRetryPrompt,
         isContinuationRecoverySafe,
         isContextTooLongError,
+        isInstantEmptyResponse,
+        lastTurnIsToolResult,
+        looksLikeAbandonedToolLoop,
         normalizeRetryResponse,
         classifyRecoveryFailure,
         isTimeoutError,

@@ -775,6 +775,49 @@ test('context-too-long detector recognizes DeepSeek localized errors', () => {
   assert.equal(serverInternals.isContextTooLongError({ content: 'Temporary backend overload' }), false);
 });
 
+test('too-long HTTP bodies become 400 instead of a session-reset storm', () => {
+  const error = serverInternals.createUpstreamHttpError(502, 'Содержание слишком длинное. Сократите его и попробуйте снова.');
+  assert.equal(error.status, 400);
+  assert.equal(error.type, 'context_length_exceeded');
+  assert.match(error.message, /слишком длинное/);
+
+  assert.equal(serverInternals.isInstantEmptyResponse({
+    content: '',
+    reasoningContent: '',
+    messageId: null,
+    elapsedMs: 300,
+  }), true);
+  assert.equal(serverInternals.isInstantEmptyResponse({
+    content: '',
+    reasoningContent: '',
+    messageId: 'msg-1',
+    elapsedMs: 300,
+  }), false);
+  assert.equal(serverInternals.isInstantEmptyResponse({
+    content: '',
+    reasoningContent: 'thinking',
+    messageId: null,
+    elapsedMs: 300,
+  }), false);
+
+  assert.deepEqual(
+    serverInternals.classifyRecoveryFailure(null, false, true),
+    { status: 400, type: 'context_length_exceeded' },
+  );
+});
+
+test('abandoned tool-loop detector retries short stops after a tool result', () => {
+  const afterTool = [
+    { role: 'user', content: 'implement it' },
+    { role: 'assistant', content: '', tool_calls: [{ function: { name: 'read_file', arguments: '{}' } }] },
+    { role: 'tool', content: 'file contents' },
+  ];
+  assert.equal(serverInternals.lastTurnIsToolResult(afterTool), true);
+  assert.equal(serverInternals.looksLikeAbandonedToolLoop('ok', afterTool), true);
+  assert.equal(serverInternals.looksLikeAbandonedToolLoop('Done. The player controller is finished.', afterTool), false);
+  assert.equal(serverInternals.looksLikeAbandonedToolLoop('ok', [{ role: 'user', content: 'hello' }]), false);
+});
+
 test('empty-response retry keeps recovery history unless a smaller global cap requires compaction', () => {
   const system = 'SYSTEM';
   const history = '[Previous conversation]\nUser: old\nAssistant: answer\n\n[Continue from here]\n\n';
