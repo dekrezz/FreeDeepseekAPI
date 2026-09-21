@@ -19,7 +19,7 @@
     <img src="https://img.shields.io/badge/Self--hosted-Local-16b8a6?style=flat-square" alt="Self-hosted locally" />
     <img src="https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 18+" />
     <img src="https://img.shields.io/badge/DeepSeek-V4.1--Flash-4d6bfe?style=flat-square" alt="DeepSeek V4.1 Flash" />
-    <img src="https://img.shields.io/badge/License-MIT-f3f4f6?style=flat-square" alt="MIT License" />
+    <img src="https://img.shields.io/badge/License-Apache%202.0-f3f4f6?style=flat-square" alt="Apache License 2.0" />
   </p>
 
   <p>
@@ -151,4 +151,4 @@ podman run --rm \
 
 ## License
 
-MIT
+Apache-2.0

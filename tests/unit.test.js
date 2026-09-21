@@ -726,6 +726,32 @@ test('agent requests drop harness websearch and force native DeepSeek Search + D
   assert.match(formatted.systemPrompt, /## bash/);
 });
 
+test('every harness is told to use native DeepSeek search instead of bash or WebFetch', () => {
+  const opencode = [
+    'You are opencode, an interactive CLI tool.',
+    'When the user directly asks about opencode (eg can you do this), first use the WebFetch tool to gather information to answer the question from opencode docs at https://opencode.ai',
+    'You do not have access to the internet. Use bash to fetch the page.',
+  ].join('\n');
+  const claude = 'You are Claude. Use the WebSearch tool for current events. You cannot access the web otherwise.';
+  const formatted = serverInternals.formatMessages(
+    [{ role: 'system', content: `${opencode}\n\n${claude}` }, { role: 'user', content: 'what changed this week' }],
+    [{ type: 'function', function: { name: 'bash', parameters: { type: 'object' } } }],
+    { nativeSearchNotice: true },
+  );
+  assert.match(formatted.systemPrompt, /DeepSeek native Web Search is enabled/);
+  assert.match(formatted.systemPrompt, /Do not say you have no web access/);
+  assert.doesNotMatch(formatted.systemPrompt, /use the WebFetch tool/i);
+  assert.doesNotMatch(formatted.systemPrompt, /Use the WebSearch tool/i);
+  assert.doesNotMatch(formatted.systemPrompt, /do not have access to the internet/i);
+  assert.doesNotMatch(formatted.systemPrompt, /cannot access the web/i);
+  assert.doesNotMatch(formatted.systemPrompt, /Use bash to fetch/i);
+  const reminder = serverInternals.formatToolReminder([
+    { type: 'function', function: { name: 'bash' } },
+  ]);
+  assert.match(reminder, /native Web Search is already on/);
+  assert.doesNotMatch(reminder, /Do not call execute_code, web_search/);
+});
+
 test('OpenCode system prompt keeps the agent role and replaces token-economy with autonomy', () => {
   const original = [
     'You are opencode, an interactive CLI tool that helps users with software engineering tasks.',

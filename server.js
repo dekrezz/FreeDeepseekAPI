@@ -907,7 +907,29 @@ async function uploadDeepSeekImage(account, modelCfg, input, index) {
 }
 
 function nativeSearchAndThinkNotice() {
-    return '\n\nDeepSeek native Web Search and DeepThink are enabled. Do not call harness websearch/webfetch. Use DeepSeek Search for the live web and include those findings in your reply.\n';
+    return '\n\nDeepSeek native Web Search and DeepThink are enabled. This is your web access. Do not call harness websearch/webfetch/WebFetch, and do not use bash or curl for the live web. Use DeepSeek Search and include those findings in your reply. Do not say you have no web access.\n';
+}
+
+function adaptHarnessWebAccess(text) {
+    let next = String(text || '');
+    if (!next) return next;
+    next = next.replace(
+        /When the user directly asks about opencode[\s\S]*?https:\/\/opencode\.ai\s*/i,
+        'When the user asks what you can do or about opencode, use DeepSeek native Web Search and answer from those findings.\n\n',
+    );
+    next = next.replace(
+        /\b(?:first\s+)?use the (?:WebFetch|WebSearch|websearch|webfetch|web_search) tool\b[^.\n]*/gi,
+        'use DeepSeek native Web Search',
+    );
+    next = next.replace(
+        /you (?:do not|don't|cannot|can't) (?:have )?(?:access(?: to)? )?(?:the )?(?:internet|web|network)\b[^.\n]*/gi,
+        'You have DeepSeek native Web Search',
+    );
+    next = next.replace(
+        /\buse (?:only )?bash(?:\s*\/\s*curl)? to (?:fetch|search|browse|access|download)[^.\n]*/gi,
+        'use DeepSeek native Web Search',
+    );
+    return next;
 }
 
 const OPENCODE_AUTONOMY_INSTRUCTION = 'IMPORTANT: Token cost does not matter on this connection. Finish the user\'s task autonomously: inspect the repo, make the changes, run the relevant checks, and keep going until the work is done or a real blocker (missing credential, destructive action, or a choice only the user can make). Do not ask clarifying questions, do not stop at a plan or a first step, and do not wait for permission. Finish every unblocked part first.';
@@ -955,10 +977,12 @@ function adaptOpenCodeSystemPrompt(text) {
     return next.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function adaptUpstreamMessageContent(role, content) {
+function adaptUpstreamMessageContent(role, content, options = {}) {
     const text = normalizeMessageContent(content);
-    if (role === 'system' || isOpenCodeSystemPrompt(text)) return adaptOpenCodeSystemPrompt(text);
-    return text;
+    const harness = role === 'system' || isOpenCodeSystemPrompt(text);
+    let next = harness ? adaptOpenCodeSystemPrompt(text) : text;
+    if (harness && options.nativeSearchNotice) next = adaptHarnessWebAccess(next);
+    return next;
 }
 
 function isDeepSeekNativeTool(name) {
@@ -969,8 +993,8 @@ function isHarnessWebSearchTool(name) {
     return isDeepSeekNativeTool(name) && !/^(execute_code|code_interpreter)$/i.test(String(name || ''));
 }
 
-const EMPTY_RESPONSE_NUDGE = 'Your previous reply was empty. Output the next user-visible answer or exactly one gateway tool request as {"tool_call":{"name":"<function>","arguments":{...}}}. Do not call execute_code or web_search.';
-const NATIVE_TOOL_REPAIR_PROMPT = '[STRICT INSTRUCTION] You called a DeepSeek-internal tool (execute_code or web_search). The local agent cannot run those. Request exactly one gateway tool as {"tool_call":{"name":"<function>","arguments":{...}}} or answer in plain text if no tool is needed.';
+const EMPTY_RESPONSE_NUDGE = 'Your previous reply was empty. Output the next user-visible answer or exactly one gateway tool request as {"tool_call":{"name":"<function>","arguments":{...}}}. Do not call execute_code. DeepSeek native Web Search is already on; answer with it instead of calling web_search.';
+const NATIVE_TOOL_REPAIR_PROMPT = '[STRICT INSTRUCTION] You called execute_code or web_search as a tool. Do not. DeepSeek native Web Search is already enabled: answer with those findings in plain text. If you need the local filesystem, request exactly one gateway tool as {"tool_call":{"name":"<function>","arguments":{...}}}. Do not say you lack web access.';
 
 function stripHarnessWebSearchTools(tools) {
     const kept = [];
@@ -1175,8 +1199,8 @@ function formatToolDefinitions(tools) {
     text += '4. After the tool executes, the result will be sent to you as a new user/tool message\n';
     text += '5. Never add explanation before or after the tool request when requesting a tool\n';
     text += '6. Keep arguments compact. Do not include large file contents unless the tool schema requires it.\n';
-    text += '7. Do not call websearch, webfetch, web_search, or any other harness web-search tool. Those are disabled.\n';
-    text += '8. DeepSeek native Web Search and DeepThink are enabled. Use them for live web data and include the findings in your reply.\n\n';
+    text += '7. Do not request harness websearch, webfetch, or WebFetch as a tool call. They are not local tools.\n';
+    text += '8. DeepSeek native Web Search is enabled. Use it for the live web. Do not use bash or curl instead, and do not say you lack web access.\n\n';
     text += 'Available functions:\n';
     for (const tool of tools) {
         if (tool.type === 'function' && tool.function) {
@@ -1209,7 +1233,8 @@ function formatToolReminder(tools) {
     return [
         '--- TOOL REMINDER ---',
         'You are in a tool loop. Do not paste source files, Unity scripts, or diffs as your reply.',
-        'Do not call execute_code, web_search, or any DeepSeek-internal tool. Those never reach the local agent.',
+        'Do not call execute_code. Do not request harness websearch or webfetch as a tool.',
+        'DeepSeek native Web Search is already on. Use it for the live web instead of bash or curl. Do not say you have no web access.',
         'If you need to read, write, edit, or run something, output ONLY this JSON:',
         '{"tool_call":{"name":"<function_name>","arguments":{...}}}',
         `Available tools: ${names.join(', ')}`,
@@ -2448,7 +2473,7 @@ function formatMessages(messages, tools, options = {}) {
     let systemPrompt = '';
     for (const msg of messages) {
         if (msg.role === 'system' && msg.content) {
-            systemPrompt += adaptUpstreamMessageContent(msg.role, msg.content) + '\n';
+            systemPrompt += adaptUpstreamMessageContent(msg.role, msg.content, options) + '\n';
         }
     }
     systemPrompt += formatToolDefinitions(tools);
@@ -2459,7 +2484,7 @@ function formatMessages(messages, tools, options = {}) {
     for (const msg of messages) {
         if (msg.role === 'system') continue;  // already in systemPrompt
         if (msg.role === 'user' && msg.content) {
-            conversation += `User: ${adaptUpstreamMessageContent(msg.role, msg.content)}\n\n`;
+            conversation += `User: ${adaptUpstreamMessageContent(msg.role, msg.content, options)}\n\n`;
         } else if (msg.role === 'assistant') {
             if (msg.tool_calls && msg.tool_calls.length > 0) {
                 // This was a tool call response from a previous turn
@@ -3489,6 +3514,7 @@ module.exports = {
         isHarnessWebSearchTool,
         agentNativeWebFlags,
         nativeSearchAndThinkNotice,
+        adaptHarnessWebAccess,
         createSession,
         resetRemoteSession,
         prepareSessionForPrompt,
