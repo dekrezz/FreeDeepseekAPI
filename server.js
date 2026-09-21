@@ -2981,7 +2981,7 @@ const server = http.createServer(async (req, res) => {
                         elapsedMs: lastReadMs,
                     });
                 if (modelError && !overflow && !isContextTooLongError(modelError)) break;
-                const retryCap = overflow ? Math.min(MAX_OVERFLOW_RETRIES, MAX_EMPTY_RETRIES) : MAX_EMPTY_RETRIES;
+                const retryCap = overflow ? MAX_OVERFLOW_RETRIES : MAX_EMPTY_RETRIES;
                 if (retryAttempt >= retryCap) break;
                 retryAttempt++;
 
@@ -3046,7 +3046,9 @@ const server = http.createServer(async (req, res) => {
                 const errorMessage = modelError?.content
                     || (timedOut
                         ? 'DeepSeek request deadline reached while recovering an empty response'
-                        : `DeepSeek returned empty content after ${retryAttempt} retr${retryAttempt === 1 ? 'y' : 'ies'}`);
+                        : (overflow
+                            ? 'DeepSeek rejected the prompt as too long after compaction retries'
+                            : `DeepSeek returned empty content after ${retryAttempt} retr${retryAttempt === 1 ? 'y' : 'ies'}`));
                 console.log(`${agentTag} ${errorType} after ${retryAttempt} retr${retryAttempt === 1 ? 'y' : 'ies'}. Giving up.`);
                 res.writeHead(failureClass.status, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
