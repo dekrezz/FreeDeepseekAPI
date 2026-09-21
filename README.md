@@ -111,7 +111,6 @@ DeepSeek Web currently exposes one model: **DeepSeek-V4.1-Flash**.
 | Model ID | Behavior |
 |---|---|
 | `deepseek-v4-flash` · `deepseek-flash` | V4.1-Flash |
-| `deepseek-v4-pro` | Legacy alias for V4.1-Flash |
 | `…-thinking` | Enables DeepThink |
 | `…-search` | Enables Web Search |
 

@@ -99,6 +99,36 @@ test('doctor reports auth problems without requiring Chrome or network', () => {
   assert.match(res.stdout + res.stderr, /cookie missing/i);
 });
 
+test('auth menu has no third-party Telegram watermark and accepts --lang', () => {
+  const help = runNode(['scripts/auth.js', '--help', '--lang', 'en']);
+  assert.equal(help.status, 0, help.stderr || help.stdout);
+  assert.doesNotMatch(help.stdout + help.stderr, /forgetmeai|t\.me\//i);
+  assert.match(help.stdout, /FreeDeepseekAPI/);
+  assert.match(help.stdout, /--lang/);
+
+  const tui = require('../scripts/lib/tui-menu');
+  assert.equal(tui.detectLocale({ LANG: 'ru_RU.UTF-8' }), 'ru');
+  assert.equal(tui.detectLocale({ LANG: 'zh_CN.UTF-8' }), 'zh');
+  assert.equal(tui.detectLocale({ FREDEEPSEEK_LANG: 'en', LANG: 'ru_RU.UTF-8' }), 'en');
+  assert.equal(tui.languageFromLocale('ru-RU'), 'ru');
+  assert.equal(tui.languageFromLocale('zh-Hans-CN'), 'zh');
+  assert.equal(tui.languageFromLocale('en-US'), 'en');
+  assert.equal(tui.t('ru', 'login'), 'Войти через Chrome');
+  assert.equal(tui.cycleLang('en', 1), 'ru');
+  const mouse = tui.parseSgrMouse('\x1b[<0;12;5M\x1b[<0;12;5m');
+  assert.equal(mouse[0].left, true);
+  assert.equal(mouse[0].x, 12);
+  assert.equal(mouse[0].y, 5);
+  assert.equal(tui.hitTest([{ id: 'item:0', x: 3, y: 5, w: 40, h: 1 }], 12, 5).id, 'item:0');
+  assert.equal(tui.parseKey('\x1b[A'), 'up');
+  assert.equal(tui.parseKey(' '), 'space');
+  assert.equal(tui.parseKey('q'), 'quit');
+  const mark = tui.wordmarkLines('FREEDEEP');
+  assert.equal(mark.length, 5);
+  assert.match(mark[0], /█/);
+  assert.doesNotMatch(mark.join('\n'), /┌|│|└/);
+});
+
 test('chrome auth prints actionable OS instructions when Chrome is missing', () => {
   const dir = tmpdir();
   const fakeChrome = path.join(dir, 'missing-chrome');
@@ -820,7 +850,6 @@ test('account lock wait times out with concurrent_chat_blocked', async (t) => {
 
 test('Flash cost estimate uses official off-peak per-million rates', () => {
   assert.equal(serverInternals.modelCostUsd('deepseek-v4-flash', 1_000_000, 1_000_000), 0.88);
-  assert.equal(serverInternals.modelCostUsd('deepseek-v4-pro', 1_000_000, 0), 0.66);
 });
 
 test('cross-account continuation is accepted only with a fresh recovery prompt', () => {
@@ -976,8 +1005,6 @@ test('only V4.1-Flash aliases are registered', () => {
       'deepseek-v4-flash-search',
       'deepseek-v4-flash-thinking',
       'deepseek-v4-flash-thinking-search',
-      'deepseek-v4-pro',
-      'deepseek-v4-pro-thinking',
     ].sort(),
   );
 
@@ -991,15 +1018,6 @@ test('only V4.1-Flash aliases are registered', () => {
   assert.equal(flashThink.model_type, 'default');
   assert.equal(flashThink.thinking_enabled, true);
 
-  const pro = resolveModelConfig('deepseek-v4-pro');
-  assert.equal(pro.model_type, 'default');
-  assert.equal(pro.thinking_enabled, false);
-  assert.match(pro.real_model, /V4\.1-Flash/);
-
-  const proThink = resolveModelConfig('deepseek-v4-pro-thinking');
-  assert.equal(proThink.model_type, 'default');
-  assert.equal(proThink.thinking_enabled, true);
-
   for (const id of SUPPORTED_MODEL_IDS) assert.equal(isSupportedModel(id), true, id);
   for (const id of ['deepseek-chat', 'deepseek-reasoner', 'deepseek-r1', 'deepseek-v3', 'deepseek-instant', 'deepseek-expert', 'deepseek-vision', 'deepseek-v4-flash-vision-exp']) {
     assert.equal(isKnownModel(id), false, id);
@@ -1008,7 +1026,7 @@ test('only V4.1-Flash aliases are registered', () => {
   const { canonicalizeModelId } = serverInternals;
   assert.equal(canonicalizeModelId('claude-sonnet-4-6'), 'deepseek-v4-flash');
   assert.equal(canonicalizeModelId('claude-opus-4-6'), 'deepseek-v4-flash-thinking');
-  assert.equal(canonicalizeModelId('deepseek-v4-pro[1m]'), 'deepseek-v4-pro');
+  assert.equal(canonicalizeModelId('deepseek-v4-flash-thinking[1m]'), 'deepseek-v4-flash-thinking');
   assert.equal(canonicalizeModelId('deepseek-flash'), 'deepseek-v4-flash');
   assert.equal(canonicalizeModelId('deepseek-flash-thinking'), 'deepseek-v4-flash-thinking');
   assert.equal(isKnownModel('claude-haiku-4-5'), true);
@@ -1077,7 +1095,7 @@ test('one-click agent setup adds opt-in providers without replacing native defau
   const res = runNode([
     'scripts/setup-agents.js',
     '--target', 'claude-code,hermes,openclaw,codex,opencode',
-    '--model', 'deepseek-v4-pro',
+    '--model', 'deepseek-v4-flash-thinking-search',
     '--base-url', 'http://127.0.0.1:9655',
     '--api-key', 'local',
     '--scope', 'user',
@@ -1088,13 +1106,13 @@ test('one-click agent setup adds opt-in providers without replacing native defau
   assert.deepEqual(claudeNative, { model: 'claude-opus', env: { KEEP: 'yes' } });
   const claudeProfile = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'freedeepseek.settings.json'), 'utf8'));
   assert.equal(claudeProfile.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:9655');
-  assert.equal(claudeProfile.model, 'deepseek-v4-pro');
+  assert.equal(claudeProfile.model, 'deepseek-v4-flash-thinking-search');
 
   const hermesNative = fs.readFileSync(path.join(dir, '.hermes', 'config.yaml'), 'utf8');
   assert.match(hermesNative, /claude-opus/);
   const hermesProfile = fs.readFileSync(path.join(dir, '.hermes', 'freedeepseek.yaml'), 'utf8');
   assert.match(hermesProfile, /provider: custom/);
-  assert.match(hermesProfile, /deepseek-v4-pro/);
+  assert.match(hermesProfile, /deepseek-v4-flash-thinking-search/);
 
   const claw = JSON.parse(fs.readFileSync(path.join(dir, '.openclaw', 'openclaw.json'), 'utf8'));
   assert.equal(claw.agents.defaults.model.primary, 'anthropic/claude-opus');
@@ -1117,71 +1135,91 @@ test('one-click agent setup adds opt-in providers without replacing native defau
   assert.equal(opencode.tools.websearch, false);
   assert.equal(opencode.tools.webfetch, false);
   assert.equal(opencode.permission.websearch, 'deny');
-  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-pro'].attachment, true);
-  assert.deepEqual(opencode.provider.freedeepseek.models['deepseek-v4-pro'].modalities.input, ['text', 'image']);
+  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking-search'].attachment, true);
+  assert.deepEqual(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking-search'].modalities.input, ['text', 'image']);
   const agentsMd = fs.readFileSync(path.join(dir, '.config', 'opencode', 'AGENTS.md'), 'utf8');
   assert.match(agentsMd, /<!-- freedeepseek-autonomy -->/);
   assert.match(agentsMd, /Finish the user's task autonomously/);
   assert.match(agentsMd, /Token cost does not matter/);
 });
 
-test('account patch persists display name and skips paused logins', (t) => {
+test('agent setup replace mode makes FreeDeepseekAPI the default without discarding unrelated settings', () => {
   const dir = tmpdir();
-  const file = path.join(dir, 'worker.json');
-  fs.writeFileSync(file, JSON.stringify({ token: 'tok', cookie: 'ck' }));
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.codex'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.config', 'opencode'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.openclaw'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.hermes'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ env: { KEEP: 'yes' }, theme: 'dark' }));
+  fs.writeFileSync(path.join(dir, '.codex', 'config.toml'), 'model = "gpt-native"\nsandbox_mode = "workspace-write"\n');
+  fs.writeFileSync(path.join(dir, '.config', 'opencode', 'opencode.json'), JSON.stringify({ model: 'openai/gpt-native', theme: 'native' }));
+  fs.writeFileSync(path.join(dir, '.openclaw', 'openclaw.json'), JSON.stringify({ agents: { defaults: { workspace: '/tmp/work' } } }));
+  fs.writeFileSync(path.join(dir, '.hermes', 'config.yaml'), 'model:\n  default: claude-opus\nmemory: true\n');
+
+  const res = runNode([
+    'scripts/setup-agents.js',
+    '--target', 'claude-code,hermes,openclaw,codex,opencode',
+    '--mode', 'replace',
+    '--model', 'deepseek-v4-flash-thinking',
+  ], { env: { SETUP_HOME: dir } });
+  assert.equal(res.status, 0, res.stderr || res.stdout);
+
+  const claude = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
+  assert.equal(claude.model, 'deepseek-v4-flash-thinking');
+  assert.equal(claude.env.KEEP, 'yes');
+  assert.equal(claude.theme, 'dark');
+
+  const codex = fs.readFileSync(path.join(dir, '.codex', 'config.toml'), 'utf8');
+  assert.match(codex, /^model = "deepseek-v4-flash-thinking"$/m);
+  assert.match(codex, /^model_provider = "freedeepseek"$/m);
+  assert.match(codex, /sandbox_mode = "workspace-write"/);
+  assert.match(codex, /\[model_providers\.freedeepseek\]/);
+
+  const hermes = fs.readFileSync(path.join(dir, '.hermes', 'config.yaml'), 'utf8');
+  assert.match(hermes, /default: deepseek-v4-flash-thinking/);
+  assert.match(hermes, /memory: true/);
+
+  const claw = JSON.parse(fs.readFileSync(path.join(dir, '.openclaw', 'openclaw.json'), 'utf8'));
+  assert.equal(claw.agents.defaults.model.primary, 'freedeepseek/deepseek-v4-flash-thinking');
+  assert.equal(claw.agents.defaults.workspace, '/tmp/work');
+
+  const opencode = JSON.parse(fs.readFileSync(path.join(dir, '.config', 'opencode', 'opencode.json'), 'utf8'));
+  assert.equal(opencode.model, 'freedeepseek/deepseek-v4-flash-thinking');
+  assert.equal(opencode.theme, 'native');
+});
+
+test('a paused login is skipped so another ready file can serve', (t) => {
+  const original = serverInternals.accounts.splice(0);
+  t.after(() => {
+    serverInternals.accounts.splice(0, serverInternals.accounts.length, ...original);
+  });
+  serverInternals.accounts.push(
+    { id: 'acct_a', file: 'a.json', config: { token: 'a', cookie: 'a', enabled: false }, cooldownUntil: 0, lastUsedAt: 0, headers: {}, failures: 0 },
+    { id: 'acct_b', file: 'b.json', config: { token: 'b', cookie: 'b' }, cooldownUntil: 0, lastUsedAt: 0, headers: {}, failures: 0 },
+  );
+  const session = serverInternals.createSession();
+  session.accountId = 'acct_a';
+  const selected = serverInternals.selectAccountForSession(session);
+  assert.equal(selected.id, 'acct_b');
+  assert.equal(session.accountId, 'acct_b');
+});
+
+test('every paused login leaves no account that can serve', (t) => {
   const original = serverInternals.accounts.splice(0);
   t.after(() => {
     serverInternals.accounts.splice(0, serverInternals.accounts.length, ...original);
   });
   serverInternals.accounts.push({
     id: 'worker',
-    file,
-    config: { token: 'tok', cookie: 'ck' },
+    file: 'worker.json',
+    config: { token: 'tok', cookie: 'ck', enabled: false },
     cooldownUntil: 0,
     lastUsedAt: 0,
     headers: {},
     failures: 0,
   });
-
-  const named = serverInternals.applyAccountPatch('worker', { name: 'Office' });
-  assert.equal(named.name, 'Office');
-  assert.equal(named.enabled, true);
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).name, 'Office');
-
-  const paused = serverInternals.applyAccountPatch('worker', { enabled: false });
-  assert.equal(paused.enabled, false);
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).enabled, false);
   assert.throws(
     () => serverInternals.selectAccountForSession(serverInternals.createSession()),
     (err) => err.status === 503 && err.type === 'no_auth',
   );
-
-  const resumed = serverInternals.applyAccountPatch('worker', { enabled: true, name: '' });
-  assert.equal(resumed.enabled, true);
-  assert.equal(resumed.name, 'worker');
-  assert.equal('enabled' in JSON.parse(fs.readFileSync(file, 'utf8')), false);
-  const selected = serverInternals.selectAccountForSession(serverInternals.createSession());
-  assert.equal(selected.id, 'worker');
-});
-
-test('paused sticky account rotates onto another ready login', (t) => {
-  const dir = tmpdir();
-  const aFile = path.join(dir, 'a.json');
-  const bFile = path.join(dir, 'b.json');
-  fs.writeFileSync(aFile, JSON.stringify({ token: 'a', cookie: 'a' }));
-  fs.writeFileSync(bFile, JSON.stringify({ token: 'b', cookie: 'b' }));
-  const original = serverInternals.accounts.splice(0);
-  t.after(() => {
-    serverInternals.accounts.splice(0, serverInternals.accounts.length, ...original);
-  });
-  serverInternals.accounts.push(
-    { id: 'acct_a', file: aFile, config: { token: 'a', cookie: 'a' }, cooldownUntil: 0, lastUsedAt: 0, headers: {}, failures: 0 },
-    { id: 'acct_b', file: bFile, config: { token: 'b', cookie: 'b' }, cooldownUntil: 0, lastUsedAt: 0, headers: {}, failures: 0 },
-  );
-  serverInternals.applyAccountPatch('acct_a', { enabled: false });
-  const session = serverInternals.createSession();
-  session.accountId = 'acct_a';
-  const selected = serverInternals.selectAccountForSession(session);
-  assert.equal(selected.id, 'acct_b');
-  assert.equal(session.accountId, 'acct_b');
 });

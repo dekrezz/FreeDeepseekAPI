@@ -18,8 +18,7 @@
   <a href="docs/zh/README.md">文档</a> ·
   <a href="docs/zh/models.md">模型</a> ·
   <a href="docs/zh/agents.md">Agent</a> ·
-  <a href="docs/auth.md">鉴权</a> ·
-  <a href="https://t.me/forgetmeai">Telegram</a>
+  <a href="docs/zh/auth.md">鉴权</a>
 </p>
 
 </div>
@@ -44,7 +43,6 @@ Web 仅 **DeepSeek-V4.1-Flash**（Instant / Expert / Pro 已移除）。[完整�
 | ID | Web |
 |---|---|
 | [`deepseek-v4-flash`](docs/zh/models.md) / `deepseek-flash` | V4.1-Flash |
-| `deepseek-v4-pro` | 同一模型（旧别名） |
 | `…-thinking` / `…-search` | DeepThink / Search |
 
 ## 一键接入 Agent
@@ -68,14 +66,25 @@ npm run setup:agents
 
 模板：[`integrations/`](integrations/)。
 
+## 多个账号
+
+一个 DeepSeek Web 登录不能同时跑两个聊天。两个 Agent 或两个 OpenCode 会话，把 2–3 个文件放进 `accounts/`，并给每个客户端不同的 `x-agent-session`：
+
+```bash
+mkdir -p accounts
+npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./accounts/worker-2.json
+```
+
+代理自己选用空闲登录。不能把某个账号绑到某个客户端。同一登录上的第二个聊天会排队等待。详见[鉴权](docs/zh/auth.md)。
+
 ## 文档
 
 | 指南 | |
 |---|---|
 | [模型](docs/zh/models.md) | V4.1-Flash |
 | [Agent](docs/zh/agents.md) | 一键配置 |
-| [鉴权](docs/auth.md) | `deepseek-auth.json` |
-| [HTTP API](docs/api.md) | 接口 |
+| [鉴权](docs/zh/auth.md) | 多个 Web 登录 |
+| [HTTP API](docs/api.md) | 账号池、排队、环境变量 |
 
 ## Star 趋势
 

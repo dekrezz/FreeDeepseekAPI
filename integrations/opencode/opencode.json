@@ -23,6 +23,34 @@
             "output": 8192
           }
         },
+        "deepseek-v4-flash-thinking": {
+          "name": "DeepSeek-V4.1-Flash thinking (FreeDeepseekAPI)",
+          "attachment": true,
+          "reasoning": true,
+          "tool_call": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 128000,
+            "output": 8192
+          }
+        },
+        "deepseek-v4-flash-search": {
+          "name": "DeepSeek-V4.1-Flash search (FreeDeepseekAPI)",
+          "attachment": true,
+          "reasoning": false,
+          "tool_call": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 128000,
+            "output": 8192
+          }
+        },
         "deepseek-v4-flash-thinking-search": {
           "name": "DeepSeek-V4.1-Flash thinking+search (FreeDeepseekAPI)",
           "attachment": true,

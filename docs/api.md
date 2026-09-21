@@ -31,7 +31,7 @@ curl -sS http://127.0.0.1:9655/v1/chat/completions \
 |---|---|
 | `x-agent-session` or `user` | Sticky DeepSeek chat. **Give each concurrent client a different value** |
 | `Authorization: Bearer` | Required when `PROXY_API_KEY` / `REQUIRE_PROXY_API_KEY` is set |
-| `model` | `deepseek-v4-flash` / `deepseek-flash` (legacy `deepseek-v4-pro` aliases the same Web model) plus `-thinking` / `-search` |
+| `model` | `deepseek-v4-flash` / `deepseek-flash`, plus `-thinking` / `-search` / `-thinking-search` |
 | `stream` | SSE chunks; last chunk includes `usage` |
 | `x-account-id` (response) | Which Web login served the request |
 

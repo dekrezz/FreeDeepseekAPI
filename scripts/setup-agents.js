@@ -4,18 +4,23 @@
  * Writes the live config each tool actually reads. Backs up first.
  *
  *   npm run setup:agents
- *   npm run setup:agents -- --target claude-code --model deepseek-v4-pro
+ *   npm run setup:agents -- --target claude-code --model deepseek-v4-flash-thinking
  *   npm run setup:agents -- --all --dry-run
  */
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const readline = require('readline');
+const { t, loadUiLang, saveUiLang, pick, pickMany } = require('./lib/tui-menu');
 
 const ROOT = path.resolve(__dirname, '..');
 const HOME = process.env.SETUP_HOME || os.homedir();
 const VALID_TARGETS = ['claude-code', 'codex', 'opencode', 'hermes', 'openclaw', 'cursor'];
-const VALID_MODELS = ['deepseek-v4-flash', 'deepseek-v4-flash-thinking', 'deepseek-v4-flash-thinking-search', 'deepseek-v4-pro', 'deepseek-v4-pro-thinking'];
+const VALID_MODELS = [
+  'deepseek-v4-flash',
+  'deepseek-v4-flash-thinking',
+  'deepseek-v4-flash-search',
+  'deepseek-v4-flash-thinking-search',
+];
 
 function argValue(args, name, fallback = '') {
   for (let i = 0; i < args.length; i++) {
@@ -26,10 +31,6 @@ function argValue(args, name, fallback = '') {
 }
 function hasArg(args, ...names) { return args.some(a => names.includes(a)); }
 function isTruthy(v) { return /^(1|true|yes|on)$/i.test(String(v || '')); }
-function prompt(question) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(resolve => rl.question(question, ans => { rl.close(); resolve(ans); }));
-}
 function die(msg, code = 2) { console.error(msg); process.exit(code); }
 function ensureDir(dir) { fs.mkdirSync(dir, { recursive: true }); }
 function readText(file) {
@@ -76,6 +77,8 @@ function parseArgs(argv) {
   if (hasArg(args, '--help', '-h')) return { help: true };
   const model = argValue(args, '--model', 'deepseek-v4-flash');
   if (!VALID_MODELS.includes(model)) die(`Unknown --model ${model}. Use: ${VALID_MODELS.join(', ')}`);
+  const mode = argValue(args, '--mode', 'add');
+  if (!['add', 'replace'].includes(mode)) die('Unknown --mode. Use: add, replace');
   let targets = [];
   if (hasArg(args, '--all')) targets = [...VALID_TARGETS];
   const target = argValue(args, '--target', '');
@@ -89,6 +92,7 @@ function parseArgs(argv) {
     interactive: targets.length === 0 && !hasArg(args, '--non-interactive'),
     targets,
     model,
+    mode,
     baseUrl: argValue(args, '--base-url', defaultBaseUrl()),
     apiKey: argValue(args, '--api-key', process.env.PROXY_API_KEY || 'local'),
     scope: argValue(args, '--scope', 'user'),
@@ -105,13 +109,14 @@ One press writes the config each agent actually reads (with backup).
 Usage:
   node scripts/setup-agents.js
   node scripts/setup-agents.js --all --model deepseek-v4-flash
-  node scripts/setup-agents.js --target claude-code,codex --model deepseek-v4-pro
+  node scripts/setup-agents.js --target claude-code,codex --model deepseek-v4-flash-thinking
   node scripts/setup-agents.js --dry-run --target hermes
 
 Options:
   --target    ${VALID_TARGETS.join(' | ')} | comma-list
   --all       every target
   --model     ${VALID_MODELS.join(' | ')}
+  --mode      add (default) | replace
   --base-url  proxy origin (default ${defaultBaseUrl()})
   --api-key   PROXY_API_KEY or "local"
   --scope     user (default) | project
@@ -122,7 +127,7 @@ Options:
 
 function claudeSettings(opts) {
   const haiku = 'deepseek-v4-flash';
-  const opus = opts.model.includes('pro') ? 'deepseek-v4-pro-thinking' : 'deepseek-v4-flash-thinking';
+  const opus = 'deepseek-v4-flash-thinking';
   return {
     env: {
       ANTHROPIC_BASE_URL: anthropicBase(opts.baseUrl),
@@ -146,12 +151,21 @@ function mergeClaudeSettings(existing, incoming) {
 }
 
 function setupClaudeCode(opts) {
-  const dest = opts.scope === 'project'
-    ? path.join(process.cwd(), '.claude', 'freedeepseek.settings.json')
-    : path.join(HOME, '.claude', 'freedeepseek.settings.json');
+  const dest = opts.mode === 'replace'
+    ? (opts.scope === 'project'
+      ? path.join(process.cwd(), '.claude', 'settings.local.json')
+      : path.join(HOME, '.claude', 'settings.json'))
+    : (opts.scope === 'project'
+      ? path.join(process.cwd(), '.claude', 'freedeepseek.settings.json')
+      : path.join(HOME, '.claude', 'freedeepseek.settings.json'));
   backupFile(dest, opts.backupDir, opts);
-  writeFile(dest, `${JSON.stringify(claudeSettings(opts), null, 2)}\n`, opts);
-  console.log(`Claude Code: native defaults unchanged. Opt in with: claude --settings ${dest}`);
+  const settings = opts.mode === 'replace'
+    ? mergeClaudeSettings(readJson(dest, {}), claudeSettings(opts))
+    : claudeSettings(opts);
+  writeFile(dest, `${JSON.stringify(settings, null, 2)}\n`, opts);
+  console.log(opts.mode === 'replace'
+    ? `Claude Code: default model replaced in ${dest}.`
+    : `Claude Code: native defaults unchanged. Opt in with: claude --settings ${dest}`);
 }
 
 function tomlEscape(value) { return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
@@ -173,7 +187,9 @@ function upsertTomlTable(text, heading, body) {
 function setupCodex(opts) {
   const dir = path.join(HOME, '.codex');
   const catalogPath = path.join(dir, 'freedeepseek-models.json');
-  const profilePath = path.join(dir, 'freedeepseek.config.toml');
+  const profilePath = opts.mode === 'replace'
+    ? path.join(dir, 'config.toml')
+    : path.join(dir, 'freedeepseek.config.toml');
 
   const catalog = {
     models: VALID_MODELS.map(slug => ({
@@ -224,9 +240,23 @@ function setupCodex(opts) {
     providerBody,
     '',
   ].join('\n');
-  writeFile(profilePath, profile, opts);
+  if (opts.mode === 'replace') {
+    backupFile(profilePath, opts.backupDir, opts);
+    let next = readText(profilePath);
+    next = upsertTomlKey(next, 'model', opts.model);
+    next = upsertTomlKey(next, 'model_provider', 'freedeepseek');
+    next = upsertTomlKey(next, 'preferred_auth_method', 'apikey');
+    next = upsertTomlKey(next, 'forced_login_method', 'api');
+    next = upsertTomlKey(next, 'model_catalog_json', catalogPath);
+    next = upsertTomlTable(next, 'model_providers.freedeepseek', providerBody);
+    writeFile(profilePath, next, opts);
+  } else {
+    writeFile(profilePath, profile, opts);
+  }
 
-  console.log('Codex: native GPT model/provider unchanged. Opt in with: codex --profile freedeepseek');
+  console.log(opts.mode === 'replace'
+    ? 'Codex: FreeDeepseekAPI is now the default provider.'
+    : 'Codex: native GPT model/provider unchanged. Opt in with: codex --profile freedeepseek');
 }
 
 function yamlQuote(value) {
@@ -253,9 +283,9 @@ function upsertYamlModelBlock(text, opts) {
 }
 
 function setupHermes(opts) {
-  const dest = path.join(HOME, '.hermes', 'freedeepseek.yaml');
+  const dest = path.join(HOME, '.hermes', opts.mode === 'replace' ? 'config.yaml' : 'freedeepseek.yaml');
   backupFile(dest, opts.backupDir, opts);
-  const next = upsertYamlModelBlock('', opts);
+  const next = upsertYamlModelBlock(opts.mode === 'replace' ? readText(dest) : '', opts);
   writeFile(dest, next.endsWith('\n') ? next : `${next}\n`, opts);
   console.log(`Hermes: native config unchanged. FreeDeepseekAPI profile written to ${dest}.`);
 }
@@ -285,6 +315,11 @@ function setupOpenClaw(opts) {
     api: 'openai-completions',
     models,
   };
+  if (opts.mode === 'replace') {
+    cfg.agents = cfg.agents && typeof cfg.agents === 'object' ? cfg.agents : {};
+    cfg.agents.defaults = cfg.agents.defaults && typeof cfg.agents.defaults === 'object' ? cfg.agents.defaults : {};
+    cfg.agents.defaults.model = { primary: `freedeepseek/${opts.model}` };
+  }
   writeFile(dest, `${JSON.stringify(cfg, null, 2)}\n`, opts);
   console.log('OpenClaw: provider added; existing primary model unchanged. Select freedeepseek/<id> explicitly.');
 }
@@ -348,6 +383,7 @@ function setupOpenCode(opts) {
   if (String(cfg.model || '').startsWith('freedeepseek/')) {
     cfg.model = 'freedeepseek/deepseek-v4-flash-thinking-search';
   }
+  if (opts.mode === 'replace') cfg.model = `freedeepseek/${opts.model}`;
   cfg.attachment = cfg.attachment && typeof cfg.attachment === 'object' ? cfg.attachment : {};
   cfg.attachment.image = {
     ...(cfg.attachment.image || {}),
@@ -432,31 +468,123 @@ function restoreFrom(dir) {
 }
 
 async function interactive(opts) {
-  console.log('FreeDeepseekAPI — one-click agent model setup');
-  console.log(`Proxy: ${opts.baseUrl}   model: ${opts.model}`);
-  console.log('1  all');
-  VALID_TARGETS.forEach((t, i) => console.log(`${i + 2}  ${t}`));
-  console.log('0  exit');
-  const choice = (await prompt('Choice [1]: ')) || '1';
-  if (choice === '0') return [];
-  if (choice === '1') return [...VALID_TARGETS];
-  const idx = Number(choice) - 2;
-  if (!VALID_TARGETS[idx]) die('Invalid choice');
-  return [VALID_TARGETS[idx]];
+  const langRef = { current: loadUiLang() };
+  const setLang = (next) => { langRef.current = next; saveUiLang(next); };
+  let selected = [...VALID_TARGETS];
+  let step = 'targets';
+  while (true) {
+    if (step === 'targets') {
+      const chosen = await pickMany(
+        () => ({
+          lang: langRef.current,
+          subtitle: t(langRef.current, 'selectAgents'),
+          status: [
+            { ok: true, label: 'Proxy', value: opts.baseUrl },
+          ],
+          items: VALID_TARGETS.map(target => ({ id: target, label: target })),
+        }),
+        setLang,
+        selected,
+        { cancelId: 'cancel' },
+      );
+      if (chosen.id === 'cancel') {
+        await pick(
+          () => ({
+            lang: langRef.current,
+            subtitle: t(langRef.current, 'setupCancelled'),
+            status: [],
+            items: [{ id: 'done', label: t(langRef.current, 'back') }],
+          }),
+          setLang,
+          { cancelId: 'done' },
+        );
+        return null;
+      }
+      selected = chosen.ids;
+      step = 'model';
+    } else if (step === 'model') {
+      const chosen = await pick(
+        () => ({
+          lang: langRef.current,
+          subtitle: t(langRef.current, 'chooseModel'),
+          status: [{ ok: true, label: t(langRef.current, 'selected'), value: selected.join(', ') }],
+          items: VALID_MODELS.map(model => ({ id: model, label: model })),
+        }),
+        setLang,
+        { cancelId: 'back' },
+      );
+      if (chosen.id === 'back') step = 'targets';
+      else {
+        opts.model = chosen.id;
+        step = 'mode';
+      }
+    } else {
+      const chosen = await pick(
+        () => ({
+          lang: langRef.current,
+          subtitle: t(langRef.current, 'installMode'),
+          status: [{ ok: true, label: 'Model', value: opts.model }],
+          items: [
+            { id: 'add', label: t(langRef.current, 'addAlongside') },
+            { id: 'replace', label: t(langRef.current, 'replaceDefault') },
+          ],
+        }),
+        setLang,
+        { cancelId: 'back' },
+      );
+      if (chosen.id === 'back') step = 'model';
+      else return { targets: selected, model: opts.model, mode: chosen.id, langRef, setLang };
+    }
+  }
+}
+
+async function showResults(wizard, results) {
+  await pick(
+    () => ({
+      lang: wizard.langRef.current,
+      subtitle: t(wizard.langRef.current, 'setupComplete'),
+      status: results.map(result => ({
+        ok: result.ok,
+        label: result.target,
+        value: result.ok ? t(wizard.langRef.current, 'done') : result.error,
+      })),
+      items: [{ id: 'done', label: t(wizard.langRef.current, 'back') }],
+    }),
+    wizard.setLang,
+    { cancelId: 'done' },
+  );
 }
 
 async function main(argv = process.argv) {
   const opts = parseArgs(argv);
   if (opts.help) { printHelp(); return; }
   if (opts.restore) { restoreFrom(opts.restore); return; }
-  if (opts.interactive) opts.targets = await interactive(opts);
+  let wizard = null;
+  if (opts.interactive) {
+    wizard = await interactive(opts);
+    if (!wizard) return;
+    opts.targets = wizard.targets;
+    opts.model = wizard.model;
+    opts.mode = wizard.mode;
+  }
   if (!opts.targets.length) die('No --target. See --help.');
 
   opts.backupDir = path.join(HOME, '.freedeepseek-api', 'backups', new Date().toISOString().replace(/[:.]/g, '-'));
   opts.written = [];
   console.log(`model=${opts.model} base=${opts.baseUrl} key=${opts.apiKey ? 'set' : 'missing'} dryRun=${opts.dryRun}`);
-  for (const target of opts.targets) HANDLERS[target](opts);
+  const results = [];
+  for (const target of opts.targets) {
+    try {
+      HANDLERS[target](opts);
+      results.push({ target, ok: true });
+    } catch (error) {
+      if (!wizard) throw error;
+      results.push({ target, ok: false, error: error.message });
+    }
+  }
   if (!opts.dryRun) console.log(`\nBackups: ${opts.backupDir}\nRestore: node scripts/setup-agents.js --restore ${opts.backupDir}`);
+  if (wizard) await showResults(wizard, results);
+  if (results.some(result => !result.ok)) process.exitCode = 1;
 }
 
 if (require.main === module) {

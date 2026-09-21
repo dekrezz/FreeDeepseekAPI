@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const readline = require('readline');
+const {
+  t,
+  loadUiLang,
+  saveUiLang,
+  pick,
+  askText,
+  printWordmark,
+} = require('./lib/tui-menu');
 
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_WASM = 'https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm';
@@ -18,10 +26,6 @@ function argValue(args, ...names) {
   return '';
 }
 function hasArg(args, ...names) { return args.some(a => names.includes(a)); }
-function ask(question) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(resolve => rl.question(question, ans => { rl.close(); resolve(ans); }));
-}
 function readJson(file) {
   const raw = fs.readFileSync(file, 'utf8');
   return JSON.parse(raw);
@@ -66,7 +70,71 @@ function secureWriteJson(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), { mode: 0o600 });
   if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
 }
+function importFromFile(inputPath, outputPath = DEFAULT_OUT) {
+  const source = readJson(inputPath);
+  const auth = normalizeAuth(source);
+  const errors = validateAuth(auth);
+  if (errors.length) return { ok: false, errors };
+  secureWriteJson(outputPath, auth);
+  return { ok: true, auth, outputPath };
+}
+
+function importCandidates() {
+  const home = os.homedir();
+  return [
+    path.join(home, 'Downloads', 'deepseek-auth.json'),
+    path.join(home, 'Downloads', 'cookies.json'),
+    path.join(ROOT, 'deepseek-auth.json'),
+  ].filter(file => {
+    try { return fs.existsSync(file) && fs.statSync(file).isFile(); }
+    catch { return false; }
+  });
+}
+
+function shortHome(file) {
+  const home = os.homedir();
+  const abs = path.resolve(file);
+  return abs.startsWith(home) ? `~${abs.slice(home.length)}` : abs;
+}
+
+async function chooseImportPath(langRef) {
+  const files = importCandidates();
+  const chosen = await pick(
+    () => {
+      const lang = langRef.current;
+      const items = [
+        ...files.map(file => ({ id: `file:${file}`, label: shortHome(file), help: t(lang, 'helpImport') })),
+        { id: 'type', label: t(lang, 'typePath'), help: t(lang, 'importHint') },
+        { id: 'back', label: t(lang, 'back'), help: t(lang, 'helpQuit') },
+      ];
+      return {
+        lang,
+        subtitle: t(lang, 'import'),
+        status: [{ ok: files.length > 0, label: t(lang, 'importPath'), value: files.length ? String(files.length) : t(lang, 'none') }],
+        items,
+      };
+    },
+    (next) => { langRef.current = next; saveUiLang(next); },
+  );
+  if (!chosen.id || chosen.id === 'back' || chosen.id === 'quit') return '';
+  if (chosen.id.startsWith('file:')) return chosen.id.slice(5);
+  return askText(
+    (value) => ({
+      lang: langRef.current,
+      subtitle: t(langRef.current, 'import'),
+      status: [{ ok: false, label: t(langRef.current, 'importPath'), value: value || t(langRef.current, 'none') }],
+      field: { value: value || '' },
+      items: [
+        { id: 'submit', label: t(langRef.current, 'import'), help: t(langRef.current, 'importHint') },
+        { id: 'back', label: t(langRef.current, 'back'), help: t(langRef.current, 'cancelled') },
+      ],
+    }),
+    (next) => { langRef.current = next; saveUiLang(next); },
+  );
+}
+
 function printHelp() {
+  printWordmark('auth import');
   console.log(`FreeDeepseekAPI auth import
 
 Usage:
@@ -96,20 +164,27 @@ async function main(argv = process.argv.slice(2)) {
   if (hasArg(argv, '--help', '-h')) { printHelp(); return 0; }
   let inputPath = argValue(argv, '--input', '-i');
   const outputPath = path.resolve(argValue(argv, '--output', '-o') || DEFAULT_OUT);
-  if (!inputPath) inputPath = await ask('Path to deepseek-auth.json / browser cookies JSON: ');
+  if (!inputPath) {
+    const langRef = { current: loadUiLang() };
+    inputPath = await chooseImportPath(langRef);
+    if (!inputPath) return 1;
+  }
   inputPath = path.resolve(inputPath.trim());
-  const source = readJson(inputPath);
-  const auth = normalizeAuth(source);
-  const errors = validateAuth(auth);
-  if (errors.length) {
-    console.error(`[auth:import] Invalid auth import: ${errors.join(', ')}`);
+  let result;
+  try {
+    result = importFromFile(inputPath, outputPath);
+  } catch (err) {
+    console.error(`[auth:import] ${err.message}`);
+    return 2;
+  }
+  if (!result.ok) {
+    console.error(`[auth:import] Invalid auth import: ${result.errors.join(', ')}`);
     console.error('[auth:import] Если импортируешь browser cookies, передай token через DEEPSEEK_TOKEN=...');
     return 2;
   }
-  secureWriteJson(outputPath, auth);
-  console.log(`[auth:import] Imported auth to ${outputPath}`);
-  console.log(`[auth:import] token: OK (${auth.token.length} chars)`);
-  console.log(`[auth:import] cookie: OK (${auth.cookie.split(';').filter(Boolean).length} cookies)`);
+  console.log(`[auth:import] Imported auth to ${result.outputPath}`);
+  console.log(`[auth:import] token: OK (${result.auth.token.length} chars)`);
+  console.log(`[auth:import] cookie: OK (${result.auth.cookie.split(';').filter(Boolean).length} cookies)`);
   if (process.platform !== 'win32') console.log('[auth:import] permissions: 0600');
   return 0;
 }
@@ -117,4 +192,11 @@ async function main(argv = process.argv.slice(2)) {
 if (require.main === module) {
   main().then(code => process.exit(code)).catch(e => { console.error('[auth:import] ERROR:', e.message); process.exit(1); });
 }
-module.exports = { normalizeAuth, validateAuth, secureWriteJson };
+module.exports = {
+  normalizeAuth,
+  validateAuth,
+  secureWriteJson,
+  importFromFile,
+  chooseImportPath,
+  DEFAULT_OUT,
+};

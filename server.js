@@ -15,12 +15,12 @@ const https = require('https');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const readline = require('readline');
 const crypto = require('crypto');
 const dns = require('dns').promises;
 const net = require('net');
 const { spawnSync } = require('child_process');
 const { solvePOW } = require('./lib/pow');
+const { t, loadUiLang, saveUiLang, pick, pause, printWordmark } = require('./scripts/lib/tui-menu');
 
 // Per-DeepSeek-request network timeout. Plain fetch() has NO default timeout, so a
 // stalled upstream would hang the inbound request (and pin the account) forever.
@@ -42,7 +42,6 @@ const SERVER_PUBLIC_IP = (() => {
     return 'localhost';
 })();
 
-const FORGETMEAI_WATERMARK = 't.me/forgetmeai';
 const PORT = Number(process.env.PORT || 9655);
 const HOST = process.env.HOST || '127.0.0.1';
 
@@ -71,22 +70,8 @@ const PROXY_CORS_ORIGINS = new Set(String(process.env.PROXY_CORS_ORIGINS || '')
     .split(',')
     .map(value => normalizeOrigin(value))
     .filter(Boolean));
-function formatWatermark(prefix = 'ForgetMeAI') { return `${prefix}: ${FORGETMEAI_WATERMARK}`; }
 function printBanner() {
-    console.log(`
-███████ ██████  ███████ ███████ ██████  ███████ ███████ ███████ ██   ██
-██      ██   ██ ██      ██      ██   ██ ██      ██      ██      ██  ██
-█████   ██████  █████   █████   ██   ██ █████   █████   █████   █████
-██      ██   ██ ██      ██      ██   ██ ██      ██      ██      ██  ██
-██      ██   ██ ███████ ███████ ██████  ███████ ███████ ███████ ██   ██
-
-   FreeDeepseekAPI — API-прокси для DeepSeek Web Chat
-   ${formatWatermark()}
-`);
-}
-function prompt(question) {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    return new Promise(resolve => rl.question(question, ans => { rl.close(); resolve(ans); }));
+    printWordmark();
 }
 function isTruthy(value) { return typeof value === 'string' && ['1','true','yes','on'].includes(value.trim().toLowerCase()); }
 
@@ -132,7 +117,7 @@ function isBrowserOriginAllowed(origin, allowedOrigins = PROXY_CORS_ORIGINS) {
 
 const CONTEXT_COMPACTED_HEADER = 'X-FreeDeepseek-Context-Compacted';
 function setCorsResponseHeaders(res) {
-    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Access-Control-Expose-Headers', CONTEXT_COMPACTED_HEADER);
 }
@@ -392,9 +377,8 @@ function clientIp(req) {
     return raw || 'unknown';
 }
 function modelCostUsd(model, promptTokens, completionTokens) {
-    const pro = /pro/.test(String(model || ''));
-    const input = pro ? 0.66 : 0.22;
-    const output = pro ? 1.98 : 0.66;
+    const input = 0.22;
+    const output = 0.66;
     return (Number(promptTokens || 0) / 1e6) * input + (Number(completionTokens || 0) / 1e6) * output;
 }
 function recordRequest(entry) {
@@ -411,74 +395,6 @@ function recordRequest(entry) {
 function jsonResponse(res, status, body, extraHeaders = {}) {
     res.writeHead(status, { 'Content-Type': 'application/json', ...extraHeaders });
     res.end(JSON.stringify(body));
-}
-function serializeAccountConfig(config) {
-    const out = {
-        token: String(config.token || ''),
-        cookie: String(config.cookie || ''),
-        wasmUrl: String(config.wasmUrl || 'https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm'),
-    };
-    if (config.hif_dliq) out.hif_dliq = String(config.hif_dliq);
-    if (config.hif_leim) out.hif_leim = String(config.hif_leim);
-    const name = String(config.name || '').trim().slice(0, 80);
-    if (name) out.name = name;
-    if (config.enabled === false) out.enabled = false;
-    return out;
-}
-function persistAccountConfig(account) {
-    if (!account?.file) {
-        const err = new Error('Account has no auth file');
-        err.status = 400;
-        err.type = 'invalid_request';
-        throw err;
-    }
-    let existing = {};
-    try { existing = JSON.parse(fs.readFileSync(account.file, 'utf8')); } catch { /* keep known fields only */ }
-    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) existing = {};
-    const out = { ...existing, ...serializeAccountConfig(account.config) };
-    if (!String(account.config.name || '').trim()) delete out.name;
-    if (account.config.enabled !== false) delete out.enabled;
-    fs.writeFileSync(account.file, JSON.stringify(out, null, 2), { mode: 0o600 });
-    if (process.platform !== 'win32') fs.chmodSync(account.file, 0o600);
-    account.headers = buildBaseHeaders(account.config);
-}
-function applyAccountPatch(id, patch = {}) {
-    const account = accounts.find(a => a.id === id);
-    if (!account) {
-        const err = new Error(`Unknown account ${id}`);
-        err.status = 404;
-        err.type = 'not_found';
-        throw err;
-    }
-    if ('name' in patch) {
-        const name = String(patch.name || '').trim().slice(0, 80);
-        if (name) account.config.name = name;
-        else delete account.config.name;
-    }
-    if ('enabled' in patch) {
-        const on = patch.enabled !== false && patch.enabled !== 0 && patch.enabled !== 'false';
-        if (on) delete account.config.enabled;
-        else account.config.enabled = false;
-    }
-    if (patch.auth && typeof patch.auth === 'object') {
-        const token = String(patch.auth.token || '').trim();
-        const cookie = String(patch.auth.cookie || '').trim();
-        if (!token || !cookie) {
-            const err = new Error('token and cookie are required');
-            err.status = 400;
-            err.type = 'invalid_auth';
-            throw err;
-        }
-        account.config.token = token;
-        account.config.cookie = cookie;
-        if ('hif_dliq' in patch.auth) account.config.hif_dliq = String(patch.auth.hif_dliq || '');
-        if ('hif_leim' in patch.auth) account.config.hif_leim = String(patch.auth.hif_leim || '');
-        if (patch.auth.wasmUrl) account.config.wasmUrl = String(patch.auth.wasmUrl);
-        account.cooldownUntil = 0;
-        account.failures = 0;
-    }
-    persistAccountConfig(account);
-    return accountStatus(account);
 }
 // Parse a Retry-After header value into a cooldown duration in ms, or null if
 // absent/unparseable. Supports both forms: delta-seconds (e.g. "120") and an
@@ -610,16 +526,6 @@ const MODEL_CONFIGS = {
         model_type: 'default', thinking_enabled: true, search_enabled: true,
         real_model: 'DeepSeek-V4.1-Flash (thinking + web search)',
         capabilities: { reasoning: true, web_search: true, files: true, vision: true },
-    }),
-    'deepseek-v4-pro': webModel({
-        model_type: 'default', thinking_enabled: false, search_enabled: false,
-        real_model: 'DeepSeek-V4.1-Flash (legacy Pro alias)',
-        capabilities: { reasoning: false, web_search: false, files: true, vision: true },
-    }),
-    'deepseek-v4-pro-thinking': webModel({
-        model_type: 'default', thinking_enabled: true, search_enabled: false,
-        real_model: 'DeepSeek-V4.1-Flash (legacy Pro alias + thinking)',
-        capabilities: { reasoning: true, web_search: false, files: true, vision: true },
     }),
 };
 
@@ -1746,8 +1652,7 @@ function buildToolCallResponse(toolCall, model = DEFAULT_MODEL_ID, prompt = '', 
             message,
             finish_reason: 'tool_calls'
         }],
-        usage: buildUsage(prompt, '', reasoningContent),
-        watermark: FORGETMEAI_WATERMARK
+        usage: buildUsage(prompt, '', reasoningContent)
     };
 }
 
@@ -1766,8 +1671,7 @@ function buildTextResponse(content, prompt, model = DEFAULT_MODEL_ID, reasoningC
             // instead of silently treating a cut-off answer as a clean stop.
             finish_reason: finishReason === 'length' ? 'length' : 'stop'
         }],
-        usage: buildUsage(prompt, content, reasoningContent),
-        watermark: FORGETMEAI_WATERMARK
+        usage: buildUsage(prompt, content, reasoningContent)
     };
 }
 
@@ -2011,7 +1915,6 @@ function toAnthropicResponse(openaiResp) {
             input_tokens: openaiResp.usage?.prompt_tokens || 0,
             output_tokens: openaiResp.usage?.completion_tokens || 0,
         },
-        watermark: FORGETMEAI_WATERMARK,
     };
     if (!hasToolCalls && msg.reasoning_content) response.reasoning_content = msg.reasoning_content;
     return response;
@@ -2089,7 +1992,6 @@ function toResponsesResponse(openaiResp) {
             total_tokens: openaiResp.usage?.total_tokens || 0,
             output_tokens_details: { reasoning_tokens: openaiResp.usage?.completion_tokens_details?.reasoning_tokens || 0 },
         },
-        watermark: FORGETMEAI_WATERMARK,
     };
 }
 
@@ -2461,7 +2363,7 @@ const server = http.createServer(async (req, res) => {
     // Health check
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
         const includePrivateStatus = !PROXY_API_KEY || isProxyAuthorized(req.headers.authorization);
-        const health = { status: 'ok', service: 'FreeDeepseekAPI', watermark: FORGETMEAI_WATERMARK };
+        const health = { status: 'ok', service: 'FreeDeepseekAPI' };
         if (includePrivateStatus) Object.assign(health, {
             models: SUPPORTED_MODEL_IDS,
             unsupported_models: Object.keys(MODEL_CONFIGS).filter(id => !MODEL_CONFIGS[id].supported),
@@ -2497,7 +2399,7 @@ const server = http.createServer(async (req, res) => {
     // Full mapping, including Web models observed but not currently usable through the direct API.
     if (req.method === 'GET' && (url.pathname === '/v1/model-capabilities' || url.pathname === '/api/model-capabilities')) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ object: 'model_capabilities', watermark: FORGETMEAI_WATERMARK, data: ALL_MODEL_CAPABILITIES }));
+        res.end(JSON.stringify({ object: 'model_capabilities', data: ALL_MODEL_CAPABILITIES }));
         return;
     }
 
@@ -3104,14 +3006,41 @@ async function runAuthScript() {
     return result.status === 0 && hasAuthConfig();
 }
 
-function printStatus() {
-    console.log(`\n${formatWatermark()}`);
-    console.log(`Auth: ${hasAuthConfig() ? '✅ OK' : '❌ не найден deepseek-auth.json'}`);
-    console.log(`Auth source: ${process.env.DEEPSEEK_AUTH_DIR || DS_CONFIG_PATH}`);
-    console.log(`Аккаунты: ${accounts.length ? accounts.map(a => `${a.id}${a.cooldownUntil > Date.now() ? ' (cooldown)' : ''}`).join(', ') : 'нет'}`);
-    console.log(`Рабочие модели: ${SUPPORTED_MODEL_IDS.join(', ')}`);
-    console.log('Нерабочие/скрытые aliases: ' + Object.keys(MODEL_CONFIGS).filter(id => !MODEL_CONFIGS[id].supported).join(', '));
-    console.log('Capabilities: GET /v1/model-capabilities');
+function startupStatus(lang) {
+    const ready = hasAuthConfig();
+    const active = accounts.filter(a => a.cooldownUntil <= Date.now()).length;
+    const count = accounts.length;
+    return [
+        {
+            ok: ready,
+            label: '',
+            value: ready
+                ? `${t(lang, 'found')} · ${active}/${count} ${t(lang, 'accounts').toLowerCase()}`
+                : t(lang, 'missing'),
+        },
+    ];
+}
+
+async function showModels(langRef) {
+    await pick(
+        () => {
+            const lang = langRef.current;
+            return {
+                lang,
+                subtitle: t(lang, 'models'),
+                status: [
+                    { ok: true, label: t(lang, 'standard'), value: 'deepseek-v4-flash' },
+                    { ok: true, label: t(lang, 'think'), value: 'deepseek-v4-flash-thinking' },
+                    { ok: true, label: t(lang, 'search'), value: 'deepseek-v4-flash-search' },
+                    { ok: true, label: t(lang, 'thinkSearch'), value: 'deepseek-v4-flash-thinking-search' },
+                ],
+                items: [
+                    { id: 'back', label: t(lang, 'back'), help: t(lang, 'pressEnter') },
+                ],
+            };
+        },
+        (next) => { langRef.current = next; saveUiLang(next); },
+    );
 }
 
 async function showStartupMenu() {
@@ -3119,32 +3048,40 @@ async function showStartupMenu() {
         if (!hasAuthConfig()) loadDeepSeekConfig({ fatal: true });
         return true;
     }
+    const langRef = { current: loadUiLang() };
     while (true) {
-        printStatus();
-        console.log('\n=== Меню ===');
-        console.log(`ForgetMeAI: ${FORGETMEAI_WATERMARK}`);
-        console.log('1 - Авторизоваться / обновить DeepSeek login');
-        console.log('2 - Импортировать auth-файл / cookies');
-        console.log('3 - Показать модели и статусы');
-        console.log('4 - Запустить прокси (по умолчанию)');
-        console.log('5 - Выход');
-        let choice = await prompt('Ваш выбор (Enter = 4): ');
-        if (!choice) choice = '4';
-        if (choice === '1') {
-            await runAuthScript();
-        } else if (choice === '2') {
+        const chosen = await pick(
+            () => {
+                const lang = langRef.current;
+                return {
+                    lang,
+                    subtitle: t(lang, 'startSubtitle'),
+                    status: startupStatus(lang),
+                    items: [
+                        { id: 'start', label: t(lang, 'start'), help: t(lang, 'helpStart') },
+                        { id: 'login', label: t(lang, 'login'), help: t(lang, 'helpLogin') },
+                        { id: 'import', label: t(lang, 'import'), help: t(lang, 'helpImport') },
+                        { id: 'models', label: t(lang, 'modelsList'), help: t(lang, 'helpModels') },
+                        { id: 'quit', label: t(lang, 'quit'), help: t(lang, 'helpQuit') },
+                    ],
+                };
+            },
+            (next) => { langRef.current = next; saveUiLang(next); },
+        );
+        if (chosen.id === 'login') await runAuthScript();
+        else if (chosen.id === 'import') {
             spawnSync(process.execPath, [path.join(__dirname, 'scripts', 'auth_import.js')], { stdio: 'inherit', env: process.env });
             loadDeepSeekConfig({ fatal: false });
-        } else if (choice === '3') {
-            console.log(JSON.stringify(ALL_MODEL_CAPABILITIES, null, 2));
-            await prompt('\nНажмите Enter, чтобы вернуться в меню...');
-        } else if (choice === '4') {
+        } else if (chosen.id === 'models') {
+            await showModels(langRef);
+        } else if (chosen.id === 'start') {
             if (!hasAuthConfig()) {
-                console.log('Нужен deepseek-auth.json. Запустите пункт 1 или 2.');
+                console.log(t(langRef.current, 'needAuth'));
+                await pause(langRef.current);
                 continue;
             }
             return true;
-        } else if (choice === '5') {
+        } else {
             return false;
         }
     }
@@ -3167,7 +3104,6 @@ async function main() {
     setInterval(sweepIdleSessions, 10 * 60 * 1000).unref();
     server.listen(PORT, HOST, () => {
         console.log(`[DS-API] Server on http://${HOST}:${PORT} (multi-agent sessions enabled)`);
-        console.log(`[DS-API] ${formatWatermark()}`);
         console.log('[DS-API] POST /v1/chat/completions (OpenAI Chat Completions, stream=true|false)');
         console.log('[DS-API] POST /v1/messages — Anthropic Messages shim for Claude Code');
         console.log('[DS-API] POST /v1/responses — OpenAI Responses API shim');
@@ -3244,8 +3180,6 @@ module.exports = {
         isSessionTitleRequest,
         localSessionTitle,
         discoverAuthPaths,
-        applyAccountPatch,
-        persistAccountConfig,
         accountCanServe,
         accountStatus,
         clientIp,

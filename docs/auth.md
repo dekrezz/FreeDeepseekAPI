@@ -22,6 +22,6 @@ mkdir -p accounts
 npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./accounts/worker-2.json
 ```
 
-The proxy also loads `./accounts/*.json` next to the default `deepseek-auth.json`. Override with `DEEPSEEK_AUTH_DIR` or a comma list in `DEEPSEEK_AUTH_PATH`.
+The proxy also loads `./accounts/*.json` next to the default `deepseek-auth.json`. Override with `DEEPSEEK_AUTH_DIR` or a comma list in `DEEPSEEK_AUTH_PATH`. You cannot pin a client to a specific login; the proxy picks a free one. A second chat on the same login waits instead of overlapping.
 
 HTTP details: [`api.md`](api.md).

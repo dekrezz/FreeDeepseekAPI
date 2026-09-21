@@ -55,7 +55,7 @@
       "apply_patch_tool_type": "freeform"
     },
     {
-      "slug": "deepseek-v4-pro",
+      "slug": "deepseek-v4-flash-search",
       "display_name": "DeepSeek-V4.1-Flash (FreeDeepseekAPI)",
       "description": "Routed through local FreeDeepseekAPI (DeepSeek Web V4.1-Flash).",
       "supported_reasoning_levels": [],
@@ -82,7 +82,7 @@
       "apply_patch_tool_type": "freeform"
     },
     {
-      "slug": "deepseek-v4-pro-thinking",
+      "slug": "deepseek-v4-flash-thinking-search",
       "display_name": "DeepSeek-V4.1-Flash (FreeDeepseekAPI)",
       "description": "Routed through local FreeDeepseekAPI (DeepSeek Web V4.1-Flash).",
       "supported_reasoning_levels": [],

@@ -19,7 +19,7 @@
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const readline = require('readline');
+const { t, loadUiLang, saveUiLang, pick, runProgress } = require('./lib/tui-menu');
 
 const repoRoot = path.resolve(__dirname, '..');
 const qwenRepoRoot = path.resolve(repoRoot, '..', 'FreeQwenApi');
@@ -199,18 +199,6 @@ const chromePath = resolveChromePath();
 function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
 }
-function ask(q) {
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-    });
-    return new Promise((resolve) =>
-        rl.question(q, (ans) => {
-            rl.close();
-            resolve(ans);
-        }),
-    );
-}
 async function fetchJson(u, opts) {
     const r = await fetch(u, opts);
     if (!r.ok) throw new Error(`${u} -> HTTP ${r.status}`);
@@ -252,8 +240,9 @@ class CDP {
         this.ws.onmessage = (ev) => {
             const msg = JSON.parse(ev.data);
             if (msg.id && this.pending.has(msg.id)) {
-                const { resolve, reject } = this.pending.get(msg.id);
+                const { resolve, reject, timer } = this.pending.get(msg.id);
                 this.pending.delete(msg.id);
+                clearTimeout(timer);
                 msg.error
                     ? reject(new Error(JSON.stringify(msg.error)))
                     : resolve(msg.result);
@@ -272,9 +261,13 @@ class CDP {
     send(method, params = {}) {
         const id = ++this.id;
         this.ws.send(JSON.stringify({ id, method, params }));
-        return new Promise((resolve, reject) =>
-            this.pending.set(id, { resolve, reject }),
-        );
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.pending.delete(id);
+                reject(new Error(`Chrome DevTools timed out: ${method}`));
+            }, 10000);
+            this.pending.set(id, { resolve, reject, timer });
+        });
     }
     close() {
         try {
@@ -406,83 +399,128 @@ async function main() {
     if (!fs.existsSync(chromePath))
         throw new Error(chromeInstallHelp(chromePath));
 
-    if (!reuseChrome) {
-        killExistingTestingChrome();
-        if (!keepProfile && fs.existsSync(profileDir)) {
-            removeProfileSafely(profileDir);
-            console.log(
-                `[auth] Removed old Chrome for Testing profile: ${profileDir}`,
-            );
-        }
-    }
-    fs.mkdirSync(profileDir, { recursive: true });
+    const langRef = { current: loadUiLang() };
+    const cdp = await runProgress(
+        (tick) => ({
+            lang: langRef.current,
+            subtitle: t(langRef.current, 'login'),
+            status: [{
+                ok: true,
+                label: '',
+                value: `${['◐', '◓', '◑', '◒'][tick % 4]}  ${t(langRef.current, 'openingChrome')}`,
+            }],
+            items: [],
+        }),
+        async () => {
+            if (!reuseChrome) {
+                killExistingTestingChrome();
+                if (!keepProfile && fs.existsSync(profileDir)) {
+                    removeProfileSafely(profileDir);
+                }
+            }
+            fs.mkdirSync(profileDir, { recursive: true });
 
-    if (reuseChrome && (await devtoolsReady())) {
-        console.log(`[auth] Reusing Chrome DevTools on port ${port}`);
-    } else {
-        console.log(
-            `[auth] Starting clean Chrome for Testing profile: ${profileDir}`,
-        );
-        console.log(`[auth] Browser executable: ${chromePath}`);
-        const chrome = spawn(
-            chromePath,
-            [
-                `--user-data-dir=${profileDir}`,
-                `--remote-debugging-port=${port}`,
-                '--use-mock-keychain',
-                '--password-store=basic',
-                '--disable-sync',
-                '--disable-extensions',
-                '--disable-component-extensions-with-background-pages',
-                '--disable-features=AutofillServerCommunication,OptimizationHints,MediaRouter,InterestFeedContentSuggestions,Translate',
-                '--no-first-run',
-                '--no-default-browser-check',
-                '--disable-infobars',
-                url,
+            if (!(reuseChrome && (await devtoolsReady()))) {
+                const chrome = spawn(
+                    chromePath,
+                    [
+                        `--user-data-dir=${profileDir}`,
+                        `--remote-debugging-port=${port}`,
+                        '--use-mock-keychain',
+                        '--password-store=basic',
+                        '--disable-sync',
+                        '--disable-extensions',
+                        '--disable-component-extensions-with-background-pages',
+                        '--disable-features=AutofillServerCommunication,OptimizationHints,MediaRouter,InterestFeedContentSuggestions,Translate',
+                        '--no-first-run',
+                        '--no-default-browser-check',
+                        '--disable-infobars',
+                        url,
+                    ],
+                    { stdio: 'ignore', detached: true },
+                );
+                chrome.unref();
+            }
+
+            await waitDevtools();
+            const target = await getPageTarget();
+            const connection = new CDP(target.webSocketDebuggerUrl);
+            await connection.ready();
+            await connection.send('Runtime.enable');
+            await connection.send('Network.enable');
+            return connection;
+        },
+    );
+
+    const ready = await pick(
+        () => ({
+            lang: langRef.current,
+            subtitle: t(langRef.current, 'login'),
+            status: [
+                { ok: true, label: 'Chrome', value: t(langRef.current, 'chromeOpen') },
+                { ok: true, label: '', value: t(langRef.current, 'sendTest') },
             ],
-            { stdio: 'ignore', detached: true },
-        );
-        chrome.unref();
+            items: [
+                { id: 'continue', label: t(langRef.current, 'continue'), help: t(langRef.current, 'sendTest') },
+                { id: 'quit', label: t(langRef.current, 'cancelled'), help: t(langRef.current, 'back') },
+            ],
+        }),
+        (next) => { langRef.current = next; saveUiLang(next); },
+    );
+    if (ready.id !== 'continue') {
+        cdp.close();
+        return;
     }
 
-    await waitDevtools();
-    const target = await getPageTarget();
-    const cdp = new CDP(target.webSocketDebuggerUrl);
-    await cdp.ready();
-    await cdp.send('Runtime.enable');
-    await cdp.send('Network.enable');
-
-    console.log(
-        '\n[auth] Chrome открыт. Войди в DeepSeek в ЭТОМ отдельном окне.',
+    const auth = await runProgress(
+        (tick) => ({
+            lang: langRef.current,
+            subtitle: t(langRef.current, 'login'),
+            status: [{
+                ok: true,
+                label: '',
+                value: `${['◐', '◓', '◑', '◒'][tick % 4]}  ${t(langRef.current, 'readingSession')}`,
+            }],
+            items: [],
+        }),
+        async () => {
+            let captured = null;
+            for (let i = 0; i < 20; i++) {
+                captured = await readPageAuth(cdp);
+                if (captured.token && captured.cookie) break;
+                await sleep(500);
+            }
+            return captured;
+        },
     );
-    console.log(
-        '[auth] После логина отправь в DeepSeek короткое сообщение, например: ok',
-    );
-    await ask(
-        '[auth] Когда залогинился и отправил тестовое сообщение — нажми ENTER здесь: ',
-    );
-
-    let auth = null;
-    for (let i = 0; i < 20; i++) {
-        auth = await readPageAuth(cdp);
-        if (auth.token && auth.cookie) break;
-        await sleep(500);
-    }
     const { href, cookiesCount, ...persisted } = auth;
-    fs.writeFileSync(outPath, JSON.stringify(persisted, null, 2));
-    console.log(`[auth] Saved: ${outPath}`);
-    console.log(`[auth] page: ${href || 'unknown'}`);
-    console.log(
-        `[auth] token: ${persisted.token ? 'OK (' + persisted.token.length + ' chars)' : 'MISSING'}`,
-    );
-    console.log(
-        `[auth] cookie: ${persisted.cookie ? 'OK (' + cookiesCount + ' cookies)' : 'MISSING'}`,
-    );
-    console.log(
-        `[auth] hif headers: ${persisted.hif_dliq || persisted.hif_leim ? 'captured' : 'not captured/optional'}`,
-    );
+    fs.writeFileSync(outPath, JSON.stringify(persisted, null, 2), { mode: 0o600 });
+    if (process.platform !== 'win32') fs.chmodSync(outPath, 0o600);
     cdp.close();
-    if (!persisted.token || !persisted.cookie) process.exitCode = 2;
+    const success = Boolean(persisted.token && persisted.cookie);
+    const result = await pick(
+        () => ({
+            lang: langRef.current,
+            subtitle: t(langRef.current, success ? 'done' : 'importFail'),
+            status: [
+                { ok: success, label: '', value: success ? t(langRef.current, 'authReady') : t(langRef.current, 'importFail') },
+                { ok: Boolean(persisted.token), label: t(langRef.current, 'token'), value: persisted.token ? `${persisted.token.length} chars` : t(langRef.current, 'missing') },
+                { ok: Boolean(persisted.cookie), label: t(langRef.current, 'cookies'), value: persisted.cookie ? String(cookiesCount) : t(langRef.current, 'missing') },
+                { ok: Boolean(href), label: t(langRef.current, 'session'), value: outPath },
+            ],
+            items: success && process.env.FREDEEPSEEK_EMBEDDED
+                ? [
+                    { id: 'setup', label: t(langRef.current, 'configureAgents'), help: t(langRef.current, 'setupSubtitle') },
+                    { id: 'back', label: t(langRef.current, 'back'), help: t(langRef.current, 'pressEnter') },
+                ]
+                : [
+                    { id: 'back', label: t(langRef.current, 'done'), help: t(langRef.current, 'pressEnter') },
+                ],
+        }),
+        (next) => { langRef.current = next; saveUiLang(next); },
+    );
+    if (!success) process.exitCode = 2;
+    else if (result.id === 'setup') process.exitCode = 10;
 }
 main().catch((e) => {
     console.error('[auth] ERROR:', e);

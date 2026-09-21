@@ -6,7 +6,7 @@
 npm run setup:agents
 # or non-interactive:
 npm run setup:agents -- --all --model deepseek-v4-flash
-npm run setup:agents -- --target claude-code --model deepseek-v4-pro
+npm run setup:agents -- --target claude-code --model deepseek-v4-flash-thinking
 npm run setup:agents -- --dry-run --target hermes,openclaw,opencode
 ```
 

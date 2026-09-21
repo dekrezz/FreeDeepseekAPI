@@ -18,9 +18,8 @@ Web-логин, без платного API-ключа. **2–3 аккаунта
   <a href="docs/ru/README.md">Документация</a> ·
   <a href="docs/ru/models.md">Модели</a> ·
   <a href="docs/ru/agents.md">Агенты</a> ·
-  <a href="docs/auth.md">Авторизация</a> ·
-  <a href="docs/api.md">API</a> ·
-  <a href="https://t.me/forgetmeai">Telegram</a>
+  <a href="docs/ru/auth.md">Авторизация</a> ·
+  <a href="docs/api.md">API</a>
 </p>
 
 </div>
@@ -45,7 +44,6 @@ curl http://127.0.0.1:9655/v1/chat/completions \
 | ID | Web |
 |---|---|
 | [`deepseek-v4-flash`](docs/ru/models.md) / `deepseek-flash` | V4.1-Flash |
-| `deepseek-v4-pro` | та же модель (старый алиас) |
 | `…-thinking` / `…-search` | DeepThink / Search |
 
 ## Агенты одним нажатием
@@ -69,14 +67,25 @@ npm run setup:agents
 
 Шаблоны: [`integrations/`](integrations/).
 
+## Несколько аккаунтов
+
+Один Web-логин DeepSeek не ведёт два чата сразу. Два агента или две сессии OpenCode — положите 2–3 файла в `accounts/` и дайте каждому клиенту свой `x-agent-session`:
+
+```bash
+mkdir -p accounts
+npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./accounts/worker-2.json
+```
+
+Прокси сам берёт свободный логин. Привязать конкретный аккаунт к клиенту нельзя. Второй чат на том же логине ждёт в очереди. Подробности: [Авторизация](docs/ru/auth.md).
+
 ## Документация
 
 | Гайд | |
 |---|---|
 | [Модели](docs/ru/models.md) | V4.1-Flash |
 | [Агенты](docs/ru/agents.md) | one-click |
-| [Авторизация](docs/auth.md) | 1–3 Web-логина |
-| [HTTP API](docs/api.md) | пул, `429`, env |
+| [Авторизация](docs/ru/auth.md) | несколько Web-логинов |
+| [HTTP API](docs/api.md) | пул, очередь, env |
 
 ## Звёзды
 

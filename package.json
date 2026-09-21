@@ -15,7 +15,9 @@
     "deepseek:auth": "node scripts/deepseek_chrome_auth.js",
     "client": "node client.js",
     "setup:agents": "node scripts/setup-agents.js",
-    "test": "node --check server.js && node --check lib/pow.js && node --check scripts/auth.js && node --check scripts/auth_import.js && node --check scripts/doctor.js && node --check scripts/deepseek_chrome_auth.js && node --check scripts/probe_deepseek_models.js && node --check scripts/setup-agents.js && node --check scripts/render-stars-chart.js && node --check client.js && node --check scripts/live_agentic_smoke_tests.mjs && node --test tests/unit.test.js",
+    "test:syntax": "node --check server.js && node --check lib/pow.js && node --check scripts/auth.js && node --check scripts/lib/tui-menu.js && node --check scripts/auth_import.js && node --check scripts/doctor.js && node --check scripts/deepseek_chrome_auth.js && node --check scripts/probe_deepseek_models.js && node --check scripts/setup-agents.js && node --check scripts/render-stars-chart.js && node --check client.js && node --check scripts/live_agentic_smoke_tests.mjs",
+    "test:unit": "node --test tests/unit.test.js",
+    "test": "npm run test:syntax && npm run test:unit",
     "test:live": "node scripts/live_agentic_smoke_tests.mjs"
   },
   "keywords": [
