@@ -205,7 +205,7 @@ function setupCodex(opts) {
       priority: 1,
       availability_nux: null,
       upgrade: null,
-      base_instructions: 'You are a coding agent. Follow developer instructions and use local tools when needed. Do not use the Codex/harness web search tool. DeepSeek native Web Search and DeepThink are enabled — use those for live web data and report the findings.',
+      base_instructions: 'You are a coding agent. Follow developer instructions and use local tools when needed. Local tools are JSON, and several independent calls may be one tool_calls array. Do not use the Codex/harness web search tool. DeepSeek native Web Search is enabled — use it for live web data and report the findings.',
       supports_reasoning_summary_parameter: false,
       default_reasoning_summary: 'none',
       support_verbosity: false,
@@ -234,8 +234,6 @@ function setupCodex(opts) {
   const profile = [
     `model = ${tomlEscape(opts.model)}`,
     'model_provider = "freedeepseek"',
-    'preferred_auth_method = "apikey"',
-    'forced_login_method = "api"',
     `model_catalog_json = ${tomlEscape(catalogPath)}`,
     '',
     '[model_providers.freedeepseek]',
@@ -247,8 +245,6 @@ function setupCodex(opts) {
     let next = readText(profilePath);
     next = upsertTomlKey(next, 'model', opts.model);
     next = upsertTomlKey(next, 'model_provider', 'freedeepseek');
-    next = upsertTomlKey(next, 'preferred_auth_method', 'apikey');
-    next = upsertTomlKey(next, 'forced_login_method', 'api');
     next = upsertTomlKey(next, 'model_catalog_json', catalogPath);
     next = upsertTomlTable(next, 'model_providers.freedeepseek', providerBody);
     writeFile(profilePath, next, opts);

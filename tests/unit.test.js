@@ -363,6 +363,65 @@ test('issue #19 stacked native DSML is listed and never treated as a gateway too
   ]), /execute_code/);
 });
 
+test('a batch of local tool calls is returned together and native calls are dropped', () => {
+  const allowed = ['read_file', 'write_file'];
+  const dsml = [
+    '<｜DSML｜tool_calls>',
+    '<｜DSML｜invoke name="execute_code">',
+    '<｜DSML｜parameter name="code" string="true">print(1)</｜DSML｜parameter>',
+    '</｜DSML｜invoke>',
+    '<｜DSML｜invoke name="read_file">',
+    '<｜DSML｜parameter name="path" string="true">a.js</｜DSML｜parameter>',
+    '</｜DSML｜invoke>',
+    '<｜DSML｜invoke name="read_file">',
+    '<｜DSML｜parameter name="path" string="true">b.js</｜DSML｜parameter>',
+    '</｜DSML｜invoke>',
+    '</｜DSML｜tool_calls>',
+  ].join('\n');
+  const fromDsml = serverInternals.collectAgentToolCalls(dsml, allowed);
+  assert.deepEqual(fromDsml.map(call => call.name), ['read_file', 'read_file']);
+  assert.deepEqual(fromDsml.map(call => JSON.parse(call.arguments).path), ['a.js', 'b.js']);
+
+  const json = [
+    '{"tool_call":{"name":"read_file","arguments":{"path":"a.js"}}}',
+    '{"tool_calls":[{"name":"write_file","arguments":{"path":"b.js","content":"x"}},{"name":"web_search","arguments":{"query":"no"}}]}',
+  ].join('\n');
+  const fromJson = serverInternals.collectAgentToolCalls(json, allowed);
+  assert.deepEqual(fromJson.map(call => call.name), ['read_file', 'write_file']);
+
+  const legacy = [
+    'TOOL_CALL: read_file',
+    '{"path":"a.js"}',
+    'TOOL_CALL: write_file',
+    '{"path":"b.js","content":"x"}',
+  ].join('\n');
+  assert.deepEqual(
+    serverInternals.collectAgentToolCalls(legacy, allowed).map(call => call.name),
+    ['read_file', 'write_file'],
+  );
+
+  const many = Array.from({ length: 9 }, (_, i) => `{"tool_call":{"name":"read_file","arguments":{"path":"${i}.js"}}}`).join('\n');
+  assert.equal(serverInternals.collectAgentToolCalls(many, allowed).length, 8);
+  assert.equal(serverInternals.collectAgentToolCalls(dsml, []).length, 0);
+
+  const response = serverInternals.buildToolCallResponse(fromDsml, 'deepseek-v4-flash', 'prompt');
+  assert.equal(response.choices[0].finish_reason, 'tool_calls');
+  assert.equal(response.choices[0].message.tool_calls.length, 2);
+  assert.equal(response.choices[0].message.content, null);
+  assert.notEqual(response.choices[0].message.tool_calls[0].id, response.choices[0].message.tool_calls[1].id);
+
+  const chunks = [];
+  serverInternals.sendOpenAIStream({
+    writeHead: () => {},
+    write: (chunk) => { chunks.push(String(chunk)); },
+    end: () => {},
+  }, response);
+  const body = chunks.join('');
+  assert.match(body, /"index":0/);
+  assert.match(body, /"index":1/);
+  assert.match(body, /"finish_reason":"tool_calls"/);
+});
+
 test('parseToolCall accepts zero-argument, CDATA, legacy, collapsed, and prefixed wrappers', () => {
   const zeroArg = serverInternals.parseToolCall(
     '<|DSML|tool_calls><|DSML|invoke name="ping"></|DSML|invoke></|DSML|tool_calls>'
@@ -703,7 +762,7 @@ test('sticky continuation omits system even when the client restates new instruc
   assert.doesNotMatch(next.conversation, /\bhello\b/);
 });
 
-test('agent requests drop harness websearch and force native DeepSeek Search + DeepThink', () => {
+test('agent requests drop harness websearch and enable native DeepSeek Search', () => {
   const stripped = serverInternals.stripHarnessWebSearchTools([
     { type: 'function', function: { name: 'bash', parameters: { type: 'object' } } },
     { type: 'function', function: { name: 'websearch', parameters: { type: 'object' } } },
@@ -713,7 +772,6 @@ test('agent requests drop harness websearch and force native DeepSeek Search + D
   assert.equal(stripped.tools.length, 1);
   assert.equal(stripped.tools[0].function.name, 'bash');
   assert.deepEqual(serverInternals.agentNativeWebFlags(stripped.tools, stripped.names), {
-    thinking_enabled: true,
     search_enabled: true,
   });
   const formatted = serverInternals.formatMessages(
@@ -721,7 +779,8 @@ test('agent requests drop harness websearch and force native DeepSeek Search + D
     stripped.tools,
     { nativeSearchNotice: true },
   );
-  assert.match(formatted.systemPrompt, /DeepSeek native Web Search and DeepThink/);
+  assert.match(formatted.systemPrompt, /DeepSeek native Web Search is enabled/);
+  assert.match(formatted.systemPrompt, /\{"tool_call":\{"name":"<function_name>"/);
   assert.doesNotMatch(formatted.systemPrompt, /## websearch/);
   assert.match(formatted.systemPrompt, /## bash/);
 });
@@ -748,7 +807,7 @@ test('every harness is told to use native DeepSeek search instead of bash or Web
   const reminder = serverInternals.formatToolReminder([
     { type: 'function', function: { name: 'bash' } },
   ]);
-  assert.match(reminder, /native Web Search is already on/);
+  assert.match(reminder, /DeepSeek Search is already on/);
   assert.doesNotMatch(reminder, /Do not call execute_code, web_search/);
 });
 
