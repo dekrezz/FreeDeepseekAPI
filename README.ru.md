@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" alt="FreeDeepseekAPI" width="128" />
+  <img src="docs/assets/logo.png" alt="FreeDeepseekAPI" width="160" />
 </p>
 
 <h1 align="center">FreeDeepseekAPI</h1>
