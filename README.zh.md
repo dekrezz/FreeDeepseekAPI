@@ -1,4 +1,8 @@
-# FreeDeepseekAPI
+<p align="center">
+  <img src="docs/assets/logo.svg" alt="FreeDeepseekAPI" width="128" />
+</p>
+
+<h1 align="center">FreeDeepseekAPI</h1>
 
 <p align="center">
   <strong>面向 DeepSeek Web Chat 的本地 OpenAI 兼容 API 代理</strong>
