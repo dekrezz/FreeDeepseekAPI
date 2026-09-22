@@ -8,6 +8,8 @@ npm run setup:agents -- --target claude-code --model deepseek-v4-flash-thinking
 
 脚本将 FreeDeepseekAPI 添加为可选 profile/provider，不会替换现有的 Opus、Sonnet、GPT 或默认模型。
 
+`--model` 始终是 DeepSeek-V4.1-Flash。`-thinking` 打开 DeepThink。`-search` 打开 chat.deepseek.com 的原生搜索，用来查互联网。请求里带了本地工具时，即使 ID 没有 `-search`，也会打开这个搜索。
+
 | 目标 | 添加内容 |
 |---|---|
 | Claude Code | `~/.claude/freedeepseek.settings.json`；使用 `claude --settings …` |

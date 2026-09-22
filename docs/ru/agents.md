@@ -8,6 +8,8 @@ npm run setup:agents -- --target claude-code --model deepseek-v4-flash-thinking
 
 Скрипт добавляет FreeDeepseekAPI как отдельный opt-in профиль/provider. Текущие Opus, Sonnet, GPT и выбранная модель не заменяются.
 
+`--model` всегда DeepSeek-V4.1-Flash. `-thinking` включает DeepThink. `-search` включает родной поиск chat.deepseek.com для интернета. Если в запросе есть локальные инструменты, этот поиск включается и без суффикса `-search`.
+
 | Цель | Что добавляется |
 |---|---|
 | Claude Code | `~/.claude/freedeepseek.settings.json`; запуск через `claude --settings …` |

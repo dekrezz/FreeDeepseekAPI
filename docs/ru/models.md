@@ -1,20 +1,22 @@
 # Модели
 
-Сверка 2026-09-20: [документация DeepSeek API](https://api-docs.deepseek.com/), [цены](https://api-docs.deepseek.com/quick_start/pricing), [V4.1-Flash](https://api-docs.deepseek.com/news/news260910), залогиненный [chat.deepseek.com](https://chat.deepseek.com).
+Одна модель: **DeepSeek-V4.1-Flash**. Прокси ходит в [chat.deepseek.com](https://chat.deepseek.com), не в платный ключ `api.deepseek.com`.
 
-Прокси ходит в **DeepSeek Web**, не в платный `api.deepseek.com`.
+`deepseek-flash` — короткий алиас `deepseek-v4-flash`. Суффиксы — это два переключателя из чата DeepSeek. Другую модель они не выбирают.
 
-**Web:** Instant, Expert, Vision и Pro убраны. На сайте одна модель: **DeepSeek-V4.1-Flash**. В чате только DeepThink и Search. В `model_configs` ещё есть `default` / `expert` / `vision`, но живой только `default`.
+| ID | DeepThink | Родной веб-поиск |
+|---|---|---|
+| `deepseek-v4-flash` / `deepseek-flash` | выкл | выкл |
+| `deepseek-v4-flash-thinking` | вкл | выкл |
+| `deepseek-v4-flash-search` | выкл | вкл |
+| `deepseek-v4-flash-thinking-search` | вкл | вкл |
 
-Прокси показывает только актуальную Web-модель. `deepseek-flash` остаётся коротким алиасом `deepseek-v4-flash`.
+**`-thinking` включает DeepThink.** V4.1-Flash рассуждает перед ответом. Сама модель остаётся DeepSeek-V4.1-Flash.
 
-| ID прокси | DeepThink | Search |
-|---|---:|---:|
-| `deepseek-v4-flash` / `deepseek-flash` | нет | нет |
-| `deepseek-v4-flash-thinking` | да | нет |
-| `deepseek-v4-flash-search` | нет | да |
-| `deepseek-v4-flash-thinking-search` | да | да |
+**`-search` включает родной поиск chat.deepseek.com.** Запросы в интернет идут через этот поиск. Инструменты харнесса `websearch`, `webfetch` и `WebFetch` его не заменяют. Если кодирующий агент прислал локальные инструменты, прокси включает этот родной поиск и на обычном `deepseek-v4-flash`. DeepThink при этом остаётся таким, какой выбран в ID модели.
 
-Старые имена (`deepseek-v4-pro`, `deepseek-chat`, `deepseek-r1`, `deepseek-expert`, vision) не зарегистрированы — неизвестный ID даёт `400`.
+Старые ID не зарегистрированы: `deepseek-v4-pro`, `deepseek-chat`, `deepseek-reasoner`, `deepseek-r1`, `deepseek-instant`, `deepseek-expert` и vision. Они отвечают `400 invalid_model`.
 
-Список: `GET /v1/models`.
+Имена Claude Code вроде `claude-sonnet-*` и `claude-opus-*` отображаются на DeepSeek-V4.1-Flash и DeepSeek-V4.1-Flash с DeepThink.
+
+Список: `GET /v1/models`. Полная карта: `GET /v1/model-capabilities`.
