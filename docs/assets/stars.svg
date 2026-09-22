@@ -5,7 +5,7 @@
   <text x="776" y="28" text-anchor="end" fill="#3ee0c8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700">5</text>
   <line x1="56" y1="48" x2="56" y2="240" stroke="#1c2a38"/>
   <line x1="56" y1="240" x2="776" y2="240" stroke="#1c2a38"/>
-  <path d="M56.0,240.0 L88.7,240.0 L121.5,240.0 L154.2,240.0 L186.9,240.0 L219.6,240.0 L252.4,201.6 L285.1,201.6 L317.8,201.6 L350.5,201.6 L383.3,163.2 L416.0,163.2 L448.7,163.2 L481.5,163.2 L514.2,163.2 L546.9,163.2 L579.6,163.2 L612.4,124.8 L645.1,86.4 L677.8,86.4 L710.5,86.4 L743.3,48.0 L776.0,48.0" fill="none" stroke="#3ee0c8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M56.0,240.0 L88.7,240.0 L121.5,240.0 L154.2,240.0 L186.9,240.0 L219.6,240.0 L252.4,201.6 L285.1,201.6 L317.8,201.6 L350.5,201.6 L383.3,163.2 L416.0,163.2 L448.7,163.2 L481.5,163.2 L514.2,163.2 L546.9,163.2 L579.6,163.2 L612.4,163.2 L645.1,124.8 L677.8,124.8 L710.5,124.8 L743.3,86.4 L776.0,48.0" fill="none" stroke="#3ee0c8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
   <circle cx="776.0" cy="48.0" r="5" fill="#7c6bff"/>
   <text x="56" y="266" fill="#9ab0c4" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">2026-08-31</text>
   <text x="776" y="266" text-anchor="end" fill="#9ab0c4" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">2026-09-22</text>
