@@ -11,7 +11,7 @@ This is a **Web-session** API, not `api.deepseek.com`. One DeepSeek login can se
 | GET | `/health` | public | Liveness. Account list if no `PROXY_API_KEY` or Bearer matches |
 | GET | `/readyz` | public | `200` only if at least one account can serve now |
 | GET | `/v1/models` | proxy key if set | OpenAI model list |
-| GET | `/v1/model-capabilities` | proxy key if set | V4.1-Flash IDs + thinking/search flags |
+| GET | `/v1/model-capabilities` | proxy key if set | DeepSeek-V4.1-Flash IDs. `-thinking` is DeepThink. `-search` is native chat.deepseek.com search |
 | GET | `/v1/sessions` | proxy key if set | Sticky agent sessions |
 | POST | `/v1/chat/completions` | proxy key if set | OpenAI Chat Completions (`stream` true\|false) |
 | POST | `/v1/messages` | proxy key if set | Anthropic Messages |
@@ -31,7 +31,7 @@ curl -sS http://127.0.0.1:9655/v1/chat/completions \
 |---|---|
 | `x-agent-session` or `user` | Sticky DeepSeek chat. **Give each concurrent client a different value** |
 | `Authorization: Bearer` | Required when `PROXY_API_KEY` / `REQUIRE_PROXY_API_KEY` is set |
-| `model` | `deepseek-v4-flash` / `deepseek-flash`, plus `-thinking` / `-search` / `-thinking-search` |
+| `model` | `deepseek-v4-flash` / `deepseek-flash` (DeepSeek-V4.1-Flash). `-thinking` enables DeepThink. `-search` enables native chat.deepseek.com web search. `-thinking-search` enables both |
 | `stream` | SSE chunks; last chunk includes `usage` |
 | `x-account-id` (response) | Which Web login served the request |
 

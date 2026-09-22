@@ -1,20 +1,22 @@
 # 模型
 
-对照 2026-09-20：[DeepSeek API 文档](https://api-docs.deepseek.com/zh-cn/)、[定价](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)、[V4.1-Flash](https://api-docs.deepseek.com/news/news260910)、已登录的 [chat.deepseek.com](https://chat.deepseek.com)。
+只有一个模型：**DeepSeek-V4.1-Flash**。代理连接的是 [chat.deepseek.com](https://chat.deepseek.com)，不是付费的 `api.deepseek.com` 密钥。
 
-本代理走 **DeepSeek Web**，不是付费 `api.deepseek.com`。
+`deepseek-flash` 是 `deepseek-v4-flash` 的短别名。后缀是 DeepSeek 聊天里的两个开关，不会换成另一个模型。
 
-**Web：** Instant、Expert、Vision、Pro 均已移除。站点只剩 **DeepSeek-V4.1-Flash**。聊天界面只有 DeepThink 和 Search。`model_configs` 仍有 `default` / `expert` / `vision`，但只有 `default` 可用。
+| ID | DeepThink | 原生网页搜索 |
+|---|---|---|
+| `deepseek-v4-flash` / `deepseek-flash` | 关 | 关 |
+| `deepseek-v4-flash-thinking` | 开 | 关 |
+| `deepseek-v4-flash-search` | 关 | 开 |
+| `deepseek-v4-flash-thinking-search` | 开 | 开 |
 
-代理只显示当前 Web 模型。`deepseek-flash` 仍是 `deepseek-v4-flash` 的短别名。
+**`-thinking` 打开 DeepThink。** V4.1-Flash 先推理再回答。底层模型仍是 DeepSeek-V4.1-Flash。
 
-| 代理 ID | DeepThink | Search |
-|---|---:|---:|
-| `deepseek-v4-flash` / `deepseek-flash` | 否 | 否 |
-| `deepseek-v4-flash-thinking` | 是 | 否 |
-| `deepseek-v4-flash-search` | 否 | 是 |
-| `deepseek-v4-flash-thinking-search` | 是 | 是 |
+**`-search` 打开 chat.deepseek.com 的原生网页搜索。** 联网查询走这个搜索。Harness 的 `websearch`、`webfetch`、`WebFetch` 不能代替它。编码代理带上本地工具时，即使用的是普通 `deepseek-v4-flash`，代理也会为这次请求打开原生搜索。DeepThink 仍由你选的模型 ID 决定。
 
-旧名（`deepseek-v4-pro`、`deepseek-chat`、`deepseek-r1`、`deepseek-expert`、vision）未注册，未知 ID 返回 `400`。
+旧 ID 未注册：`deepseek-v4-pro`、`deepseek-chat`、`deepseek-reasoner`、`deepseek-r1`、`deepseek-instant`、`deepseek-expert` 和 vision。它们返回 `400 invalid_model`。
 
-列表：`GET /v1/models`。
+Claude Code 的 `claude-sonnet-*`、`claude-opus-*` 会映射到 DeepSeek-V4.1-Flash，以及带 DeepThink 的 DeepSeek-V4.1-Flash。
+
+列表：`GET /v1/models`。完整映射：`GET /v1/model-capabilities`。
