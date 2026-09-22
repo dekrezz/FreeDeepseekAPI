@@ -1,7 +1,5 @@
 model = "deepseek-v4-flash"
 model_provider = "freedeepseek"
-preferred_auth_method = "apikey"
-forced_login_method = "api"
 model_catalog_json = "~/.codex/freedeepseek-models.json"
 
 [model_providers.freedeepseek]

@@ -907,7 +907,7 @@ async function uploadDeepSeekImage(account, modelCfg, input, index) {
 }
 
 function nativeSearchAndThinkNotice() {
-    return '\n\nDeepSeek native Web Search and DeepThink are enabled. This is your web access. Do not call harness websearch/webfetch/WebFetch, and do not use bash or curl for the live web. Use DeepSeek Search and include those findings in your reply. Do not say you have no web access.\n';
+    return '\n\nDeepSeek native Web Search is enabled. Live web facts come from that search. Answer with the findings. Do not call websearch, webfetch, or WebFetch, and do not use bash or curl for the web. Do not say you have no web access.\nLocal files and commands are a separate step: one JSON tool request, nothing else in that reply.\n';
 }
 
 function adaptHarnessWebAccess(text) {
@@ -1009,7 +1009,7 @@ function stripHarnessWebSearchTools(tools) {
 
 function agentNativeWebFlags(tools, strippedNames = []) {
     if ((Array.isArray(tools) && tools.length > 0) || (strippedNames && strippedNames.length > 0)) {
-        return { thinking_enabled: true, search_enabled: true };
+        return { search_enabled: true };
     }
     return null;
 }
@@ -1186,21 +1186,13 @@ function formatToolDefinitions(tools) {
         catch (e) { return total; }
     }, 0);
     const compactSchemas = rawSchemaChars > Math.floor(MAX_UPSTREAM_PROMPT_CHARS * 0.4);
-    let text = '\n\n--- TOOL REQUEST SYSTEM ---\n';
-    text += 'You are an AI that ONLY REASONS and REQUESTS tool executions. You do NOT run any commands yourself.\n';
-    text += 'When you need data from the local server, REQUEST exactly one tool call. Prefer strict JSON:\n';
-    text += '{"tool_call":{"name":"<function_name>","arguments":{...}}}\n\n';
-    text += 'Legacy format is also accepted: TOOL_CALL: <function_name>\narguments: <JSON arguments>\n\n';
-    text += 'Your response will be sent to the local gateway, which executes the command and sends the output back in the next message.\n\n';
-    text += 'RULES:\n';
-    text += '1. You ONLY output the tool request — you never run anything yourself\n';
-    text += '2. Do NOT simulate, guess, or fabricate command output — wait for the actual result\n';
-    text += '3. The tool runs on ' + SERVER_HOST + ' (' + SERVER_PUBLIC_IP + '), the local server — NOT on DeepSeek\n';
-    text += '4. After the tool executes, the result will be sent to you as a new user/tool message\n';
-    text += '5. Never add explanation before or after the tool request when requesting a tool\n';
-    text += '6. Keep arguments compact. Do not include large file contents unless the tool schema requires it.\n';
-    text += '7. Do not request harness websearch, webfetch, or WebFetch as a tool call. They are not local tools.\n';
-    text += '8. DeepSeek native Web Search is enabled. Use it for the live web. Do not use bash or curl instead, and do not say you lack web access.\n\n';
+    let text = '\n\n--- TOOLS ---\n';
+    text += 'Two actions, never mixed in one reply.\n';
+    text += 'Web: DeepSeek Search is already on. Answer in plain text with the findings. Do not use bash, curl, websearch, or webfetch for the web, and do not say you lack web access.\n';
+    text += 'This computer: request local tools and nothing else. One call, or several independent calls together:\n';
+    text += '{"tool_call":{"name":"<function_name>","arguments":{...}}}\n';
+    text += '{"tool_calls":[{"name":"<function_name>","arguments":{...}},{"name":"<function_name>","arguments":{...}}]}\n';
+    text += 'The gateway runs them and sends the outputs back. Do not invent those outputs. Keep arguments short.\n\n';
     text += 'Available functions:\n';
     for (const tool of tools) {
         if (tool.type === 'function' && tool.function) {
@@ -1213,8 +1205,7 @@ function formatToolDefinitions(tools) {
             }
         }
     }
-    text += '\n--- END TOOL REQUEST SYSTEM ---\n';
-    text += '\nREMEMBER: Request tools only with strict JSON or TOOL_CALL legacy format. Never simulate results.';
+    text += '\n--- END TOOLS ---\n';
     return text;
 }
 
@@ -1232,11 +1223,8 @@ function formatToolReminder(tools) {
     if (!names.length) return '';
     return [
         '--- TOOL REMINDER ---',
-        'You are in a tool loop. Do not paste source files, Unity scripts, or diffs as your reply.',
-        'Do not call execute_code. Do not request harness websearch or webfetch as a tool.',
-        'DeepSeek native Web Search is already on. Use it for the live web instead of bash or curl. Do not say you have no web access.',
-        'If you need to read, write, edit, or run something, output ONLY this JSON:',
-        '{"tool_call":{"name":"<function_name>","arguments":{...}}}',
+        'Web: answer in text. DeepSeek Search is already on. Do not use bash or curl for the web.',
+        'This computer: output only {"tool_call":{"name":"<function_name>","arguments":{...}}} or {"tool_calls":[{"name":"<function_name>","arguments":{...}}]}. Do not paste source files or diffs. Do not call execute_code.',
         `Available tools: ${names.join(', ')}`,
         '--- END TOOL REMINDER ---',
     ].join('\n');
@@ -1248,6 +1236,7 @@ function pinToolReminder(promptText, tools, maxChars = MAX_UPSTREAM_PROMPT_CHARS
     return appendPromptInstruction(promptText, reminder, maxChars);
 }
 
+const MAX_AGENT_TOOL_CALLS = 8;
 const MAX_TOOL_MARKUP_CHARS = 256 * 1024;
 const MAX_TOOL_ARGUMENT_CHARS = 128 * 1024;
 const MAX_TOOL_JSON_CANDIDATES = 32;
@@ -1651,17 +1640,88 @@ function listDsmlToolCalls(text) {
 }
 
 function selectAgentToolCall(text, allowedToolNames) {
+    const calls = collectAgentToolCalls(text, allowedToolNames);
+    if (calls.length) return calls[0];
     const allowed = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
+    if (allowed.size > 0) return null;
     const listed = listDsmlToolCalls(text);
-    const allowedHit = listed.find(call => allowed.has(call.name));
-    if (allowedHit) return allowedHit;
-    const parsed = parseToolCall(text);
-    if (parsed && allowed.has(parsed.name)) return parsed;
-    const nonNative = listed.find(call => !isDeepSeekNativeTool(call.name))
-        || (parsed && !isDeepSeekNativeTool(parsed.name) ? parsed : null);
-    if (nonNative && (allowed.size === 0 || allowed.has(nonNative.name))) return nonNative;
-    if (allowed.size === 0) return parsed || listed[0] || null;
-    return null;
+    const parsed = hasDsmlToolMarkup(text) ? parseDsmlToolCall(text) : null;
+    return parsed || listed[0] || null;
+}
+
+function hasDsmlToolMarkup(text) {
+    return /[|｜]+\s*DSML\s*[|｜]+|[<＜]\s*\/?\s*(?:DSML)?(?:[\w.-]+:)?(?:tool[\s_-]*calls|function[\s_-]*calls|invoke)\b/i.test(String(text || ''));
+}
+
+function rememberToolCall(calls, seen, call) {
+    if (!call) return;
+    const key = `${call.name}\0${call.arguments}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    calls.push(call);
+}
+
+function absorbJsonToolPayload(raw, calls, seen) {
+    if (!raw) return;
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) { return; }
+    if (!parsed || typeof parsed !== 'object') return;
+    if (Array.isArray(parsed)) {
+        if (parsed.length === 0 || parsed.length > MAX_AGENT_TOOL_CALLS) return;
+        for (const item of parsed) rememberToolCall(calls, seen, coerceToolCallObject(item, { allowBare: true }));
+        return;
+    }
+    if (Array.isArray(parsed.tool_calls)) {
+        for (const item of parsed.tool_calls) {
+            rememberToolCall(calls, seen, coerceToolCallObject({ tool_calls: [item] }));
+        }
+        return;
+    }
+    rememberToolCall(calls, seen, coerceToolCallObject(parsed));
+}
+
+function collectJsonToolCalls(text) {
+    const calls = [];
+    const seen = new Set();
+    const value = String(text || '');
+    if (!value || value.length > MAX_TOOL_MARKUP_CHARS) return calls;
+
+    const fenceRe = /```([a-zA-Z0-9#+_-]*)\s*([\s\S]*?)```/gi;
+    let fence;
+    while ((fence = fenceRe.exec(value)) !== null) {
+        const lang = String(fence[1] || '').toLowerCase();
+        if (lang && lang !== 'json') continue;
+        absorbJsonToolPayload(fence[2].trim(), calls, seen);
+    }
+
+    const legacyRe = /TOOL_CALL:\s*([\w-]+)\s*/gi;
+    let legacy;
+    while ((legacy = legacyRe.exec(value)) !== null) {
+        const after = value.substring(legacy.index + legacy[0].length);
+        const braceIdx = after.indexOf('{');
+        if (braceIdx === -1) continue;
+        const rawJson = extractBalancedJsonAt(after, braceIdx);
+        if (!rawJson) continue;
+        try { rememberToolCall(calls, seen, buildToolCall(legacy[1], JSON.parse(rawJson))); }
+        catch (e) { /* one bad legacy block does not discard the rest */ }
+    }
+
+    for (const rawJson of extractBalancedJsonObjects(value)) absorbJsonToolPayload(rawJson, calls, seen);
+    return calls;
+}
+
+function collectAgentToolCalls(text, allowedToolNames) {
+    const allowed = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
+    if (!text || allowed.size === 0) return [];
+    const raw = hasDsmlToolMarkup(text) ? listDsmlToolCalls(text) : collectJsonToolCalls(text);
+    const calls = [];
+    const seen = new Set();
+    for (const call of raw) {
+        if (!call || !allowed.has(call.name)) continue;
+        rememberToolCall(calls, seen, call);
+        if (calls.length >= MAX_AGENT_TOOL_CALLS) break;
+    }
+    return calls;
 }
 
 function looksLikeToolCallMarkup(text) {
@@ -1785,15 +1845,16 @@ function buildUsage(prompt, content, reasoningContent = '') {
 }
 
 function buildToolCallResponse(toolCall, model = DEFAULT_MODEL_ID, prompt = '', reasoningContent = '') {
-    const id = 'call_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+    const calls = (Array.isArray(toolCall) ? toolCall : [toolCall]).filter(Boolean).slice(0, MAX_AGENT_TOOL_CALLS);
+    const stamp = Date.now();
     const message = {
         role: 'assistant',
         content: null,
-        tool_calls: [{
-            id: id,
+        tool_calls: calls.map((call, index) => ({
+            id: `call_${stamp}_${index}_${Math.random().toString(36).substring(2, 8)}`,
             type: 'function',
-            function: { name: toolCall.name, arguments: toolCall.arguments }
-        }]
+            function: { name: call.name, arguments: call.arguments }
+        }))
     };
     // Do not attach reasoning to tool-call turns. Some agent clients treat any
     // reasoning/text payload as a final assistant answer and stop their tool loop.
@@ -2207,7 +2268,21 @@ function sendOpenAIStream(res, openaiResp) {
         }
     }
     if (hasToolCalls) {
-        res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { role: 'assistant', content: null, tool_calls: msg.tool_calls }, finish_reason: null }] })}\n\n`);
+        msg.tool_calls.forEach((tc, index) => {
+            const delta = {
+                tool_calls: [{
+                    index,
+                    id: tc.id,
+                    type: 'function',
+                    function: { name: tc.function.name, arguments: tc.function.arguments || '{}' },
+                }],
+            };
+            if (index === 0) {
+                delta.role = 'assistant';
+                delta.content = null;
+            }
+            res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+        });
         res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\n`);
     } else {
         for (let i = 0; i < (msg.content || '').length; i += 50) {
@@ -2225,8 +2300,9 @@ function sendOpenAIStream(res, openaiResp) {
 
 function storeHistory(agentId, prompt, content, toolCall) {
     const session = getOrCreateAgentSession(agentId);
-    const assistantResponse = toolCall
-        ? `TOOL_CALL: ${toolCall.name}\narguments: ${toolCall.arguments}`
+    const calls = (Array.isArray(toolCall) ? toolCall : (toolCall ? [toolCall] : [])).filter(Boolean);
+    const assistantResponse = calls.length
+        ? calls.map(call => `TOOL_CALL: ${call.name}\narguments: ${call.arguments}`).join('\n')
         : content;
     // Save last 500 chars of the prompt for history context
     const shortPrompt = prompt.length > 500 ? '...' + prompt.substring(prompt.length - 500) : prompt;
@@ -2718,10 +2794,10 @@ const server = http.createServer(async (req, res) => {
             const imageContext = { inputs: extractImageInputs(messages), refFileIds: [] };
             const strippedSearch = stripHarnessWebSearchTools(params.tools || []);
             const tools = strippedSearch.tools;
-            const webFlags = agentNativeWebFlags(tools, strippedSearch.names);
-            const promptOptions = { nativeSearchNotice: Boolean(webFlags) };
             const stream = params.stream === true;
             const requestedModel = canonicalizeModelId(params.model || DEFAULT_MODEL_ID);
+            const webFlags = agentNativeWebFlags(tools, strippedSearch.names);
+            const promptOptions = { nativeSearchNotice: Boolean(webFlags) };
             logRow.model = requestedModel;
             const remoteAddr = req.socket.remoteAddress || 'unknown';
             const requestedSession = req.headers['x-agent-session'] || params.session || params.user;
@@ -2733,7 +2809,7 @@ const server = http.createServer(async (req, res) => {
             lockHolder.agentId = agentId;
             logRow.agent = agentId;
             if (strippedSearch.names.length || webFlags) {
-                console.log(`${agentTag} Native DeepSeek Search + DeepThink on${strippedSearch.names.length ? `; stripped harness tools: ${strippedSearch.names.join(', ')}` : ''}`);
+                console.log(`${agentTag} Native DeepSeek Search on${strippedSearch.names.length ? `; stripped harness tools: ${strippedSearch.names.join(', ')}` : ''}`);
             }
             if (!isKnownModel(requestedModel)) {
                 logRow.status = 400;
@@ -3168,7 +3244,8 @@ const server = http.createServer(async (req, res) => {
             const allowedToolNames = new Set(tools
                 .filter(tool => tool?.type === 'function' && tool.function?.name)
                 .map(tool => tool.function.name));
-            let toolCall = selectAgentToolCall(fullContent, allowedToolNames);
+            let toolCalls = collectAgentToolCalls(fullContent, allowedToolNames);
+            let toolCall = toolCalls[0] || selectAgentToolCall(fullContent, allowedToolNames);
             let ignoredNativeTool = null;
             if (toolCall && isDeepSeekNativeTool(toolCall.name) && !allowedToolNames.has(toolCall.name)) {
                 console.log(`${agentTag} Ignoring DeepSeek-native ${toolCall.name}; gateway tools cannot run it`);
@@ -3215,10 +3292,12 @@ const server = http.createServer(async (req, res) => {
                         || (allowedToolNames.size === 0 && !isDeepSeekNativeTool(retryTc.name))
                     );
                     if (retryAccepted) {
-                        console.log(`${agentTag} Retry with strict prompt succeeded: ${retryTc.name}`);
+                        const retryCalls = collectAgentToolCalls(retryContent2, allowedToolNames);
+                        console.log(`${agentTag} Retry with strict prompt succeeded: ${(retryCalls.length ? retryCalls : [retryTc]).map(call => call.name).join(', ')}`);
                         fullContent = retryContent2;
                         reasoningContent = retryResult2.reasoningContent ? sanitizeContent(retryResult2.reasoningContent) : '';
-                        toolCall = retryTc;
+                        toolCalls = retryCalls.length ? retryCalls : [retryTc];
+                        toolCall = toolCalls[0];
                     } else if (!looksLikeToolCallMarkup(retryContent2) && !looksLikeCodeDumpInsteadOfTool(retryContent2)) {
                         console.log(`${agentTag} Retry produced a plain-text answer; using it.`);
                         fullContent = retryContent2;
@@ -3260,10 +3339,11 @@ const server = http.createServer(async (req, res) => {
                 }
             }
 
-            storeHistory(agentId, prompt, fullContent, toolCall);
+            const executableCalls = toolCalls.length ? toolCalls : (toolCall ? [toolCall] : []);
+            storeHistory(agentId, prompt, fullContent, executableCalls);
 
-            const openaiResponse = toolCall
-                ? buildToolCallResponse(toolCall, requestedModel, clientPromptText, reasoningContent)
+            const openaiResponse = executableCalls.length
+                ? buildToolCallResponse(executableCalls, requestedModel, clientPromptText, reasoningContent)
                 : buildTextResponse(fullContent, clientPromptText, requestedModel, reasoningContent, finishReason);
 
             logRow.ok = true;
@@ -3282,7 +3362,7 @@ const server = http.createServer(async (req, res) => {
                 } else {
                     sendOpenAIStream(res, openaiResponse);
                 }
-                console.log(`${agentTag} Streamed ${apiMode} (tool=${!!toolCall}) in ${Date.now() - startTime}ms`);
+                console.log(`${agentTag} Streamed ${apiMode} (tools=${executableCalls.length}) in ${Date.now() - startTime}ms`);
             } else {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 if (apiMode === 'anthropic') {
@@ -3292,7 +3372,7 @@ const server = http.createServer(async (req, res) => {
                 } else {
                     res.end(JSON.stringify(openaiResponse));
                 }
-                console.log(`${agentTag} Response ${apiMode} (tool=${!!toolCall}, ${Date.now() - startTime}ms, ${fullContent.length} chars)`);
+                console.log(`${agentTag} Response ${apiMode} (tools=${executableCalls.length}, ${Date.now() - startTime}ms, ${fullContent.length} chars)`);
             }
         } catch (e) {
             console.log('[DS-API] Error:', e.message);
@@ -3478,6 +3558,8 @@ module.exports = {
         pinToolReminder,
         parseToolCall,
         listDsmlToolCalls,
+        collectAgentToolCalls,
+        buildToolCallResponse,
         selectAgentToolCall,
         parseDsmlToolCall,
         looksLikeToolCallMarkup,
