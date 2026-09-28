@@ -54,6 +54,7 @@ FreeDeepseekAPI поднимает локальный API-сервер пере�
 - [Diagnostics / doctor](#diagnostics--doctor)
 - [Session reuse](#session-reuse)
 - [Пул аккаунтов](#пул-аккаунтов)
+- [Панель аккаунтов](#панель-аккаунтов)
 - [Вход](#вход)
 - [Агенты](#агенты)
 - [Проверка работы](#проверка-работы)
@@ -379,7 +380,7 @@ curl -X POST "http://127.0.0.1:9655/reset-session?agent=all"
 
 DeepSeek может забанить логин на несколько дней, если два чата отправят запрос с одного и того же логина одновременно. Правило пула: один чат в полёте на логин. Второй запрос на занятый логин ждёт и не накладывается.
 
-Sticky значит, что прокси не прыгает между аккаунтами посреди живого чата. Если логин получил `401`, `403` или `429` и ушёл в cooldown, следующий запрос может перейти на другой готовый логин, а старая удалённая сессия перед этим сбрасывается.
+Sticky значит, что прокси не прыгает между аккаунтами посреди живого чата, кроме случаев, когда логин упёрся в лимит частоты или потерял авторизацию. Если логин получил `401` или `403` или DeepSeek упёрся в лимит частоты, логин уходит в cooldown, а старая удалённая сессия сбрасывается. Запрос, упёршийся в лимит, не падает: он сразу переходит на другой готовый логин, в новый чат с полной историей. После `401`/`403` переходит следующий запрос.
 
 Каталог auth-файлов:
 
@@ -400,12 +401,15 @@ DEEPSEEK_AUTH_PATH="./accounts/main.json,./accounts/backup.json" NON_INTERACTIVE
 
 - новый агент получает свободный логин по кругу;
 - этот логин остаётся приклеен к сессии;
-- `401`, `403` и `429` отправляют логин в cooldown (`DEEPSEEK_ACCOUNT_COOLDOWN_MS`, по умолчанию 10 минут);
+- `401`, `403` и лимит частоты отправляют логин в cooldown (`DEEPSEEK_ACCOUNT_COOLDOWN_MS`, по умолчанию 10 минут). Лимит частоты — это HTTP `429`, сообщение «слишком частые» в HTTP `400` или JSON-ответе (например, `Слишком частые сообщения`) или подсказка в потоке DeepSeek с `finish_reason: rate_limit_reached`. Если DeepSeek прислал `Retry-After`, он соблюдается;
+- запрос, упёршийся в лимит, переходит на другой готовый логин в новый чат. Клиент получает `429 rate_limit`, только когда в cooldown все логины;
+- остальные ошибки `400` в cooldown не отправляют. Чат пересоздаётся на том же логине;
 - два запроса и два свободных логина уходят на разные аккаунты;
 - тот же `x-agent-session` внахлёст ждёт свой логин (`DEEPSEEK_ACCOUNT_LOCK_WAIT_MS`, по умолчанию 120 секунд);
 - когда заняты все логины, запрос ждёт sticky или тот, которым давно не пользовались;
 - запрос заголовка сессии OpenCode отвечается локально и логин не занимает;
 - `/health` показывает статус аккаунтов без путей к auth-файлам и без имён файлов;
+- `/dashboard` показывает все логины и позволяет приостановить, вернуть, снять cooldown и перечитать auth-файлы без перезапуска (см. [Панель аккаунтов](#панель-аккаунтов));
 - auth-файлы должны быть с правами `0600`.
 
 Привязать клиента к выбранному файлу нельзя. Прокси сам берёт свободный логин.
@@ -413,6 +417,41 @@ DEEPSEEK_AUTH_PATH="./accounts/main.json,./accounts/backup.json" NON_INTERACTIVE
 ```bash
 DEEPSEEK_ACCOUNT_COOLDOWN_MS=600000 npm start
 ```
+
+---
+
+## Панель аккаунтов
+
+Откройте `http://127.0.0.1:9655/dashboard`. Там видны все логины: состояние (`ready`, `busy`, `cooldown`, `disabled`, `no_credentials`), обратный отсчёт cooldown и его причина, подряд идущие и общие ошибки, последняя ошибка DeepSeek и расход. Оттуда можно:
+
+- **Disable / Enable** — приостановить или вернуть логин. Это пауза на время работы процесса: начатые запросы доработают, после перезапуска пауза забывается. Постоянный выключатель — `"enabled": false` в auth-файле; логин, выключенный в файле, из панели не включить.
+- **Clear cooldown** — сразу вернуть остывающий логин в ротацию.
+- **Reload accounts** — перечитать auth-файлы. Новые файлы добавляются, удалённые убираются. Оставшийся логин сохраняет cooldown и счётчики. Логин с новым токеном или cookie начинает с чистого листа.
+
+Чтобы добавить логин, импортируйте его и нажмите Reload:
+
+```bash
+npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./accounts/worker-3.json
+```
+
+Страница статическая и данных не хранит. Она читает admin API:
+
+| Метод | Путь | Результат |
+|---|---|---|
+| `GET` | `/admin/accounts` | `{ now, pool, accounts }` |
+| `POST` | `/admin/accounts/<id>/disable` | `{ account, pool }` |
+| `POST` | `/admin/accounts/<id>/enable` | `{ account, pool }`. `409 disabled_in_file`, если в файле `"enabled": false` |
+| `POST` | `/admin/accounts/<id>/clear-cooldown` | `{ account, pool }` |
+| `POST` | `/admin/accounts/reload` | `{ added, removed, kept, errors, accounts, pool }`. `422 no_accounts_found` оставляет пул как был |
+
+Доступ:
+
+- Если задан `PROXY_API_KEY`, `/admin/*` требует тот же bearer, что и `/v1/*`. Страница спросит ключ и сохранит его только в session storage вкладки.
+- Без ключа `/admin/*` отвечает только прямым клиентам с loopback. Запрос с `X-Forwarded-For`, `Forwarded` или `X-Real-IP` получает `403 admin_forbidden`, даже с `127.0.0.1`. Так же отклоняются `Host` не localhost и браузерный `Origin`, отличный от адреса самого прокси (другое локальное веб-приложение не может ставить логины на паузу). `PROXY_ADMIN_ALLOW_REMOTE=1` снимает это ограничение. Не включайте его на сетевом адресе без ключа.
+- POST из браузера по-прежнему проходит проверку origin. Чтобы открывать панель не с loopback-адреса, добавьте этот origin в `PROXY_CORS_ORIGINS`.
+- В ответах admin API нет токенов, cookie, значений `hif_*` и имён auth-файлов.
+
+В образ контейнера файлы панели не входят. Там `/dashboard` отвечает `404 dashboard_unavailable`, а admin API работает.
 
 ---
 
@@ -667,6 +706,10 @@ curl http://127.0.0.1:9655/v1/model-capabilities
 |---|---|---|
 | `GET` | `/health` | Процесс жив. Статус аккаунтов, если ключа proxy нет или bearer совпал |
 | `GET` | `/readyz` | `200`, только если логин может обслужить запрос |
+| `GET` | `/dashboard` | Панель аккаунтов (статическая страница) |
+| `GET` | `/admin/accounts` | Пул и статус каждого логина. См. [Панель аккаунтов](#панель-аккаунтов) |
+| `POST` | `/admin/accounts/<id>/{disable,enable,clear-cooldown}` | Приостановить, вернуть или снять cooldown с логина |
+| `POST` | `/admin/accounts/reload` | Перечитать auth-файлы без перезапуска |
 | `GET` | `/v1/models` | Четыре id DeepSeek-V4.1-Flash |
 | `GET` | `/v1/model-capabilities` | Id, DeepThink и родной поиск |
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions |
@@ -684,9 +727,10 @@ curl http://127.0.0.1:9655/v1/model-capabilities
 |---|---|---|
 | `HOST` | `127.0.0.1` | Адрес. Привязка не к loopback без ключа proxy печатает предупреждение |
 | `PORT` | `9655` | Порт |
-| `PROXY_API_KEY` | выкл | Bearer обязателен на `/v1/*`, если задан |
+| `PROXY_API_KEY` | выкл | Bearer обязателен на `/v1/*` и `/admin/*`, если задан |
 | `REQUIRE_PROXY_API_KEY` | выкл | Не стартовать без ключа. В контейнере это включено |
 | `PROXY_CORS_ORIGINS` | loopback | Дополнительные точные origin браузера |
+| `PROXY_ADMIN_ALLOW_REMOTE` | off | Если `1`, `/admin/*` отвечает не-loopback клиентам даже без `PROXY_API_KEY` |
 | `DEEPSEEK_AUTH_PATH` | `./deepseek-auth.json` | Один файл или список через запятую |
 | `DEEPSEEK_AUTH_DIR` | `./accounts`, если каталог есть | Все `*.json` в нём |
 | `DEEPSEEK_MAX_PROMPT_CHARS` | `80000` | Потолок того, что уходит наверх. Минимум 16000 |
@@ -694,7 +738,7 @@ curl http://127.0.0.1:9655/v1/model-capabilities
 | `DEEPSEEK_REQUEST_DEADLINE_MS` | `120000` | Лимит времени на запрос |
 | `DEEPSEEK_MAX_CONCURRENT` | `24` | Потолок процесса. Настоящий параллелизм — число свободных логинов |
 | `DEEPSEEK_ACCOUNT_LOCK_WAIT_MS` | `120000` | Сколько второй чат ждёт занятый логин |
-| `DEEPSEEK_ACCOUNT_COOLDOWN_MS` | `600000` | После 401, 403 или 429 |
+| `DEEPSEEK_ACCOUNT_COOLDOWN_MS` | `600000` | Cooldown после 401, 403 или лимита частоты без `Retry-After` |
 | `TRUST_PROXY` | выкл | Если `1`, IP клиента берётся из `X-Forwarded-For` |
 | `MAX_REQUEST_BODY_BYTES` | `31457280` | Максимум тела JSON, вместе с base64-картинками |
 | `NON_INTERACTIVE` / `SKIP_ACCOUNT_MENU` | выкл | Пропустить меню запуска |
@@ -708,8 +752,10 @@ curl http://127.0.0.1:9655/v1/model-capabilities
 | 400 | `invalid_model` | Возьмите id из `GET /v1/models` |
 | 400 | `context_length_exceeded` | Промпт остался слишком длинным после уплотнения |
 | 401 | `authentication_error` | Ключ proxy не совпал |
+| 403 | `admin_forbidden` | `/admin/*` без ключа с не-loopback или проксированного клиента. См. [Панель аккаунтов](#панель-аккаунтов) |
 | 429 | `concurrent_chat_blocked` | Ожидание занятого логина истекло. Добавьте логин или повторите |
-| 429 | `rate_limit` | Все логины в cooldown. Уважайте `Retry-After` |
+| 429 | `rate_limit` | Все логины в cooldown (лимит частоты или ошибка входа). Уважайте `Retry-After` |
+| 429 | `rate_limit_error` | DeepSeek ограничил логин, а время запроса вышло или клиент ушёл раньше, чем закончился переход на другой логин. Уважайте `Retry-After` |
 | 502 | `malformed_tool_call` | Разметка инструмента осталась сломанной после одной починки. Чат сохранён |
 | 502 | `empty_response` | DeepSeek ничего не вернул после повторов |
 | 503 | `overloaded` / `no_auth` | Слишком много запросов в полёте или нет auth-файла |
@@ -769,7 +815,7 @@ npm test
 BASE_URL=http://127.0.0.1:9655 MODEL=deepseek-v4-flash npm run test:live
 ```
 
-`npm test` гоняет `node --check` по точкам входа и `node --test tests/unit.test.js`. В DeepSeek он не ходит.
+`npm test` гоняет `node --check` по точкам входа и `node --test` по `tests/unit.test.js` и `tests/account-failover.test.js`. В DeepSeek он не ходит: тесты переключения аккаунтов отвечают на все запросы к DeepSeek встроенной заглушкой.
 
 ---
 

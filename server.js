@@ -19,7 +19,7 @@ const crypto = require('crypto');
 const dns = require('dns').promises;
 const net = require('net');
 const { spawnSync } = require('child_process');
-const { solvePOW } = require('./lib/pow');
+const pow = require('./lib/pow');
 const { t, loadUiLang, saveUiLang, pick, pause, printWordmark } = require('./scripts/lib/tui-menu');
 
 // Per-DeepSeek-request network timeout. Plain fetch() has NO default timeout, so a
@@ -66,6 +66,7 @@ function requireProxyApiKey(key, required) {
 }
 
 const PROXY_API_KEY = loadProxyApiKey();
+const PROXY_ADMIN_ALLOW_REMOTE = isTruthy(process.env.PROXY_ADMIN_ALLOW_REMOTE);
 const PROXY_CORS_ORIGINS = new Set(String(process.env.PROXY_CORS_ORIGINS || '')
     .split(',')
     .map(value => normalizeOrigin(value))
@@ -203,31 +204,110 @@ function discoverAuthPaths() {
     }
     return files.length ? [...new Set(files)] : [DS_CONFIG_PATH];
 }
-function uniqueAccountId(file) {
+function uniqueAccountId(file, takenIds) {
     const base = path.basename(file, '.json').replace(/[^a-zA-Z0-9._-]/g, '_') || 'account';
     let id = base;
     let n = 2;
-    while (accounts.some(a => a.id === id)) {
+    while (takenIds.has(id)) {
         id = `${base}_${n}`;
         n++;
     }
     return id;
 }
-function loadDeepSeekConfig({ fatal = true } = {}) {
-    accounts.length = 0;
-    const paths = discoverAuthPaths();
+// Error text for an unreadable auth file. Never echo JSON.parse snippets (they can
+// contain token/cookie fragments) or fs messages (they contain absolute paths).
+function describeAuthFileError(error) {
+    if (error instanceof SyntaxError) return 'invalid JSON';
+    if (error?.code) return `could not read file (${error.code})`;
+    return String(error?.message || 'could not load file');
+}
+function readAccountFiles(paths) {
+    const loaded = [];
+    const errors = [];
     for (const file of paths) {
         try {
-            const raw = fs.readFileSync(file, 'utf8');
-            const config = JSON.parse(raw);
-            const id = uniqueAccountId(file);
-            accounts.push({ id, file, config, headers: buildBaseHeaders(config), cooldownUntil: 0, failures: 0, lastUsedAt: 0 });
+            const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (!config || typeof config !== 'object' || Array.isArray(config)) {
+                throw new Error('expected a JSON object');
+            }
+            loaded.push({ file, config });
         } catch (e) {
-            console.error(`[DS-API] Could not load auth config ${file}: ${e.message}`);
+            errors.push({ file, message: describeAuthFileError(e) });
         }
+    }
+    return { loaded, errors };
+}
+function newAccountRuntimeState() {
+    return {
+        cooldownUntil: 0,
+        cooldownReason: null,
+        failures: 0,
+        totalFailures: 0,
+        lastError: null,
+        lastSuccessAt: 0,
+        lastUsedAt: 0,
+        adminDisabled: false,
+    };
+}
+// Build the next account list. Accounts are matched to `previous` by resolved file
+// path: a kept login keeps its id and runtime state (cooldown, admin pause, counters),
+// while its config and headers are refreshed. A changed token or cookie is a fresh
+// login, so its cooldown and failure state are cleared.
+function buildAccountsList(loaded, previous = []) {
+    const previousByFile = new Map(previous.filter(a => a.file).map(a => [path.resolve(a.file), a]));
+    const takenIds = new Set();
+    const result = new Array(loaded.length);
+    const added = [];
+    const kept = [];
+    const relogged = [];
+    loaded.forEach(({ file, config }, index) => {
+        const prev = previousByFile.get(path.resolve(file));
+        if (!prev || takenIds.has(prev.id)) return;
+        previousByFile.delete(path.resolve(file));
+        takenIds.add(prev.id);
+        const credentialsChanged = prev.config?.token !== config.token || prev.config?.cookie !== config.cookie;
+        prev.file = file;
+        prev.config = config;
+        prev.headers = buildBaseHeaders(config);
+        if (credentialsChanged) {
+            prev.cooldownUntil = 0;
+            prev.cooldownReason = null;
+            prev.failures = 0;
+            prev.lastError = null;
+            relogged.push(prev.id);
+        }
+        result[index] = prev;
+        kept.push(prev.id);
+    });
+    loaded.forEach(({ file, config }, index) => {
+        if (result[index]) return;
+        const id = uniqueAccountId(file, takenIds);
+        takenIds.add(id);
+        result[index] = { id, file, config, headers: buildBaseHeaders(config), ...newAccountRuntimeState() };
+        added.push(id);
+    });
+    const removed = [...previousByFile.values()].map(a => a.id);
+    return { list: result, added, kept, removed, relogged };
+}
+function applyAccountsList({ list, relogged = [] }) {
+    accounts.splice(0, accounts.length, ...list);
+    // Remote chats belong to the DeepSeek user that created them. After a re-login
+    // (new token/cookie) they may be foreign, so pinned sessions start a fresh chat
+    // with their local recovery history. Removed accounts rotate via selectAccountForSession.
+    const reloggedIds = new Set(relogged);
+    for (const session of sessions.values()) {
+        if (session.id && reloggedIds.has(session.accountId)) resetRemoteSession(session);
     }
     DS_CONFIG = accounts[0]?.config || {};
     dsHeaders = accounts[0]?.headers || buildBaseHeaders({});
+}
+function loadDeepSeekConfig({ fatal = true } = {}) {
+    const paths = discoverAuthPaths();
+    const { loaded, errors } = readAccountFiles(paths);
+    for (const error of errors) {
+        console.error(`[DS-API] Could not load auth config ${error.file}: ${error.message}`);
+    }
+    applyAccountsList(buildAccountsList(loaded, accounts));
     if (accounts.length > 0) {
         console.log(`[DS-API] Loaded ${accounts.length} auth account(s): ${accounts.map(a => a.id).join(', ')}`);
         return true;
@@ -243,7 +323,7 @@ function accountHasCredentials(account) {
     return Boolean(account?.config?.token && account?.config?.cookie);
 }
 function isAccountEnabled(account) {
-    return account?.config?.enabled !== false;
+    return account?.config?.enabled !== false && account?.adminDisabled !== true;
 }
 function accountCanServe(account, now = Date.now()) {
     return accountHasCredentials(account) && isAccountEnabled(account) && (account.cooldownUntil || 0) <= now;
@@ -268,7 +348,9 @@ function accountStatus(account) {
         cooldown_remaining_sec: Math.max(0, Math.ceil((account.cooldownUntil - Date.now()) / 1000)),
         busy: Boolean(lock),
         busy_agent: lock?.agentId || null,
-        failures: account.failures,
+        // Lifetime count (the pre-admin /health contract). Consecutive failures,
+        // which reset on a served request, are in /admin/accounts.
+        failures: account.totalFailures || 0,
         last_used_at: account.lastUsedAt || null,
         prompt_tokens: usage.prompt_tokens,
         completion_tokens: usage.completion_tokens,
@@ -410,29 +492,87 @@ function parseRetryAfterMs(retryAfterRaw) {
     if (!Number.isNaN(t)) return Math.max(1000, t - Date.now());
     return null;
 }
-function markAccountFailure(account, status, reason = '', retryAfterRaw = null) {
+function clipText(value, max = 200) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    return text.length > max ? `${text.substring(0, max - 1)}…` : text;
+}
+function countAccountFailure(account, kind, status, detail) {
+    account.failures = (account.failures || 0) + 1;
+    account.totalFailures = (account.totalFailures || 0) + 1;
+    account.lastError = { kind, status: Number(status) || null, message: clipText(detail), at: Date.now() };
+}
+// Put a login on cooldown after DeepSeek throttled it (HTTP 429, a "too frequent"
+// message in any HTTP/JSON body, or an in-stream hint with rate_limit_reached).
+// Retry-After wins when present; otherwise DEEPSEEK_ACCOUNT_COOLDOWN_MS applies.
+function markAccountRateLimited(account, detail = '', retryAfterRaw = null, status = 429, reason = '') {
+    if (!account) return 0;
+    const retryMs = parseRetryAfterMs(retryAfterRaw);
+    const cooldownMs = retryMs != null ? retryMs : DEFAULT_ACCOUNT_COOLDOWN_MS;
+    account.cooldownUntil = Math.max(account.cooldownUntil || 0, Date.now() + cooldownMs);
+    account.cooldownReason = 'rate_limit';
+    countAccountFailure(account, 'rate_limit', status, detail);
+    console.log(`[account:${account.id}] rate-limited${reason ? ` (${reason})` : ''}: cooldown for ${Math.round(cooldownMs / 1000)}s${retryMs != null ? ' (Retry-After)' : ''} after HTTP ${status}: ${clipText(detail, 120)}`);
+    return cooldownMs;
+}
+function markAccountFailure(account, status, reason = '', retryAfterRaw = null, detail = '') {
     if (!account) return;
-    account.failures++;
-    if ([401, 403, 429].includes(Number(status))) {
-        // On 429, honor a valid Retry-After header (seconds or HTTP-date) when present;
-        // otherwise fall back to the fixed env-configured cooldown.
-        const retryMs = Number(status) === 429 ? parseRetryAfterMs(retryAfterRaw) : null;
-        const cooldownMs = retryMs != null ? retryMs : DEFAULT_ACCOUNT_COOLDOWN_MS;
-        account.cooldownUntil = Date.now() + cooldownMs;
-        console.log(`[account:${account.id}] cooldown for ${Math.round(cooldownMs / 1000)}s after HTTP ${status}${reason ? ` (${reason})` : ''}${retryMs != null ? ' (Retry-After)' : ''}`);
+    const code = Number(status);
+    if (code === 429 || isRateLimitSignal(detail)) {
+        markAccountRateLimited(account, detail || `HTTP ${code}`, retryAfterRaw, code, reason);
+        return;
     }
+    if (code === 401 || code === 403) {
+        countAccountFailure(account, 'auth', code, detail || `HTTP ${code}`);
+        account.cooldownUntil = Math.max(account.cooldownUntil || 0, Date.now() + DEFAULT_ACCOUNT_COOLDOWN_MS);
+        account.cooldownReason = 'auth';
+        console.log(`[account:${account.id}] cooldown for ${Math.round(DEFAULT_ACCOUNT_COOLDOWN_MS / 1000)}s after HTTP ${code}${reason ? ` (${reason})` : ''}`);
+        return;
+    }
+    // Any other upstream failure (plain 400, 5xx, malformed body) is counted but
+    // does not pause the login: it says nothing about this login's quota.
+    countAccountFailure(account, 'upstream', code, detail || `HTTP ${code}${reason ? ` (${reason})` : ''}`);
+}
+function recordAccountSuccess(account) {
+    if (!account) return;
+    account.failures = 0;
+    account.lastSuccessAt = Date.now();
+}
+// Mark the login as rate-limited and return a typed 429 the request handler
+// recognizes as "fail over to another login".
+function accountRateLimitError(account, detail, retryAfterRaw, label, status = 429) {
+    const cooldownMs = markAccountRateLimited(account, detail, retryAfterRaw, status, label);
+    const retryAfterSec = Math.max(1, Math.ceil(cooldownMs / 1000));
+    const error = createUpstreamHttpError(429, detail || `DeepSeek rate-limited ${label}`, String(retryAfterSec));
+    error.accountId = account?.id || null;
+    error.accountRateLimited = true;
+    return error;
+}
+function isAccountRateLimitError(error) {
+    return error?.accountRateLimited === true;
+}
+function deepSeekJsonMessage(json) {
+    if (!json || typeof json !== 'object') return '';
+    return [json.data?.biz_msg, json.msg, json.message].filter(v => typeof v === 'string' && v.trim()).join(' ');
 }
 async function readDeepSeekJsonResponse(resp, label, account) {
     const text = await resp.text();
+    const retryAfter = resp.headers.get('retry-after');
     let json = null;
     if (text) {
         try { json = JSON.parse(text); }
         catch (e) {
-            markAccountFailure(account, resp.status, label);
+            if (resp.status === 429 || isRateLimitSignal(text)) {
+                throw accountRateLimitError(account, text, retryAfter, label, resp.status);
+            }
+            markAccountFailure(account, resp.status, label, retryAfter, text);
             throw new Error(`DeepSeek returned non-JSON ${label} response (HTTP ${resp.status}). Run npm run doctor. First chars: ${text.substring(0, 120)}`);
         }
     }
-    if (!resp.ok) markAccountFailure(account, resp.status, label);
+    const message = deepSeekJsonMessage(json);
+    if (resp.status === 429 || isRateLimitSignal(message)) {
+        throw accountRateLimitError(account, message || text, retryAfter, label, resp.status);
+    }
+    if (!resp.ok) markAccountFailure(account, resp.status, label, retryAfter, message || text);
     return { json, text };
 }
 if (require.main === module) {
@@ -560,8 +700,31 @@ function isDeepSeekModelErrorEvent(event) {
     return event && event.type === 'error';
 }
 
+// DeepSeek Web throttles a login with localized text ("Слишком частые сообщения",
+// "Too many requests", "请求过于频繁") in an HTTP 400/429 or JSON body, or with an
+// in-stream `event: hint` whose finish_reason is rate_limit_reached.
+// "rate limit" must not start inside a word ("generate limit", "moderate limit").
+const RATE_LIMIT_PATTERN = /(?<![a-z])rate[\s_-]*limit|too\s+many\s+requests|too\s+frequent|слишком\s+част|частые\s+(?:сообщения|запросы)|频繁|请求过多|请求次数过多/i;
+function isRateLimitSignal(signal) {
+    if (!signal) return false;
+    if (typeof signal === 'string') return RATE_LIMIT_PATTERN.test(signal);
+    if (typeof signal !== 'object') return false;
+    if (/rate_?limit/i.test(String(signal.finish_reason || ''))) return true;
+    const text = [signal.content, signal.message, signal.msg, signal.biz_msg, signal.finish_reason, signal.type, signal.detail]
+        .filter(value => typeof value === 'string' && value)
+        .join(' ');
+    return Boolean(text) && RATE_LIMIT_PATTERN.test(text);
+}
+
 function createUpstreamHttpError(status, body = '', retryAfter = null) {
     const detail = String(body || '').replace(/\s+/g, ' ').trim().substring(0, 300);
+    if (Number(status) === 429 || isRateLimitSignal(detail)) {
+        const error = new Error(`DeepSeek rate limit (upstream HTTP ${Number(status) || 429})${detail ? `: ${detail}` : ''}`);
+        error.status = 429;
+        error.type = 'rate_limit_error';
+        if (retryAfter) error.retryAfter = retryAfter;
+        return error;
+    }
     if (isContextTooLongError(detail)) {
         const error = new Error(detail || 'DeepSeek prompt is too long');
         error.status = 400;
@@ -570,9 +733,7 @@ function createUpstreamHttpError(status, body = '', retryAfter = null) {
         return error;
     }
     const code = Number(status) || 502;
-    const type = code === 429
-        ? 'rate_limit_error'
-        : ((code === 401 || code === 403) ? 'authentication_error' : 'upstream_http_error');
+    const type = (code === 401 || code === 403) ? 'authentication_error' : 'upstream_http_error';
     const error = new Error(`DeepSeek upstream HTTP ${code}${detail ? `: ${detail}` : ''}`);
     error.status = code;
     error.type = type;
@@ -820,20 +981,29 @@ async function createDeepSeekPowHeader(account, targetPath) {
         body: JSON.stringify({ target_path: targetPath }),
     });
     const text = await response.text();
+    const retryAfter = response.headers.get('retry-after');
+    const label = `PoW challenge for ${targetPath}`;
     if (!response.ok) {
-        markAccountFailure(account, response.status, `PoW challenge for ${targetPath}`);
-        throw createUpstreamHttpError(response.status, text, response.headers.get('retry-after'));
+        if (response.status === 429 || isRateLimitSignal(text)) {
+            throw accountRateLimitError(account, text, retryAfter, label, response.status);
+        }
+        markAccountFailure(account, response.status, label, retryAfter, text);
+        throw createUpstreamHttpError(response.status, text, retryAfter);
     }
     let payload;
     try { payload = JSON.parse(text); }
     catch (error) {
+        if (isRateLimitSignal(text)) throw accountRateLimitError(account, text, retryAfter, label, response.status);
         throw new Error(`DeepSeek returned non-JSON PoW response for ${targetPath}. First chars: ${text.substring(0, 120)}`);
     }
     const challenge = payload?.data?.biz_data?.challenge;
+    if (!challenge && isRateLimitSignal(deepSeekJsonMessage(payload))) {
+        throw accountRateLimitError(account, deepSeekJsonMessage(payload), retryAfter, label, response.status);
+    }
     if (!challenge) {
         throw new Error(`DeepSeek PoW response has no challenge for ${targetPath}. Run npm run doctor, then npm run auth.`);
     }
-    const answer = await solvePOW(challenge, account.config.wasmUrl);
+    const answer = await pow.solvePOW(challenge, account.config.wasmUrl);
     return Buffer.from(JSON.stringify({
         algorithm: challenge.algorithm,
         challenge: challenge.challenge,
@@ -867,6 +1037,10 @@ async function waitForDeepSeekFile(account, uploadedFile) {
         }
         const files = payload?.data?.biz_data?.files;
         if (!response.ok || payload?.data?.biz_code !== 0 || !Array.isArray(files)) {
+            const detail = deepSeekJsonMessage(payload) || text;
+            if (response.status === 429 || isRateLimitSignal(detail)) {
+                throw accountRateLimitError(account, detail, response.headers.get('retry-after'), 'image status', response.status);
+            }
             throw createUpstreamHttpError(response.status || 502, payload?.data?.biz_msg || text, response.headers.get('retry-after'));
         }
         file = files.find(candidate => candidate?.id === uploadedFile.id) || file;
@@ -893,15 +1067,23 @@ async function uploadDeepSeekImage(account, modelCfg, input, index) {
         body,
     });
     const text = await response.text();
+    const retryAfter = response.headers.get('retry-after');
     let payload;
     try { payload = JSON.parse(text); }
     catch (error) {
+        if (response.status === 429 || isRateLimitSignal(text)) {
+            throw accountRateLimitError(account, text, retryAfter, 'image upload', response.status);
+        }
         throw new Error(`DeepSeek returned non-JSON image upload response. First chars: ${text.substring(0, 120)}`);
     }
     const file = payload?.data?.biz_data;
     if (!response.ok || payload?.data?.biz_code !== 0 || !file?.id) {
-        if (!response.ok) markAccountFailure(account, response.status, 'image upload');
-        throw createUpstreamHttpError(response.status || 502, payload?.data?.biz_msg || text, response.headers.get('retry-after'));
+        const detail = deepSeekJsonMessage(payload) || text;
+        if (response.status === 429 || isRateLimitSignal(detail)) {
+            throw accountRateLimitError(account, detail, retryAfter, 'image upload', response.status);
+        }
+        if (!response.ok) markAccountFailure(account, response.status, 'image upload', retryAfter, detail);
+        throw createUpstreamHttpError(response.status || 502, payload?.data?.biz_msg || text, retryAfter);
     }
     return (await waitForDeepSeekFile(account, file)).id;
 }
@@ -1014,6 +1196,42 @@ function agentNativeWebFlags(tools, strippedNames = []) {
     return null;
 }
 
+// A successful completion is always an SSE stream. DeepSeek answers throttling,
+// auth failures, and other business errors with a JSON body, sometimes on HTTP 200.
+// Parsing that body as SSE would look like an instant-empty reply (context overflow).
+// Rate limits and auth errors throw. Any other business error is recorded and
+// returned as { errText, retryAfter } so the caller can recover (fresh chat), the
+// same way it recovers from a plain HTTP 400. Returns null for a stream body.
+async function readJsonCompletionError(resp, account, label) {
+    const contentType = String(resp.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('application/json')) return null;
+    const text = await resp.text();
+    const retryAfter = resp.headers.get('retry-after');
+    let payload = null;
+    try { payload = JSON.parse(text); } catch (e) { payload = null; }
+    const detail = deepSeekJsonMessage(payload) || text;
+    if (isRateLimitSignal(detail)) throw accountRateLimitError(account, detail, retryAfter, label, resp.status);
+    const code = Number(payload?.code);
+    if (code >= 40001 && code <= 40003) {
+        markAccountFailure(account, 401, label, null, detail);
+        throw createUpstreamHttpError(401, detail);
+    }
+    markAccountFailure(account, resp.status, label, retryAfter, detail);
+    return { errText: `DeepSeek returned JSON instead of a stream for ${label}: ${detail}`, retryAfter };
+}
+
+// Read a non-200 completion body, then fail over (rate limit) or record the failure.
+// Returns the body text for the caller's own recovery decision.
+async function readCompletionFailure(resp, account, label) {
+    const retryAfter = resp.headers.get('retry-after');
+    const errText = await resp.text();
+    if (resp.status === 429 || isRateLimitSignal(errText)) {
+        throw accountRateLimitError(account, errText, retryAfter, label, resp.status);
+    }
+    markAccountFailure(account, resp.status, label, retryAfter, errText);
+    return { errText, retryAfter };
+}
+
 async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, freshSessionPrompt = prompt, lockHolder = null, imageContext = null, webFlags = null) {
     const modelCfg = resolveModelConfig(model);
     const thinking_enabled = webFlags?.thinking_enabled ?? modelCfg.thinking_enabled;
@@ -1081,17 +1299,23 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
         })
     });
 
-    // If session expired, reset and retry once
-    if (resp.status !== 200) {
-        // Pass Retry-After so a 429 honors the server-requested cooldown (#16).
-        const retryAfter = resp.headers.get('retry-after');
-        markAccountFailure(account, resp.status, 'completion', retryAfter);
-        const errText = await resp.text();
+    // Rate limits (HTTP 429 or a "too frequent" body on any status, including a
+    // JSON body on HTTP 200) throw a failover error here, before any same-account
+    // session recreate (#6, #16). Other failures are returned for recovery below.
+    const failure = resp.status !== 200
+        ? await readCompletionFailure(resp, account, 'completion')
+        : await readJsonCompletionError(resp, account, 'completion');
+
+    // If session expired or DeepSeek rejected it with a business error, reset and retry once
+    if (failure) {
+        const { errText, retryAfter } = failure;
+        // A JSON business error on HTTP 200 surfaces as 502 if it is not recovered.
+        const failureStatus = resp.status === 200 ? 502 : resp.status;
         console.log(`${agentTag} Session error (${resp.status}): ${errText.substring(0, 100)}`);
         if (isContextTooLongError(errText)) {
-            throw createUpstreamHttpError(resp.status, errText, retryAfter);
+            throw createUpstreamHttpError(failureStatus, errText, retryAfter);
         }
-        if (resp.status === 400 || resp.status === 404 || resp.status === 500) {
+        if (resp.status === 200 || resp.status === 400 || resp.status === 404 || resp.status === 500) {
             console.log(`${agentTag} Session ${session.id} expired. Creating new session...`);
             resetRemoteSession(session);
 
@@ -1123,10 +1347,15 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
                 })
             });
             if (!resp2.ok) {
-                const retryAfter2 = resp2.headers.get('retry-after');
-                markAccountFailure(account, resp2.status, 'completion after session recreate', retryAfter2);
-                const errText2 = await resp2.text();
+                const { errText: errText2, retryAfter: retryAfter2 } = await readCompletionFailure(resp2, account, 'completion after session recreate');
                 throw createUpstreamHttpError(resp2.status, errText2, retryAfter2);
+            }
+            const jsonFailure2 = await readJsonCompletionError(resp2, account, 'completion after session recreate');
+            if (jsonFailure2) {
+                // The brand-new chat was rejected too: fail loudly, and do not let
+                // the next turn continue a chat DeepSeek never accepted a message in.
+                resetRemoteSession(session);
+                throw createUpstreamHttpError(502, jsonFailure2.errText, jsonFailure2.retryAfter);
             }
             effectivePrompt = freshSessionPrompt;
             return { resp: resp2, agentId, account, promptUsed: effectivePrompt, freshSessionReset: true };
@@ -1134,7 +1363,7 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
         // The body was consumed for diagnostics, so returning this Response
         // would hand a locked stream to readDeepSeekResponse. Surface a typed
         // error instead and retain the real upstream status/Retry-After.
-        throw createUpstreamHttpError(resp.status, errText, retryAfter);
+        throw createUpstreamHttpError(failureStatus, errText, retryAfter);
     }
 
     return { resp, agentId, account, promptUsed: effectivePrompt, freshSessionReset: recoveredFreshSession };
@@ -2487,6 +2716,8 @@ function isContinuationRecoverySafe(previousAccountId, continuationCall) {
 }
 
 function isContextTooLongError(error) {
+    // A throttled login is not an oversized prompt: never compact for it.
+    if (isRateLimitSignal(error)) return false;
     const message = typeof error === 'string'
         ? error
         : `${error?.content || ''} ${error?.message || ''} ${error?.finish_reason || ''} ${error?.type || ''}`;
@@ -2515,6 +2746,12 @@ function remoteSessionShouldStay(session, { overflow = false, modelError = null 
     if (!session?.id) return false;
     if (overflow || isContextTooLongError(modelError)) return false;
     return true;
+}
+
+// A rate limit that hits a continuation or repair call: the account (or the whole
+// pool) is throttled, but the content already received is still a valid answer.
+function isRateLimitedPoolOrAccount(error) {
+    return isAccountRateLimitError(error) || (error?.status === 429 && error?.type === 'rate_limit');
 }
 
 function isInstantEmptyResponse({ content, reasoningContent, messageId, elapsedMs }) {
@@ -2627,6 +2864,220 @@ function resolveUpstreamPrompt(session, messages, tools, recoveryHistoryPrefix =
     };
 }
 
+// === Admin API and dashboard ===
+
+function hostHeaderHostname(host) {
+    try { return new URL(`http://${String(host || '').trim()}`).hostname; } catch (e) { return null; }
+}
+// The global bearer gate already ran. Without a proxy key, the admin API is limited
+// to direct loopback clients: a request relayed by a local reverse proxy
+// (X-Forwarded-For / Forwarded / X-Real-IP) is not treated as local. A proxy that
+// adds none of those headers cannot be told apart; set PROXY_API_KEY behind one.
+// Browser requests must come from the proxy's own origin (the dashboard): another
+// local web app would otherwise be able to POST (CSRF), and a non-loopback Host
+// means DNS rebinding.
+function adminAccessDecision({ remoteAddress, headers = {} } = {}, { proxyKey = PROXY_API_KEY, allowRemote = PROXY_ADMIN_ALLOW_REMOTE } = {}) {
+    if (proxyKey || allowRemote) return { allowed: true };
+    const forbidden = (message) => ({ allowed: false, status: 403, error: { message, type: 'admin_forbidden' } });
+    const proxied = Boolean(headers['x-forwarded-for'] || headers.forwarded || headers['x-real-ip']);
+    if (!isLoopbackHost(remoteAddress) || proxied) {
+        return forbidden('Admin API is limited to localhost. Set PROXY_API_KEY or PROXY_ADMIN_ALLOW_REMOTE=1.');
+    }
+    if (headers.host && !isLoopbackHost(hostHeaderHostname(headers.host))) {
+        return forbidden('Admin API without PROXY_API_KEY only answers a localhost Host header.');
+    }
+    if (headers.origin) {
+        let originHost = null;
+        try { originHost = new URL(normalizeOrigin(headers.origin)).host; } catch (e) { originHost = null; }
+        if (!originHost || originHost !== String(headers.host || '').trim().toLowerCase()) {
+            return forbidden('Admin API without PROXY_API_KEY only accepts browser requests from the proxy dashboard origin.');
+        }
+    }
+    return { allowed: true };
+}
+
+function adminAccountStatus(account, now = Date.now()) {
+    if (!accountHasCredentials(account)) return 'no_credentials';
+    if (!isAccountEnabled(account)) return 'disabled';
+    if ((account.cooldownUntil || 0) > now) return 'cooldown';
+    if (accountLocks.has(account.id)) return 'busy';
+    return 'ready';
+}
+
+// Dashboard view of one login. Deliberately omits token, cookie values, hif_*,
+// wasmUrl, and the auth file name/path.
+function adminAccountView(account, now = Date.now()) {
+    const lock = accountLocks.get(account.id);
+    const usage = usageByAccount.get(account.id) || { prompt_tokens: 0, completion_tokens: 0, usd: 0, requests: 0 };
+    const cooling = (account.cooldownUntil || 0) > now;
+    const config = account.config || {};
+    return {
+        id: account.id,
+        name: String(config.name || account.id),
+        status: adminAccountStatus(account, now),
+        enabled: isAccountEnabled(account),
+        disabled_by: config.enabled === false ? 'file' : (account.adminDisabled === true ? 'admin' : null),
+        credentials: {
+            token: Boolean(config.token),
+            cookie_count: String(config.cookie || '').split(';').map(v => v.trim()).filter(Boolean).length,
+        },
+        cooldown_until: cooling ? account.cooldownUntil : null,
+        cooldown_remaining_sec: cooling ? Math.ceil((account.cooldownUntil - now) / 1000) : 0,
+        cooldown_reason: cooling ? (account.cooldownReason || null) : null,
+        busy: Boolean(lock),
+        busy_agent: lock?.agentId || null,
+        busy_since: lock?.since || null,
+        failures: account.failures || 0,
+        total_failures: account.totalFailures || 0,
+        last_error: account.lastError ? { ...account.lastError } : null,
+        last_success_at: account.lastSuccessAt || null,
+        last_used_at: account.lastUsedAt || null,
+        usage: {
+            requests: usage.requests,
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            usd: usage.usd,
+        },
+    };
+}
+
+function adminPoolSummary(now = Date.now()) {
+    const pool = { total: accounts.length, ready: 0, busy: 0, cooldown: 0, disabled: 0, no_credentials: 0, can_serve: 0, next_ready_at: null, next_ready_in_sec: null };
+    for (const account of accounts) {
+        const status = adminAccountStatus(account, now);
+        pool[status]++;
+        if (accountCanServe(account, now)) pool.can_serve++;
+        if (status === 'cooldown' && (pool.next_ready_at === null || account.cooldownUntil < pool.next_ready_at)) {
+            pool.next_ready_at = account.cooldownUntil;
+        }
+    }
+    if (pool.next_ready_at !== null) pool.next_ready_in_sec = Math.max(0, Math.ceil((pool.next_ready_at - now) / 1000));
+    return pool;
+}
+
+function adminReloadAccounts() {
+    const { loaded, errors } = readAccountFiles(discoverAuthPaths());
+    const publicErrors = errors.map(error => ({ file: path.basename(error.file), message: error.message }));
+    if (loaded.length === 0) {
+        return { ok: false, errors: publicErrors };
+    }
+    const next = buildAccountsList(loaded, accounts);
+    applyAccountsList(next);
+    console.log(`[DS-API] Reloaded auth accounts: ${accounts.map(a => a.id).join(', ')} (added: ${next.added.join(', ') || '-'}; removed: ${next.removed.join(', ') || '-'})`);
+    return { ok: true, added: next.added, removed: next.removed, kept: next.kept, errors: publicErrors };
+}
+
+function adminJson(res, status, body, extraHeaders = {}) {
+    jsonResponse(res, status, body, { 'Cache-Control': 'no-store', ...extraHeaders });
+}
+function adminError(res, status, type, message, extraHeaders = {}, extra = {}) {
+    adminJson(res, status, { error: { message, type, ...extra } }, extraHeaders);
+}
+
+const ADMIN_ACCOUNT_ACTIONS = new Set(['disable', 'enable', 'clear-cooldown']);
+function handleAdminRequest(req, res, pathname) {
+    const access = adminAccessDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers });
+    if (!access.allowed) {
+        adminJson(res, access.status, { error: access.error });
+        return;
+    }
+    const methodNotAllowed = (allow) => adminError(res, 405, 'method_not_allowed', `Use ${allow} for ${pathname}`, { Allow: allow });
+    const parts = pathname.split('/').filter(Boolean); // ['admin', 'accounts', ...]
+    if (parts[1] !== 'accounts' || parts.length > 4) {
+        adminError(res, 404, 'not_found', `Unknown admin endpoint: ${pathname}`);
+        return;
+    }
+    if (parts.length === 2) {
+        if (req.method !== 'GET') return methodNotAllowed('GET');
+        const now = Date.now();
+        adminJson(res, 200, { now, pool: adminPoolSummary(now), accounts: accounts.map(a => adminAccountView(a, now)) });
+        return;
+    }
+    if (parts.length === 3 && parts[2] === 'reload') {
+        if (req.method !== 'POST') return methodNotAllowed('POST');
+        const result = adminReloadAccounts();
+        if (!result.ok) {
+            adminError(res, 422, 'no_accounts_found', 'No auth account could be loaded. The current pool is unchanged. Import one with npm run auth:import -- --output ./accounts/<name>.json.', {}, { errors: result.errors });
+            return;
+        }
+        const now = Date.now();
+        adminJson(res, 200, {
+            added: result.added,
+            removed: result.removed,
+            kept: result.kept,
+            errors: result.errors,
+            accounts: accounts.map(a => adminAccountView(a, now)),
+            pool: adminPoolSummary(now),
+        });
+        return;
+    }
+    if (parts.length !== 4 || !ADMIN_ACCOUNT_ACTIONS.has(parts[3])) {
+        adminError(res, 404, 'not_found', `Unknown admin endpoint: ${pathname}`);
+        return;
+    }
+    if (req.method !== 'POST') return methodNotAllowed('POST');
+    let accountId;
+    try { accountId = decodeURIComponent(parts[2]); }
+    catch (e) { accountId = parts[2]; }
+    const account = accounts.find(a => a.id === accountId);
+    if (!account) {
+        adminError(res, 404, 'account_not_found', `No account with id ${accountId}`);
+        return;
+    }
+    const action = parts[3];
+    if (action === 'disable') {
+        account.adminDisabled = true;
+    } else if (action === 'enable') {
+        if (account.config?.enabled === false) {
+            adminError(res, 409, 'disabled_in_file', `Account ${account.id} is disabled in its auth file ("enabled": false). Edit the file, then reload accounts.`);
+            return;
+        }
+        account.adminDisabled = false;
+    } else {
+        account.cooldownUntil = 0;
+        account.cooldownReason = null;
+    }
+    console.log(`[admin] account ${account.id}: ${action}`);
+    const now = Date.now();
+    adminJson(res, 200, { account: adminAccountView(account, now), pool: adminPoolSummary(now) });
+}
+
+const DASHBOARD_DIR = path.join(__dirname, 'public', 'dashboard');
+const DASHBOARD_FILES = new Map([
+    ['/dashboard', { file: 'index.html', type: 'text/html; charset=utf-8' }],
+    ['/dashboard/', { file: 'index.html', type: 'text/html; charset=utf-8' }],
+    ['/dashboard/app.js', { file: 'app.js', type: 'text/javascript; charset=utf-8' }],
+    ['/dashboard/app.css', { file: 'app.css', type: 'text/css; charset=utf-8' }],
+]);
+const DASHBOARD_HEADERS = {
+    'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-cache',
+};
+function isDashboardPath(pathname) {
+    return pathname === '/dashboard' || pathname.startsWith('/dashboard/');
+}
+// Static files only, from a fixed whitelist: the request path never reaches the filesystem.
+async function serveDashboard(res, pathname) {
+    const entry = DASHBOARD_FILES.get(pathname);
+    if (!entry) {
+        jsonResponse(res, 404, { error: { message: `Not found: ${pathname}`, type: 'not_found' } }, { 'X-Content-Type-Options': 'nosniff' });
+        return;
+    }
+    let content;
+    try {
+        content = await fs.promises.readFile(path.join(DASHBOARD_DIR, entry.file));
+    } catch (e) {
+        if (e.code !== 'ENOENT') throw e;
+        jsonResponse(res, 404, { error: { message: `Dashboard files are not installed (expected public/dashboard/${entry.file} next to server.js).`, type: 'dashboard_unavailable' } });
+        return;
+    }
+    res.writeHead(200, { 'Content-Type': entry.type, 'Content-Length': content.length, ...DASHBOARD_HEADERS });
+    res.end(content);
+}
+
 // === HTTP Server ===
 const server = http.createServer(async (req, res) => {
     const requestOrigin = req.headers.origin;
@@ -2642,13 +3093,29 @@ const server = http.createServer(async (req, res) => {
 
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
-    const isPublicProbe = req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health' || url.pathname === '/readyz');
+    const isPublicProbe = req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health' || url.pathname === '/readyz' || isDashboardPath(url.pathname));
     if (!isPublicProbe && !isProxyAuthorized(req.headers.authorization)) {
         res.writeHead(401, {
             'Content-Type': 'application/json',
             'WWW-Authenticate': 'Bearer',
         });
         res.end(JSON.stringify({ error: { message: 'Invalid or missing proxy API key', type: 'authentication_error' } }));
+        return;
+    }
+
+    // Dashboard: public static page (no data); it calls the gated /admin API.
+    if (req.method === 'GET' && isDashboardPath(url.pathname)) {
+        try {
+            await serveDashboard(res, url.pathname);
+        } catch (e) {
+            console.error('[DS-API] dashboard error:', e.message);
+            if (!res.headersSent) jsonResponse(res, 500, { error: { message: 'Could not read dashboard files', type: 'server_error' } });
+        }
+        return;
+    }
+
+    if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
+        handleAdminRequest(req, res, url.pathname);
         return;
     }
 
@@ -2933,25 +3400,9 @@ const server = http.createServer(async (req, res) => {
             let lastMessageId = null;
             let lastReadMs = 0;
             let overflow = false;
-            try {
-                initialCall = await askDeepSeekStream(fullPrompt, agentId, requestedModel, freshPrompt, lockHolder, imageContext, webFlags);
-            } catch (e) {
-                if (!isContextTooLongError(e)) throw e;
-                overflow = true;
-                modelError = { type: 'context_length_exceeded', content: e.message || e.content || '' };
-                lastReadMs = Date.now() - startTime;
-                console.log(`${agentTag} Upstream rejected the prompt as too long (${lastReadMs}ms). Compacting instead of resending it.`);
-            }
-            if (initialCall && initialCall.promptUsed !== fullPrompt) {
-                fullPrompt = initialCall.promptUsed;
-                if (freshPromptBuild.compacted) {
-                    promptCompacted = true;
-                    markContextCompacted(res);
-                }
-            }
 
-            // Process streaming response from DeepSeek — returns { content, reasoningContent, messageId, finishReason }
-            async function readDeepSeekResponse(readable) {
+            // Process streaming response from DeepSeek — returns { content, reasoningContent, messageId, finishReason, modelError, rateLimited }
+            async function readDeepSeekResponse(readable, account) {
                 let buffer = '';
                 let lastPath = null;
                 const fragments = [];
@@ -2960,6 +3411,7 @@ const server = http.createServer(async (req, res) => {
                 let newMessageId = null;
                 let finishReason = null;
                 let modelError = null;
+                let rateLimitSignal = null;
 
                 const rebuildFragmentState = () => {
                     const { responseText, thinkText } = rebuildFragmentText(fragments);
@@ -2987,6 +3439,11 @@ const server = http.createServer(async (req, res) => {
                                 if (d.response_message_id !== undefined && !newMessageId) newMessageId = d.response_message_id;
                                 if (isDeepSeekModelErrorEvent(d)) {
                                     modelError = { type: d.type || 'error', content: d.content || '', finish_reason: d.finish_reason || null };
+                                    if (isRateLimitSignal(modelError)) rateLimitSignal = modelError;
+                                } else if (isRateLimitSignal({ finish_reason: d.finish_reason })) {
+                                    // Only server-controlled fields are inspected here; model
+                                    // output text can legitimately mention rate limits.
+                                    rateLimitSignal = { type: 'hint', content: d.content || '', finish_reason: d.finish_reason };
                                 }
                                 if (d.finish_reason) {
                                     finishReason = d.finish_reason;
@@ -3034,6 +3491,15 @@ const server = http.createServer(async (req, res) => {
                     }
                 }
 
+                if (rateLimitSignal) {
+                    // DeepSeek throttled this login inside a 200 stream (`event: hint`,
+                    // finish_reason rate_limit_reached). Nothing was answered, so the
+                    // chat must not advance; the caller fails over to another login.
+                    const detail = rateLimitSignal.content || rateLimitSignal.finish_reason || 'rate_limit_reached';
+                    const rateLimitError = accountRateLimitError(account, detail, null, 'completion stream', 200);
+                    return { content: '', reasoningContent: '', messageId: null, finishReason: null, modelError: rateLimitSignal, rateLimited: true, rateLimitError };
+                }
+
                 if (newMessageId) {
                     session.parentMessageId = newMessageId;
                     session.messageCount++;
@@ -3041,17 +3507,67 @@ const server = http.createServer(async (req, res) => {
                     console.log(`${agentTag} WARNING: could not extract message_id`);
                 }
 
-                return { content: fullContent, reasoningContent, messageId: newMessageId, finishReason, modelError };
+                return { content: fullContent, reasoningContent, messageId: newMessageId, finishReason, modelError, rateLimited: false };
             }
 
-            if (initialCall) {
-                const firstRead = await readDeepSeekResponse(initialCall.resp.body);
+            // Send one prompt and read it. When DeepSeek rate-limits the serving login
+            // (before or inside the stream), that login is already on cooldown, so the
+            // next askDeepSeekStream() drops its chat and picks another ready login,
+            // which receives the full recovery prompt. When no login is left,
+            // selectAccountForSession() throws the pool 429 (type rate_limit).
+            // Failover hops do not consume empty/overflow retry budgets.
+            async function callDeepSeekWithFailover(promptText, recoveryPrompt) {
+                let lastError = null;
+                const maxHops = accounts.length + 1;
+                for (let hop = 0; hop < maxHops; hop++) {
+                    const hopStarted = Date.now();
+                    let failedAccountId = null;
+                    try {
+                        const call = await askDeepSeekStream(hop === 0 ? promptText : recoveryPrompt, agentId, requestedModel, recoveryPrompt, lockHolder, imageContext, webFlags);
+                        const result = await readDeepSeekResponse(call.resp.body, call.account);
+                        if (!result.rateLimited) return { call, result, elapsedMs: Date.now() - hopStarted };
+                        failedAccountId = call.account.id;
+                        lastError = result.rateLimitError;
+                    } catch (e) {
+                        if (!isAccountRateLimitError(e)) throw e;
+                        failedAccountId = e.accountId;
+                        lastError = e;
+                    }
+                    if (clientGone || deadlineHit()) throw lastError;
+                    // Uploaded file ids and the chat lock belong to the throttled login.
+                    releaseAccountChatLock(lockHolder);
+                    imageContext.refFileIds.length = 0;
+                    console.log(`${agentTag} account ${failedAccountId} rate-limited; failing over (hop ${hop + 1}).`);
+                }
+                throw lastError;
+            }
+
+            try {
+                const first = await callDeepSeekWithFailover(fullPrompt, freshPrompt);
+                initialCall = first.call;
+                const firstRead = first.result;
                 fullContent = sanitizeContent(firstRead.content);
                 reasoningContent = sanitizeContent(firstRead.reasoningContent || '');
                 finishReason = firstRead.finishReason;
                 modelError = firstRead.modelError;
                 lastMessageId = firstRead.messageId;
+                lastReadMs = first.elapsedMs;
+            } catch (e) {
+                if (!isContextTooLongError(e)) throw e;
+                overflow = true;
+                modelError = { type: 'context_length_exceeded', content: e.message || e.content || '' };
                 lastReadMs = Date.now() - startTime;
+                console.log(`${agentTag} Upstream rejected the prompt as too long (${lastReadMs}ms). Compacting instead of resending it.`);
+            }
+            if (initialCall && initialCall.promptUsed !== fullPrompt) {
+                fullPrompt = initialCall.promptUsed;
+                if (freshPromptBuild.compacted) {
+                    promptCompacted = true;
+                    markContextCompacted(res);
+                }
+            }
+
+            if (initialCall) {
                 overflow = overflow
                     || isContextTooLongError(modelError)
                     || isInstantEmptyResponse({
@@ -3125,16 +3641,15 @@ const server = http.createServer(async (req, res) => {
                 }
                 await new Promise(r => setTimeout(r, Math.min(500 * retryAttempt, 1500)));
                 try {
-                    const retryStarted = Date.now();
                     const recoveryPrompt = keepSession ? freshPrompt : retryPrompt;
-                    const { resp: retryResp } = await askDeepSeekStream(retryPrompt, agentId, requestedModel, recoveryPrompt, lockHolder, imageContext, webFlags);
-                    const retryResult = await readDeepSeekResponse(retryResp.body);
+                    const retry = await callDeepSeekWithFailover(retryPrompt, recoveryPrompt);
+                    const retryResult = retry.result;
                     const retryState = normalizeRetryResponse(retryResult);
-                    fullPrompt = retryPrompt;
+                    fullPrompt = retry.call.promptUsed;
                     modelError = retryState.modelError;
                     finishReason = retryState.finishReason;
                     lastMessageId = retryResult.messageId;
-                    lastReadMs = Date.now() - retryStarted;
+                    lastReadMs = retry.elapsedMs;
                     if (retryState.content && retryState.content.trim().length > 0) {
                         console.log(`${agentTag} Retry ${retryAttempt} succeeded`);
                         fullContent = retryState.content;
@@ -3208,15 +3723,22 @@ const server = http.createServer(async (req, res) => {
                     `${freshPrompt}\n\n[Assistant response so far]\n${fullContent}`,
                     'Continue the assistant response from exactly where it stopped. Do not restart or repeat completed sections.'
                 );
-                const continuationCall = await askDeepSeekStream(
-                    'continue',
-                    agentId,
-                    requestedModel,
-                    continuationRecoveryPrompt,
-                    lockHolder,
-                    imageContext,
-                    webFlags
-                );
+                let continuationCall;
+                try {
+                    continuationCall = await askDeepSeekStream(
+                        'continue',
+                        agentId,
+                        requestedModel,
+                        continuationRecoveryPrompt,
+                        lockHolder,
+                        imageContext,
+                        webFlags
+                    );
+                } catch (e) {
+                    if (!isRateLimitedPoolOrAccount(e)) throw e;
+                    console.log(`${agentTag} continuation rate-limited (${e.message}); returning the ${fullContent.length} chars already received.`);
+                    break;
+                }
                 const { resp: contResp, account: contAccount } = continuationCall;
                 // A cross-account continuation is valid only when the call
                 // detected that reset and sent the full recovery prompt. If an
@@ -3227,7 +3749,11 @@ const server = http.createServer(async (req, res) => {
                     resetRemoteSession(session);
                     break;
                 }
-                const contResult = await readDeepSeekResponse(contResp.body);
+                const contResult = await readDeepSeekResponse(contResp.body, contAccount);
+                if (contResult.rateLimited) {
+                    console.log(`${agentTag} continuation rate-limited on ${contAccount.id}; returning the ${fullContent.length} chars already received.`);
+                    break;
+                }
                 const contContent = contResult && contResult.content ? sanitizeContent(contResult.content) : '';
                 const contReasoning = contResult && contResult.reasoningContent ? sanitizeContent(contResult.reasoningContent) : '';
                 if (contContent && contContent.trim().length > 0 && !contContent.includes('I am an AI')) {
@@ -3282,8 +3808,18 @@ const server = http.createServer(async (req, res) => {
                         : (shouldRepairCodeDump
                             ? '[STRICT INSTRUCTION] You pasted source code as plain text. This gateway cannot apply pasted files. Request exactly one tool to write or edit the file. Output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}. Put file contents in the tool arguments, not in markdown fences.'
                             : '[STRICT INSTRUCTION] You stopped after a tool result. Continue the task. Output exactly one gateway tool request as {"tool_call":{"name":"<function>","arguments":{...}}} or a complete final answer if the work is finished.'));
-                const { resp: retryResp2 } = await askDeepSeekStream(strictPrompt, agentId, requestedModel, strictPrompt, lockHolder, imageContext, webFlags);
-                const retryResult2 = await readDeepSeekResponse(retryResp2.body);
+                let retryResult2 = null;
+                try {
+                    const repairCall = await askDeepSeekStream(strictPrompt, agentId, requestedModel, strictPrompt, lockHolder, imageContext, webFlags);
+                    retryResult2 = await readDeepSeekResponse(repairCall.resp.body, repairCall.account);
+                } catch (e) {
+                    if (!isRateLimitedPoolOrAccount(e)) throw e;
+                    console.log(`${agentTag} strict repair skipped: ${e.message}`);
+                }
+                if (retryResult2?.rateLimited) {
+                    console.log(`${agentTag} strict repair rate-limited; keeping the original reply.`);
+                    retryResult2 = null;
+                }
                 const retryContent2 = retryResult2 && retryResult2.content ? sanitizeContent(retryResult2.content) : '';
                 if (retryContent2 && retryContent2.trim()) {
                     const retryTc = selectAgentToolCall(retryContent2, allowedToolNames);
@@ -3349,6 +3885,7 @@ const server = http.createServer(async (req, res) => {
             logRow.ok = true;
             logRow.status = 200;
             logRow.account = session.accountId;
+            recordAccountSuccess(accounts.find(a => a.id === session.accountId));
             logRow.prompt_tokens = openaiResponse.usage?.prompt_tokens || 0;
             logRow.completion_tokens = openaiResponse.usage?.completion_tokens || 0;
             logRow.usd = modelCostUsd(requestedModel, logRow.prompt_tokens, logRow.completion_tokens);
@@ -3506,6 +4043,9 @@ async function main() {
     requireProxyApiKey(PROXY_API_KEY, isTruthy(process.env.REQUIRE_PROXY_API_KEY));
     if (!isLoopbackHost(HOST) && !PROXY_API_KEY) {
         console.warn(`[DS-API] WARNING: HOST=${HOST} exposes the proxy without authentication. Set PROXY_API_KEY or bind to 127.0.0.1.`);
+        if (PROXY_ADMIN_ALLOW_REMOTE) {
+            console.warn('[DS-API] WARNING: PROXY_ADMIN_ALLOW_REMOTE=1 without PROXY_API_KEY lets anyone on the network pause, resume, and reload your DeepSeek accounts.');
+        }
     }
     const shouldStart = await showStartupMenu();
     if (!shouldStart) process.exit(0);
@@ -3526,6 +4066,7 @@ async function main() {
         console.log('[DS-API] GET  /v1/sessions — list active agent sessions');
         console.log('[DS-API] POST /reset-session?agent=<id> — reset agent session');
         console.log('[DS-API] POST /reset-session?agent=all — reset ALL sessions');
+        console.log(`[DS-API] GET  /dashboard — account dashboard (admin API: /admin/accounts${PROXY_API_KEY || PROXY_ADMIN_ALLOW_REMOTE ? '' : ', localhost only'})`);
     });
 }
 
@@ -3546,6 +4087,19 @@ if (require.main === module) {
 
 module.exports = {
     __test: {
+        server,
+        buildBaseHeaders,
+        isRateLimitSignal,
+        markAccountFailure,
+        markAccountRateLimited,
+        recordAccountSuccess,
+        accountRateLimitError,
+        isAccountRateLimitError,
+        readAccountFiles,
+        buildAccountsList,
+        adminAccessDecision,
+        adminAccountView,
+        adminPoolSummary,
         isAssistantOutputFragment,
         isReasoningFragment,
         isDeepSeekModelErrorEvent,

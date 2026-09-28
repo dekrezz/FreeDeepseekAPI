@@ -54,6 +54,7 @@ One model is on the site today: **DeepSeek-V4.1-Flash**. `-thinking` turns DeepT
 - [Diagnostics / doctor](#diagnostics--doctor)
 - [Session reuse](#session-reuse)
 - [Multi-account pool](#multi-account-pool)
+- [Dashboard](#dashboard)
 - [Sign-in](#sign-in)
 - [Coding agents](#coding-agents)
 - [Check that it works](#check-that-it-works)
@@ -379,7 +380,7 @@ A message whose text is exactly `/new` resets that agent's remote chat instead o
 
 DeepSeek can ban a login for days if two chats send on that same login at the same time. The pool rule is: one in-flight chat per login. A second request for a busy login waits. It does not overlap.
 
-Sticky means the proxy does not hop accounts in the middle of a live chat. If the login gets `401`, `403`, or `429` and goes into cooldown, the next request can move to another ready login, and the old remote session is dropped first.
+Sticky means the proxy does not hop accounts in the middle of a live chat, except when that login is rate-limited or loses auth. If the login gets `401` or `403`, or DeepSeek rate-limits it, the login goes into cooldown and the old remote session is dropped. A rate-limited request does not fail: it moves right away to another ready login, on a new chat that gets the full transcript. After `401`/`403`, the next request moves.
 
 Directory of auth files:
 
@@ -400,12 +401,15 @@ How the pool behaves:
 
 - a new agent gets a free login, round-robin;
 - that login stays stuck to the session;
-- `401`, `403`, and `429` put the login in cooldown (`DEEPSEEK_ACCOUNT_COOLDOWN_MS`, default 10 minutes);
+- `401`, `403`, and rate limits put the login in cooldown (`DEEPSEEK_ACCOUNT_COOLDOWN_MS`, default 10 minutes). A rate limit is HTTP `429`, a "too frequent" message in an HTTP `400` or JSON body (for example `Слишком частые сообщения`), or a DeepSeek stream hint with `finish_reason: rate_limit_reached`. `Retry-After` is honored when DeepSeek sends it;
+- the rate-limited request moves to another ready login on a new chat. Only when every login is cooling down does the client get `429 rate_limit`;
+- other `400` errors do not cause a cooldown. The chat is recreated on the same login;
 - two requests and two free logins go to different accounts;
 - the same `x-agent-session` overlapping waits on its login (`DEEPSEEK_ACCOUNT_LOCK_WAIT_MS`, default 120 seconds);
 - when every login is busy, the request waits on the sticky or least-recently-used login;
 - OpenCode's session-title request is answered locally and does not occupy a login;
 - `/health` shows account status without auth-file paths or file names;
+- `/dashboard` shows every login and lets you pause, resume, clear a cooldown, and reload auth files without a restart (see [Dashboard](#dashboard));
 - auth files must be mode `0600`.
 
 You cannot pin a client to a chosen file. The proxy picks a free login.
@@ -413,6 +417,41 @@ You cannot pin a client to a chosen file. The proxy picks a free login.
 ```bash
 DEEPSEEK_ACCOUNT_COOLDOWN_MS=600000 npm start
 ```
+
+---
+
+## Dashboard
+
+Open `http://127.0.0.1:9655/dashboard`. It lists every login with its state (`ready`, `busy`, `cooldown`, `disabled`, `no_credentials`), the cooldown countdown and reason, consecutive and total failures, the last upstream error, and usage. From there you can:
+
+- **Disable / Enable** a login. This is a runtime pause: in-flight work finishes, and a restart forgets it. `"enabled": false` in the auth file is the persistent switch; a login disabled in its file cannot be enabled from the dashboard.
+- **Clear cooldown** to put a cooling login back in rotation now.
+- **Reload accounts** to re-read the auth files. New files are added and deleted files are removed. A kept login keeps its cooldown and counters. A login whose token or cookie changed starts fresh.
+
+To add a login, import it and press Reload:
+
+```bash
+npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./accounts/worker-3.json
+```
+
+The page is static and holds no data. It reads the admin API:
+
+| Method | Path | Result |
+|---|---|---|
+| `GET` | `/admin/accounts` | `{ now, pool, accounts }` |
+| `POST` | `/admin/accounts/<id>/disable` | `{ account, pool }` |
+| `POST` | `/admin/accounts/<id>/enable` | `{ account, pool }`. `409 disabled_in_file` if the file says `"enabled": false` |
+| `POST` | `/admin/accounts/<id>/clear-cooldown` | `{ account, pool }` |
+| `POST` | `/admin/accounts/reload` | `{ added, removed, kept, errors, accounts, pool }`. `422 no_accounts_found` leaves the pool unchanged |
+
+Access rules:
+
+- With `PROXY_API_KEY` set, `/admin/*` needs the same bearer as `/v1/*`. The page asks for the key and keeps it in the tab's session storage only.
+- Without a key, `/admin/*` answers only direct loopback clients. A request that carries `X-Forwarded-For`, `Forwarded`, or `X-Real-IP` is refused with `403 admin_forbidden`, even from `127.0.0.1`. So is a non-localhost `Host`, or a browser `Origin` other than the proxy's own (another local web app cannot pause logins). `PROXY_ADMIN_ALLOW_REMOTE=1` lifts this. Do not set it on a network bind without a key.
+- Browser POSTs still pass the origin guard. To use the dashboard from a non-loopback address, add that origin to `PROXY_CORS_ORIGINS`.
+- Admin responses never contain tokens, cookies, `hif_*` values, or auth-file names.
+
+The container image does not ship the dashboard files. There `/dashboard` returns `404 dashboard_unavailable`, and the admin API still works.
 
 ---
 
@@ -667,6 +706,10 @@ Full table: [docs/models.md](docs/models.md).
 |---|---|---|
 | `GET` | `/health` | Process is up. Account status if no proxy key, or the bearer matches |
 | `GET` | `/readyz` | `200` only if a login can serve now |
+| `GET` | `/dashboard` | Account dashboard (static page) |
+| `GET` | `/admin/accounts` | Pool and per-login status. See [Dashboard](#dashboard) |
+| `POST` | `/admin/accounts/<id>/{disable,enable,clear-cooldown}` | Pause, resume, or un-cool one login |
+| `POST` | `/admin/accounts/reload` | Re-read auth files without a restart |
 | `GET` | `/v1/models` | The four DeepSeek-V4.1-Flash ids |
 | `GET` | `/v1/model-capabilities` | Ids, DeepThink, and native search |
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions |
@@ -684,9 +727,10 @@ Full table: [docs/models.md](docs/models.md).
 |---|---|---|
 | `HOST` | `127.0.0.1` | Bind address. A non-loopback bind without a proxy key prints a warning |
 | `PORT` | `9655` | Listen port |
-| `PROXY_API_KEY` | off | Bearer required on `/v1/*` when set |
+| `PROXY_API_KEY` | off | Bearer required on `/v1/*` and `/admin/*` when set |
 | `REQUIRE_PROXY_API_KEY` | off | Refuse to start if the key is missing. The container sets this |
 | `PROXY_CORS_ORIGINS` | loopback | Extra exact browser origins |
+| `PROXY_ADMIN_ALLOW_REMOTE` | off | If `1`, `/admin/*` answers non-loopback clients even without `PROXY_API_KEY` |
 | `DEEPSEEK_AUTH_PATH` | `./deepseek-auth.json` | One file, or a comma-separated list |
 | `DEEPSEEK_AUTH_DIR` | `./accounts` when that directory exists | Every `*.json` in it |
 | `DEEPSEEK_MAX_PROMPT_CHARS` | `80000` | Cap on what is sent upstream. Minimum 16000 |
@@ -694,7 +738,7 @@ Full table: [docs/models.md](docs/models.md).
 | `DEEPSEEK_REQUEST_DEADLINE_MS` | `120000` | Per-request deadline |
 | `DEEPSEEK_MAX_CONCURRENT` | `24` | Process-wide cap. Real parallelism is the number of idle logins |
 | `DEEPSEEK_ACCOUNT_LOCK_WAIT_MS` | `120000` | How long a second chat waits for a busy login |
-| `DEEPSEEK_ACCOUNT_COOLDOWN_MS` | `600000` | After 401, 403, or 429 |
+| `DEEPSEEK_ACCOUNT_COOLDOWN_MS` | `600000` | Cooldown after 401, 403, or a rate limit without `Retry-After` |
 | `TRUST_PROXY` | off | If `1`, the client IP is taken from `X-Forwarded-For` |
 | `MAX_REQUEST_BODY_BYTES` | `31457280` | Maximum JSON body, including base64 images |
 | `NON_INTERACTIVE` / `SKIP_ACCOUNT_MENU` | off | Skip the launch menu |
@@ -708,8 +752,10 @@ Full table: [docs/models.md](docs/models.md).
 | 400 | `invalid_model` | Use an id from `GET /v1/models` |
 | 400 | `context_length_exceeded` | The prompt was still too long after compaction |
 | 401 | `authentication_error` | The proxy key does not match |
+| 403 | `admin_forbidden` | `/admin/*` without a key from a non-loopback or proxied client. See [Dashboard](#dashboard) |
 | 429 | `concurrent_chat_blocked` | The wait for a busy login ran out. Add another login or retry |
-| 429 | `rate_limit` | Every login is in cooldown. Honor `Retry-After` |
+| 429 | `rate_limit` | Every login is in cooldown (rate-limited or auth failure). Honor `Retry-After` |
+| 429 | `rate_limit_error` | DeepSeek rate-limited the login and the request ran out of time or the client left before a failover finished. Honor `Retry-After` |
 | 502 | `malformed_tool_call` | Tool markup was still broken after one repair. The chat was kept |
 | 502 | `empty_response` | DeepSeek returned nothing after the retries |
 | 503 | `overloaded` / `no_auth` | Too many in-flight requests, or no auth file |
@@ -769,7 +815,7 @@ Live smoke tests against a proxy that is already running:
 BASE_URL=http://127.0.0.1:9655 MODEL=deepseek-v4-flash npm run test:live
 ```
 
-`npm test` runs `node --check` on the entry points and `node --test tests/unit.test.js`. It does not call DeepSeek.
+`npm test` runs `node --check` on the entry points and `node --test` on `tests/unit.test.js` and `tests/account-failover.test.js`. It does not call DeepSeek: the failover tests serve every upstream call from an in-process mock.
 
 ---
 
