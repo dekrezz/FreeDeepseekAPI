@@ -147,7 +147,7 @@ curl -X POST http://127.0.0.1:9655/admin/accounts/reload
 
 Errors are always `{ "error": { "message", "type" } }`. Responses carry `Cache-Control: no-store`. A wrong method on a known path returns `405 method_not_allowed` with `Allow`; an unknown `/admin/*` path returns `404 not_found`.
 
-Access: with `PROXY_API_KEY`, the same bearer as `/v1/*`. Without a key, only direct loopback clients; a request with `X-Forwarded-For`, `Forwarded`, or `X-Real-IP`, a non-localhost `Host` (DNS rebinding), or an `Origin` other than the proxy's own (another local web app) gets `403 admin_forbidden`. A reverse proxy that adds none of those headers looks local: set `PROXY_API_KEY` behind one. `PROXY_ADMIN_ALLOW_REMOTE=1` lifts these rules. Browser POSTs still pass the origin guard, so a non-loopback dashboard origin must be listed in `PROXY_CORS_ORIGINS`.
+Access: with `PROXY_API_KEY`, the same bearer as `/v1/*`. Without a key, only direct loopback clients; a request with `X-Forwarded-For`, `Forwarded`, or `X-Real-IP`, a non-localhost `Host` (DNS rebinding), or an `Origin` other than the proxy's own (another local web app) gets `403 admin_forbidden`. A reverse proxy that adds none of those headers looks local: set `PROXY_API_KEY` behind one. `PROXY_ADMIN_ALLOW_REMOTE=1` lifts only the client address and forwarding-header rules; the `Host` must still be loopback, an IP literal, or a host listed in `PROXY_CORS_ORIGINS`, and the `Origin` rule stays. Browser POSTs still pass the origin guard, so a non-loopback dashboard origin must be listed in `PROXY_CORS_ORIGINS`.
 
 `accounts[]` item (never contains token, cookie values, `hif_*`, `wasmUrl`, or file names):
 

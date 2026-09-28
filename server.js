@@ -2875,16 +2875,29 @@ function hostHeaderHostname(host) {
 // adds none of those headers cannot be told apart; set PROXY_API_KEY behind one.
 // Browser requests must come from the proxy's own origin (the dashboard): another
 // local web app would otherwise be able to POST (CSRF), and a non-loopback Host
-// means DNS rebinding.
-function adminAccessDecision({ remoteAddress, headers = {} } = {}, { proxyKey = PROXY_API_KEY, allowRemote = PROXY_ADMIN_ALLOW_REMOTE } = {}) {
-    if (proxyKey || allowRemote) return { allowed: true };
+// means DNS rebinding. PROXY_ADMIN_ALLOW_REMOTE lifts only the client address
+// rule: the Host must then be loopback, an IP literal, or a host listed in
+// PROXY_CORS_ORIGINS, since rebinding needs a DNS name the operator never chose.
+function adminAccessDecision({ remoteAddress, headers = {} } = {}, { proxyKey = PROXY_API_KEY, allowRemote = PROXY_ADMIN_ALLOW_REMOTE, corsOrigins = PROXY_CORS_ORIGINS } = {}) {
+    if (proxyKey) return { allowed: true };
     const forbidden = (message) => ({ allowed: false, status: 403, error: { message, type: 'admin_forbidden' } });
-    const proxied = Boolean(headers['x-forwarded-for'] || headers.forwarded || headers['x-real-ip']);
-    if (!isLoopbackHost(remoteAddress) || proxied) {
-        return forbidden('Admin API is limited to localhost. Set PROXY_API_KEY or PROXY_ADMIN_ALLOW_REMOTE=1.');
+    if (!allowRemote) {
+        const proxied = Boolean(headers['x-forwarded-for'] || headers.forwarded || headers['x-real-ip']);
+        if (!isLoopbackHost(remoteAddress) || proxied) {
+            return forbidden('Admin API is limited to localhost. Set PROXY_API_KEY or PROXY_ADMIN_ALLOW_REMOTE=1.');
+        }
     }
-    if (headers.host && !isLoopbackHost(hostHeaderHostname(headers.host))) {
-        return forbidden('Admin API without PROXY_API_KEY only answers a localhost Host header.');
+    if (headers.host) {
+        const hostname = hostHeaderHostname(headers.host);
+        const hostAllowed = allowRemote
+            ? isLoopbackHost(hostname) || net.isIP(String(hostname || '').replace(/^\[|\]$/g, '')) !== 0
+                || [...corsOrigins].some(origin => { try { return new URL(origin).hostname === hostname; } catch (e) { return false; } })
+            : isLoopbackHost(hostname);
+        if (!hostAllowed) {
+            return forbidden(allowRemote
+                ? 'Admin API without PROXY_API_KEY only answers a loopback or IP Host header, or a host listed in PROXY_CORS_ORIGINS.'
+                : 'Admin API without PROXY_API_KEY only answers a localhost Host header.');
+        }
     }
     if (headers.origin) {
         let originHost = null;
