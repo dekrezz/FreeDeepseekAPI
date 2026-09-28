@@ -12,7 +12,7 @@ FreeDeepseekAPI is maintained by [dekrezz](https://github.com/dekrezz).
 
 Open a pull request that lands on `main`. Code, docs, and translations all count.
 
-If you used AI, follow [AI_POLICY.md](AI_POLICY.md): name the tool and model, and make sure you understand the change.
+If you used AI, follow [AI_POLICY.md](AI_POLICY.md): say which tool and model you used (for example, "Used Claude Code with Claude Opus 5.5"), and make sure you understand the change.
 
 The GitHub Actions job that redraws the star chart is not a contributor. It commits as `github-actions[bot]`.
 
