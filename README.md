@@ -447,7 +447,7 @@ The page is static and holds no data. It reads the admin API:
 Access rules:
 
 - With `PROXY_API_KEY` set, `/admin/*` needs the same bearer as `/v1/*`. The page asks for the key and keeps it in the tab's session storage only.
-- Without a key, `/admin/*` answers only direct loopback clients. A request that carries `X-Forwarded-For`, `Forwarded`, or `X-Real-IP` is refused with `403 admin_forbidden`, even from `127.0.0.1`. So is a non-localhost `Host`, or a browser `Origin` other than the proxy's own (another local web app cannot pause logins). `PROXY_ADMIN_ALLOW_REMOTE=1` lifts this. Do not set it on a network bind without a key.
+- Without a key, `/admin/*` answers only direct loopback clients. A request that carries `X-Forwarded-For`, `Forwarded`, or `X-Real-IP` is refused with `403 admin_forbidden`, even from `127.0.0.1`. So is a non-localhost `Host`, or a browser `Origin` other than the proxy's own (another local web app cannot pause logins). `PROXY_ADMIN_ALLOW_REMOTE=1` lifts only the client address rule. The `Host` must still be loopback, an IP address, or a host listed in `PROXY_CORS_ORIGINS`, and a browser `Origin` must still be the proxy's own. Anyone who can reach the port can still pause logins, so prefer a key on a network bind.
 - Browser POSTs still pass the origin guard. To use the dashboard from a non-loopback address, add that origin to `PROXY_CORS_ORIGINS`.
 - Admin responses never contain tokens, cookies, `hif_*` values, or auth-file names.
 

@@ -606,8 +606,36 @@ test('adminAccessDecision: a keyless admin API rejects other browser origins, re
   // A local reverse proxy that only sets X-Real-IP is not a local client.
   assert.equal(local({ host: '127.0.0.1:9655', 'x-real-ip': '203.0.113.5' }).allowed, false);
 
-  // With a key or an explicit opt-in the bearer/remote rules apply instead.
+  // With a key the bearer gate is the protection instead.
   assert.equal(S.adminAccessDecision({ remoteAddress: '127.0.0.1', headers: { host: 'proxy.example', origin: 'https://dash.example' } }, { proxyKey: 'secret', allowRemote: false }).allowed, true);
+});
+
+test('adminAccessDecision: PROXY_ADMIN_ALLOW_REMOTE without a key only lifts the client address rule', () => {
+  const opts = { proxyKey: '', allowRemote: true, corsOrigins: new Set(['https://proxy.lan:9655']) };
+  const remote = (headers) => S.adminAccessDecision({ remoteAddress: '192.168.1.30', headers }, opts);
+
+  // A LAN client using the proxy's IP, from the dashboard or curl.
+  assert.equal(remote({ host: '192.168.1.20:9655', origin: 'http://192.168.1.20:9655' }).allowed, true);
+  assert.equal(remote({ host: '192.168.1.20:9655' }).allowed, true);
+  assert.equal(remote({ host: '[fd00::20]:9655' }).allowed, true);
+  assert.equal(remote({ host: 'localhost:9655' }).allowed, true);
+  // A hostname the operator listed in PROXY_CORS_ORIGINS.
+  assert.equal(remote({ host: 'proxy.lan:9655', origin: 'https://proxy.lan:9655' }).allowed, true);
+  // Relayed by a reverse proxy: the address rule is lifted, so this is allowed.
+  assert.equal(remote({ host: '192.168.1.20:9655', 'x-forwarded-for': '203.0.113.5' }).allowed, true);
+
+  // DNS rebinding: an unlisted hostname pointing at the proxy.
+  const rebound = remote({ host: 'evil.example:9655' });
+  assert.equal(rebound.allowed, false);
+  assert.equal(rebound.status, 403);
+  assert.equal(rebound.error.type, 'admin_forbidden');
+  assert.equal(remote({ host: 'evil.example:9655', origin: 'http://evil.example:9655' }).allowed, false);
+
+  // CSRF: a browser page from another origin.
+  const csrf = remote({ host: '192.168.1.20:9655', origin: 'http://localhost:3000' });
+  assert.equal(csrf.allowed, false);
+  assert.equal(csrf.error.type, 'admin_forbidden');
+  assert.equal(remote({ host: '192.168.1.20:9655', origin: 'null' }).allowed, false);
 });
 
 test('a keyless admin POST from another loopback origin is refused over HTTP', async (t) => {

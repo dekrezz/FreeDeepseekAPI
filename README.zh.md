@@ -447,7 +447,7 @@ npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./account
 访问规则：
 
 - 设置了 `PROXY_API_KEY` 时，`/admin/*` 需要和 `/v1/*` 相同的 bearer。页面会询问密钥，只保存在当前标签页的 session storage 里。
-- 没有密钥时，`/admin/*` 只接受直接来自 loopback 的客户端。带 `X-Forwarded-For`、`Forwarded` 或 `X-Real-IP` 的请求会收到 `403 admin_forbidden`，即使来自 `127.0.0.1`。`Host` 不是 localhost，或浏览器 `Origin` 不是代理自己的地址（其他本地网页应用不能暂停登录）时也会被拒绝。`PROXY_ADMIN_ALLOW_REMOTE=1` 可以取消这个限制。不要在没有密钥的网络地址上开启它。
+- 没有密钥时，`/admin/*` 只接受直接来自 loopback 的客户端。带 `X-Forwarded-For`、`Forwarded` 或 `X-Real-IP` 的请求会收到 `403 admin_forbidden`，即使来自 `127.0.0.1`。`Host` 不是 localhost，或浏览器 `Origin` 不是代理自己的地址（其他本地网页应用不能暂停登录）时也会被拒绝。`PROXY_ADMIN_ALLOW_REMOTE=1` 只取消客户端地址限制。`Host` 仍须是 loopback、IP 地址或 `PROXY_CORS_ORIGINS` 中列出的主机，浏览器 `Origin` 仍须是代理自己的地址。能访问该端口的任何人仍可暂停登录，所以在网络地址上最好设置密钥。
 - 浏览器的 POST 仍要通过 origin 检查。要从非 loopback 地址使用面板，把那个 origin 加进 `PROXY_CORS_ORIGINS`。
 - admin 响应里不会有 token、cookie、`hif_*` 值或 auth 文件名。
 
