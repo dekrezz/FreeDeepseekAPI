@@ -20,4 +20,6 @@ Maintainers use AI tools too, under the same idea: a human reviews every change 
 
 ## Why
 
-Every issue and pull request here is read by people. A short disclosure and a contributor who understands the change make review faster for everyone.
+The cost is lopsided. Generating a pull request takes five minutes. Reviewing it takes hours of a maintainer's attention. If the author does not understand the code, a reviewer's "why is it done this way?" gets answered with pasted AI output, and the maintainer ends up talking to a model through a middleman and writing the fix themselves, only slower. When such pull requests arrive in batches, there is no time left for real work, including your bug.
+
+So the rule is not "you used AI, go away". It is "do not hand us the checking you did not do yourself". This matters most in the fragile parts of the proxy: session reuse, account failover, streaming, and DeepSeek's undocumented wire format. A blindly generated patch there can fix your case and break someone else's.
