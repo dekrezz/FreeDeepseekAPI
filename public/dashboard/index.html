@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" href="data:,">
+  <title>FreeDeepseekAPI accounts</title>
+  <link rel="stylesheet" href="/dashboard/app.css">
+  <script src="/dashboard/app.js" defer></script>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-ready" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.2 2.4 2.4 4.6-5"/></symbol>
+    <symbol id="i-busy" viewBox="0 0 24 24"><path d="M3.5 12h3l2.5-6 4 12 2.5-6h5"/></symbol>
+    <symbol id="i-cooldown" viewBox="0 0 24 24"><path d="M7 3.5h10M7 20.5h10M8 3.5c0 4.5 4 5.5 4 8.5s-4 4-4 8.5M16 3.5c0 4.5-4 5.5-4 8.5s4 4 4 8.5"/></symbol>
+    <symbol id="i-disabled" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M10 9v6M14 9v6"/></symbol>
+    <symbol id="i-no_credentials" viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 7-7M15 8l2.5 2.5M3.5 3.5l17 17"/></symbol>
+    <symbol id="i-reload" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 21 19.5H3Z"/><path d="M12 10v4M12 17h.01"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><path d="M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6zM12 14.5v2"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  </svg>
+
+  <div class="shell">
+    <header class="masthead">
+      <div class="title">
+        <h1>Accounts</h1>
+        <p class="subtitle">FreeDeepseekAPI login pool</p>
+      </div>
+      <div class="controls">
+        <p class="updated" id="updated" aria-live="off">Not loaded yet</p>
+        <label class="switch">
+          <input type="checkbox" id="auto" checked>
+          <span class="switch-track" aria-hidden="true"></span>
+          <span>Auto-refresh</span>
+        </label>
+        <button type="button" class="btn btn-quiet" id="refresh" hidden>Refresh now</button>
+        <button type="button" class="btn btn-quiet" id="forget-key" hidden>Forget key</button>
+        <button type="button" class="btn btn-primary" id="reload">
+          <svg class="icon" aria-hidden="true"><use href="#i-reload"/></svg>
+          <span class="btn-label">Reload accounts</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="pool" aria-labelledby="headline">
+      <h2 class="headline" id="headline">Loading accounts…</h2>
+      <p class="headline-sub" id="headline-sub"></p>
+      <div class="strip" id="strip" role="img" aria-label="Loading"></div>
+      <ul class="legend" id="legend" aria-label="Accounts by status">
+        <li data-status="ready"><span class="swatch"></span>Ready <strong data-count="ready">0</strong></li>
+        <li data-status="busy"><span class="swatch"></span>Busy <strong data-count="busy">0</strong></li>
+        <li data-status="cooldown"><span class="swatch"></span>Cooling down <strong data-count="cooldown">0</strong></li>
+        <li data-status="disabled"><span class="swatch"></span>Disabled <strong data-count="disabled">0</strong></li>
+        <li data-status="no_credentials"><span class="swatch"></span>No credentials <strong data-count="no_credentials">0</strong></li>
+      </ul>
+    </section>
+
+    <div id="banner" class="banner" hidden>
+      <svg class="icon banner-icon" aria-hidden="true"><use id="banner-icon" href="#i-alert"/></svg>
+      <div class="banner-copy">
+        <p class="banner-title" id="banner-title"></p>
+        <p class="banner-body" id="banner-body"></p>
+      </div>
+      <button type="button" class="btn btn-quiet" id="banner-retry" hidden>Retry now</button>
+    </div>
+
+    <section class="gate" id="gate-key" hidden aria-labelledby="gate-key-title">
+      <svg class="icon gate-icon" aria-hidden="true"><use href="#i-lock"/></svg>
+      <h2 id="gate-key-title">Enter the proxy API key</h2>
+      <p id="gate-key-body" aria-live="polite">This proxy has PROXY_API_KEY set, so the admin API needs it as a Bearer token.</p>
+      <form id="key-form" class="key-form">
+        <label for="key">Proxy API key</label>
+        <div class="key-row">
+          <input id="key" name="key" type="password" autocomplete="off" spellcheck="false" required aria-describedby="gate-key-body key-hint">
+          <button type="submit" class="btn btn-primary">Use key</button>
+        </div>
+        <p class="hint" id="key-hint">Kept in this browser tab only (sessionStorage) and sent to this proxy only.</p>
+      </form>
+    </section>
+
+    <section class="gate" id="gate-forbidden" hidden aria-labelledby="gate-forbidden-title">
+      <svg class="icon gate-icon" aria-hidden="true"><use href="#i-lock"/></svg>
+      <h2 id="gate-forbidden-title">The admin API only answers this machine</h2>
+      <p id="gate-forbidden-body">Without PROXY_API_KEY, account controls accept direct requests from localhost only. Requests relayed by a reverse proxy (X-Forwarded-For or Forwarded) count as remote.</p>
+      <p>To manage accounts from another host, set one of these and restart the proxy:</p>
+      <ul class="env-list">
+        <li><code>PROXY_API_KEY</code> then enter the key on this page.</li>
+        <li><code>PROXY_ADMIN_ALLOW_REMOTE=1</code> to allow remote admin without a key.</li>
+      </ul>
+      <p class="hint">Browsers on another origin also need that origin listed in <code>PROXY_CORS_ORIGINS</code>.</p>
+      <button type="button" class="btn btn-quiet" id="forbidden-retry">Check again</button>
+    </section>
+
+    <section class="accounts" id="accounts" aria-label="Accounts">
+      <div class="table-scroll">
+        <table id="table" aria-busy="true">
+          <thead>
+            <tr>
+              <th scope="col">Status</th>
+              <th scope="col">Account</th>
+              <th scope="col">Cooldown</th>
+              <th scope="col" class="num">Failures<span class="th-sub">in a row / total</span></th>
+              <th scope="col">Last error</th>
+              <th scope="col">Activity</th>
+              <th scope="col" class="num">Usage</th>
+              <th scope="col"><span class="visually-hidden">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="empty" id="empty" hidden aria-labelledby="empty-title">
+      <h2 id="empty-title">No accounts loaded</h2>
+      <p>Import a DeepSeek web login into the accounts folder, then reload.</p>
+      <pre><code>npm run auth:import -- --output ./accounts/&lt;name&gt;.json</code></pre>
+      <button type="button" class="btn btn-primary" id="empty-reload">
+        <svg class="icon" aria-hidden="true"><use href="#i-reload"/></svg>
+        <span class="btn-label">Reload accounts</span>
+      </button>
+    </section>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-relevant="additions"></div>
+
+  <template id="row-template">
+    <tr>
+      <td data-label="Status" class="c-status">
+        <span class="badge"><svg class="icon" aria-hidden="true"><use/></svg><span class="badge-text"></span></span>
+        <span class="detail status-detail"></span>
+      </td>
+      <td data-label="Account" class="c-account">
+        <span class="acct-name"></span>
+        <span class="detail acct-id"></span>
+      </td>
+      <td data-label="Cooldown" class="c-cooldown">
+        <span class="countdown"></span>
+        <span class="cool-bar" hidden><span class="cool-bar-fill"></span></span>
+        <span class="detail cooldown-detail"></span>
+      </td>
+      <td data-label="Failures" class="c-failures num">
+        <span class="fail-run"></span><span class="fail-sep"> / </span><span class="fail-total"></span>
+      </td>
+      <td data-label="Last error" class="c-error">
+        <span class="none error-none">None</span>
+        <details class="error-details">
+          <summary><span class="error-kind"></span> <span class="error-meta"><time class="error-when"></time><svg class="icon error-chevron" aria-hidden="true"><use href="#i-chevron"/></svg></span><span class="visually-hidden">: </span><span class="error-preview"></span></summary>
+          <p class="error-message"></p>
+        </details>
+      </td>
+      <td data-label="Activity" class="c-activity">
+        <span class="activity-success"><span class="activity-label"></span><time class="rel success-at"></time></span>
+        <span class="detail activity-used"><span class="activity-label"></span><time class="rel used-at"></time></span>
+      </td>
+      <td data-label="Usage" class="c-usage num">
+        <span class="usage-requests"></span>
+        <span class="detail usage-tokens"></span>
+        <span class="detail usage-cost"></span>
+      </td>
+      <td data-label="Actions" class="c-actions">
+        <div class="actions">
+          <button type="button" class="btn btn-small act-toggle"></button>
+          <button type="button" class="btn btn-small act-clear">Clear cooldown</button>
+        </div>
+        <span class="detail act-note"></span>
+      </td>
+    </tr>
+  </template>
+</body>
+</html>

@@ -54,6 +54,7 @@ FreeDeepseekAPI 在本机启动一个 API 服务，后端是 **DeepSeek Web Chat
 - [Diagnostics / doctor](#diagnostics--doctor)
 - [会话复用](#会话复用)
 - [多账号池](#多账号池)
+- [账号面板](#账号面板)
 - [登录](#登录)
 - [编程代理](#编程代理)
 - [检查是否正常](#检查是否正常)
@@ -379,7 +380,7 @@ DeepSeek 网站上仍然能看到这些聊天。代理走的是 Web Chat API，�
 
 同一个登录上如果有两个聊天同时发出请求，DeepSeek 可能会把这个登录封几天。池的规则是：每个登录同一时刻只跑一个聊天。第二个请求会等，不会叠上去。
 
-Sticky 的意思是：活着的聊天中间，代理不会换账号。登录收到 `401`、`403` 或 `429` 并进入冷却后，下一次请求可以换到另一个可用登录，旧的远程会话会先被清掉。
+Sticky 的意思是：活着的聊天中间，代理不会换账号，除非该登录被限流或失去授权。登录收到 `401`、`403`，或被 DeepSeek 限流时，会进入冷却，旧的远程会话会被清掉。被限流的请求不会失败：它会立刻换到另一个可用登录，在新聊天里带上完整对话记录。`401`/`403` 之后，由下一次请求换登录。
 
 用一个目录放 auth 文件：
 
@@ -400,12 +401,15 @@ DEEPSEEK_AUTH_PATH="./accounts/main.json,./accounts/backup.json" NON_INTERACTIVE
 
 - 新代理按轮转拿到一个空闲登录；
 - 这个登录会粘在该会话上；
-- `401`、`403` 和 `429` 让登录进入冷却（`DEEPSEEK_ACCOUNT_COOLDOWN_MS`，默认 10 分钟）；
+- `401`、`403` 和限流让登录进入冷却（`DEEPSEEK_ACCOUNT_COOLDOWN_MS`，默认 10 分钟）。限流包括 HTTP `429`、HTTP `400` 或 JSON 响应里的"请求过于频繁"类消息（例如 `Слишком частые сообщения`），以及 DeepSeek 流里 `finish_reason: rate_limit_reached` 的提示。DeepSeek 给了 `Retry-After` 时会遵守；
+- 被限流的请求换到另一个可用登录，开新聊天。只有所有登录都在冷却时，客户端才会收到 `429 rate_limit`；
+- 其他 `400` 错误不会触发冷却，聊天在同一个登录上重建；
 - 两个请求、两个空闲登录时，会分到不同账号；
 - 同一个 `x-agent-session` 重叠时，会等自己的登录（`DEEPSEEK_ACCOUNT_LOCK_WAIT_MS`，默认 120 秒）；
 - 所有登录都忙时，请求等待 sticky 的那个，或者最久没用的那个；
 - OpenCode 的会话头请求在本地回答，不占用登录；
 - `/health` 展示账号状态，但不给出 auth 文件路径和文件名；
+- `/dashboard` 列出所有登录，可以暂停、恢复、清除冷却，以及不重启就重新读取 auth 文件（见[账号面板](#账号面板)）；
 - auth 文件权限应为 `0600`。
 
 不能把某个客户端钉死到某个文件。代理自己挑空闲登录。
@@ -413,6 +417,41 @@ DEEPSEEK_AUTH_PATH="./accounts/main.json,./accounts/backup.json" NON_INTERACTIVE
 ```bash
 DEEPSEEK_ACCOUNT_COOLDOWN_MS=600000 npm start
 ```
+
+---
+
+## 账号面板
+
+打开 `http://127.0.0.1:9655/dashboard`。这里列出每个登录的状态（`ready`、`busy`、`cooldown`、`disabled`、`no_credentials`）、冷却倒计时和原因、连续失败次数与总失败次数、最近一次上游错误以及用量。可以在这里：
+
+- **Disable / Enable**：暂停或恢复一个登录。这是运行时暂停：进行中的请求会做完，重启后失效。持久开关是 auth 文件里的 `"enabled": false`；文件里禁用的登录不能在面板里启用。
+- **Clear cooldown**：让冷却中的登录立刻回到轮转。
+- **Reload accounts**：重新读取 auth 文件。新文件会加入，删掉的文件会移除。保留下来的登录保持冷却和计数。token 或 cookie 变了的登录从头开始。
+
+添加登录：先导入，再点 Reload：
+
+```bash
+npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./accounts/worker-3.json
+```
+
+页面是静态的，本身不存数据。它读取 admin API：
+
+| 方法 | 路径 | 结果 |
+|---|---|---|
+| `GET` | `/admin/accounts` | `{ now, pool, accounts }` |
+| `POST` | `/admin/accounts/<id>/disable` | `{ account, pool }` |
+| `POST` | `/admin/accounts/<id>/enable` | `{ account, pool }`。文件里是 `"enabled": false` 时返回 `409 disabled_in_file` |
+| `POST` | `/admin/accounts/<id>/clear-cooldown` | `{ account, pool }` |
+| `POST` | `/admin/accounts/reload` | `{ added, removed, kept, errors, accounts, pool }`。`422 no_accounts_found` 时账号池保持不变 |
+
+访问规则：
+
+- 设置了 `PROXY_API_KEY` 时，`/admin/*` 需要和 `/v1/*` 相同的 bearer。页面会询问密钥，只保存在当前标签页的 session storage 里。
+- 没有密钥时，`/admin/*` 只接受直接来自 loopback 的客户端。带 `X-Forwarded-For`、`Forwarded` 或 `X-Real-IP` 的请求会收到 `403 admin_forbidden`，即使来自 `127.0.0.1`。`Host` 不是 localhost，或浏览器 `Origin` 不是代理自己的地址（其他本地网页应用不能暂停登录）时也会被拒绝。`PROXY_ADMIN_ALLOW_REMOTE=1` 可以取消这个限制。不要在没有密钥的网络地址上开启它。
+- 浏览器的 POST 仍要通过 origin 检查。要从非 loopback 地址使用面板，把那个 origin 加进 `PROXY_CORS_ORIGINS`。
+- admin 响应里不会有 token、cookie、`hif_*` 值或 auth 文件名。
+
+容器镜像不包含面板文件。在容器里 `/dashboard` 返回 `404 dashboard_unavailable`，admin API 照常可用。
 
 ---
 
@@ -667,6 +706,10 @@ curl http://127.0.0.1:9655/v1/model-capabilities
 |---|---|---|
 | `GET` | `/health` | 进程是否活着。没有代理密钥，或 bearer 匹配时，还会带账号状态 |
 | `GET` | `/readyz` | 只有登录能接请求时才是 `200` |
+| `GET` | `/dashboard` | 账号面板（静态页面） |
+| `GET` | `/admin/accounts` | 账号池和每个登录的状态。见[账号面板](#账号面板) |
+| `POST` | `/admin/accounts/<id>/{disable,enable,clear-cooldown}` | 暂停、恢复或清除某个登录的冷却 |
+| `POST` | `/admin/accounts/reload` | 不重启重新读取 auth 文件 |
 | `GET` | `/v1/models` | 四个 DeepSeek-V4.1-Flash id |
 | `GET` | `/v1/model-capabilities` | id、DeepThink 和自带搜索 |
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions |
@@ -684,9 +727,10 @@ curl http://127.0.0.1:9655/v1/model-capabilities
 |---|---|---|
 | `HOST` | `127.0.0.1` | 绑定地址。绑到非 loopback 又没有代理密钥时会打印警告 |
 | `PORT` | `9655` | 端口 |
-| `PROXY_API_KEY` | 关闭 | 设置后，`/v1/*` 必须带 bearer |
+| `PROXY_API_KEY` | 关闭 | 设置后，`/v1/*` 和 `/admin/*` 必须带 bearer |
 | `REQUIRE_PROXY_API_KEY` | 关闭 | 没有密钥就拒绝启动。容器里是打开的 |
 | `PROXY_CORS_ORIGINS` | loopback | 额外允许的精确浏览器 origin |
+| `PROXY_ADMIN_ALLOW_REMOTE` | 关闭 | 设为 `1` 时，即使没有 `PROXY_API_KEY`，`/admin/*` 也接受非 loopback 客户端 |
 | `DEEPSEEK_AUTH_PATH` | `./deepseek-auth.json` | 一个文件，或逗号分隔的列表 |
 | `DEEPSEEK_AUTH_DIR` | 目录存在时为 `./accounts` | 里面所有 `*.json` |
 | `DEEPSEEK_MAX_PROMPT_CHARS` | `80000` | 发往上游的字符上限。最小 16000 |
@@ -694,7 +738,7 @@ curl http://127.0.0.1:9655/v1/model-capabilities
 | `DEEPSEEK_REQUEST_DEADLINE_MS` | `120000` | 单次请求的时间上限 |
 | `DEEPSEEK_MAX_CONCURRENT` | `24` | 进程上限。真正的并行度是空闲登录的数量 |
 | `DEEPSEEK_ACCOUNT_LOCK_WAIT_MS` | `120000` | 第二个聊天等多久才会放弃忙碌的登录 |
-| `DEEPSEEK_ACCOUNT_COOLDOWN_MS` | `600000` | 401、403 或 429 之后 |
+| `DEEPSEEK_ACCOUNT_COOLDOWN_MS` | `600000` | 401、403，或没有 `Retry-After` 的限流之后的冷却时间 |
 | `TRUST_PROXY` | 关闭 | 设为 `1` 时，客户端 IP 取自 `X-Forwarded-For` |
 | `MAX_REQUEST_BODY_BYTES` | `31457280` | JSON 正文上限，含 base64 图片 |
 | `NON_INTERACTIVE` / `SKIP_ACCOUNT_MENU` | 关闭 | 跳过启动菜单 |
@@ -708,8 +752,10 @@ curl http://127.0.0.1:9655/v1/model-capabilities
 | 400 | `invalid_model` | 用 `GET /v1/models` 里的 id |
 | 400 | `context_length_exceeded` | 压缩之后提示仍然太长 |
 | 401 | `authentication_error` | 代理密钥不对 |
+| 403 | `admin_forbidden` | 没有密钥时，从非 loopback 或经过代理的客户端访问 `/admin/*`。见[账号面板](#账号面板) |
 | 429 | `concurrent_chat_blocked` | 等待忙碌登录超时。再加一个登录，或稍后重试 |
-| 429 | `rate_limit` | 所有登录都在冷却。遵守 `Retry-After` |
+| 429 | `rate_limit` | 所有登录都在冷却（限流或登录失效）。遵守 `Retry-After` |
+| 429 | `rate_limit_error` | DeepSeek 限流了该登录，而在换到其他登录之前请求超时或客户端已断开。遵守 `Retry-After` |
 | 502 | `malformed_tool_call` | 修过一次之后工具标记仍然坏掉。聊天还在 |
 | 502 | `empty_response` | 重试之后 DeepSeek 仍然没有内容 |
 | 503 | `overloaded` / `no_auth` | 在途请求太多，或没有 auth 文件 |
@@ -769,7 +815,7 @@ npm test
 BASE_URL=http://127.0.0.1:9655 MODEL=deepseek-v4-flash npm run test:live
 ```
 
-`npm test` 对入口跑 `node --check`，再跑 `node --test tests/unit.test.js`。它不会请求 DeepSeek。
+`npm test` 对入口跑 `node --check`，再对 `tests/unit.test.js` 和 `tests/account-failover.test.js` 跑 `node --test`。它不会请求 DeepSeek：账号切换测试的所有上游请求都由进程内的模拟服务应答。
 
 ---
 
