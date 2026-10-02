@@ -32,6 +32,10 @@
   <a href="#coding-agents">Coding agents</a>
 </p>
 
+<p align="center">
+  <a href="#dashboard"><img src="docs/assets/dashboard.png" alt="FreeDeepseekAPI dashboard: built-in chat on top of DeepSeek Web" width="880" /></a>
+</p>
+
 FreeDeepseekAPI runs a local API server in front of **DeepSeek Web Chat** ([chat.deepseek.com](https://chat.deepseek.com)). Point Open WebUI, LiteLLM, Hermes, Claude Code, Codex, OpenCode, OpenClaw, Cursor, or any OpenAI-compatible client at it.
 
 The project uses your normal logged-in DeepSeek account. The local server accepts API requests, then continues that saved Web session. There is no paid `api.deepseek.com` key.

@@ -32,6 +32,10 @@
   <a href="#编程代理">编程代理</a>
 </p>
 
+<p align="center">
+  <a href="#账号面板"><img src="docs/assets/dashboard.png" alt="FreeDeepseekAPI 控制面板：基于 DeepSeek Web 的内置聊天" width="880" /></a>
+</p>
+
 FreeDeepseekAPI 在本机启动一个 API 服务，后端是 **DeepSeek Web Chat**（[chat.deepseek.com](https://chat.deepseek.com)）。Open WebUI、LiteLLM、Hermes、Claude Code、Codex、OpenCode、OpenClaw、Cursor，以及任何 OpenAI 兼容客户端都可以连上来。
 
 它使用你已经登录的 DeepSeek 账号。本地服务接收 API 请求，再沿着保存好的 Web 会话继续聊。不需要 `api.deepseek.com` 的付费密钥。

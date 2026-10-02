@@ -32,6 +32,10 @@
   <a href="#агенты">Агенты</a>
 </p>
 
+<p align="center">
+  <a href="#панель-аккаунтов"><img src="docs/assets/dashboard.png" alt="Дашборд FreeDeepseekAPI: встроенный чат поверх DeepSeek Web" width="880" /></a>
+</p>
+
 FreeDeepseekAPI поднимает локальный API-сервер перед **DeepSeek Web Chat** ([chat.deepseek.com](https://chat.deepseek.com)). К нему подключаются Open WebUI, LiteLLM, Hermes, Claude Code, Codex, OpenCode, OpenClaw, Cursor и любой OpenAI-compatible клиент.
 
 Проект работает через ваш обычный залогиненный аккаунт DeepSeek. Локальный сервер принимает API-запросы и продолжает сохранённую Web-сессию. Платный ключ `api.deepseek.com` не нужен.
