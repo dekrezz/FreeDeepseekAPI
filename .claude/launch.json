@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "dashboard", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dashboard"], "port": 9655 }
+  ]
+}

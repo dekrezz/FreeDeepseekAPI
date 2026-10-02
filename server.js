@@ -18,9 +18,9 @@ const path = require('path');
 const crypto = require('crypto');
 const dns = require('dns').promises;
 const net = require('net');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const pow = require('./lib/pow');
-const { t, loadUiLang, saveUiLang, pick, pause, printWordmark } = require('./scripts/lib/tui-menu');
+const { t, loadUiLang, saveUiLang, pick, pause, printWordmark, browserOpenCommand } = require('./scripts/lib/tui-menu');
 
 // Per-DeepSeek-request network timeout. Plain fetch() has NO default timeout, so a
 // stalled upstream would hang the inbound request (and pin the account) forever.
@@ -416,8 +416,34 @@ function listAccountChatLocks() {
         age_ms: now - lock.since,
     }));
 }
+// The request named one login (x-account-id). Serve it or say exactly why not; never
+// hand the request to another login behind the caller's back.
+function pinnedAccountError(status, type, message, retryAfter = null) {
+    const err = new Error(message);
+    err.status = status;
+    err.type = type;
+    if (retryAfter) err.retryAfter = retryAfter;
+    return err;
+}
+function selectPinnedAccount(session, pinnedId, now) {
+    const account = accounts.find(a => a.id === pinnedId);
+    if (!account) throw pinnedAccountError(404, 'account_not_found', `Account ${pinnedId} is not loaded. Pick another account or reload accounts.`);
+    if (!accountHasCredentials(account)) throw pinnedAccountError(409, 'account_unavailable', `Account ${pinnedId} has no credentials. Import a fresh login for it.`);
+    if (!isAccountEnabled(account)) throw pinnedAccountError(409, 'account_unavailable', `Account ${pinnedId} is paused. Resume it in /dashboard or pick another account.`);
+    if ((account.cooldownUntil || 0) > now) {
+        const waitSec = Math.max(1, Math.ceil((account.cooldownUntil - now) / 1000));
+        throw pinnedAccountError(429, 'rate_limit', `Account ${pinnedId} is cooling down for ~${waitSec}s. Wait, or pick another account.`, waitSec);
+    }
+    if (session.accountId !== account.id) {
+        // The remote chat belongs to the login that created it.
+        if (session.accountId) resetRemoteSession(session);
+        session.accountId = account.id;
+    }
+    return account;
+}
 function selectAccountForSession(session, holder = null) {
     const now = Date.now();
+    if (holder?.pinnedAccountId) return selectPinnedAccount(session, String(holder.pinnedAccountId), now);
     if (session.accountId) {
         const sticky = accounts.find(a => a.id === session.accountId);
         if (sticky && accountCanServe(sticky, now)) {
@@ -440,7 +466,10 @@ function selectAccountForSession(session, holder = null) {
             err.status = 429; err.retryAfter = waitSec; err.type = 'rate_limit';
             throw err;
         }
-        const noAuth = new Error('No valid DeepSeek auth accounts. Run npm run auth or npm run auth:import.');
+        const switchedOff = accounts.filter(a => accountHasCredentials(a) && !isAccountEnabled(a)).map(a => a.id);
+        const noAuth = new Error(switchedOff.length
+            ? `Every DeepSeek auth account with credentials is paused or disabled (${switchedOff.join(', ')}). Resume one in /dashboard, or set "enabled": true in its auth file and reload.`
+            : 'No valid DeepSeek auth accounts. Run npm run auth or npm run auth:import.');
         noAuth.status = 503; noAuth.type = 'no_auth';
         throw noAuth;
     }
@@ -461,14 +490,90 @@ function clientIp(req) {
     }
     return raw || 'unknown';
 }
+// Flat estimate for every model (DeepSeek API list prices); the web path has no billing.
+const USD_PER_M_INPUT = 0.22;
+const USD_PER_M_OUTPUT = 0.66;
 function modelCostUsd(model, promptTokens, completionTokens) {
-    const input = 0.22;
-    const output = 0.66;
-    return (Number(promptTokens || 0) / 1e6) * input + (Number(completionTokens || 0) / 1e6) * output;
+    return (Number(promptTokens || 0) / 1e6) * USD_PER_M_INPUT + (Number(completionTokens || 0) / 1e6) * USD_PER_M_OUTPUT;
+}
+// Request statistics for the dashboard. Metadata only: never prompt or answer text.
+// requestLog keeps the last MAX_REQUEST_LOG rows; usageMinutes keeps per-minute
+// aggregates (totals plus per account/model/endpoint/agent) for USAGE_RETENTION_MS,
+// so time series outlive the row cap. Everything is in memory and resets on restart.
+const USAGE_MINUTE_MS = 60 * 1000;
+const USAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const USAGE_MAX_KEYS_PER_DIMENSION = 50;  // per minute; extra keys fold into '(other)'
+const LOG_TEXT_MAX_CHARS = 300;
+const STATS_STARTED_AT = Date.now();
+const usageMinutes = new Map();  // minute start ms -> bucket
+let requestSeq = 0;
+let lifetimeUsage = newUsageCounters();
+function newUsageCounters() {
+    return { requests: 0, ok: 0, errors: 0, prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, usd: 0, ms_total: 0 };
+}
+function addUsage(counters, entry) {
+    counters.requests += 1;
+    if (entry.ok) counters.ok += 1; else counters.errors += 1;
+    counters.prompt_tokens += entry.prompt_tokens || 0;
+    counters.completion_tokens += entry.completion_tokens || 0;
+    counters.reasoning_tokens += entry.reasoning_tokens || 0;
+    counters.usd += entry.usd || 0;
+    counters.ms_total += entry.ms || 0;
+}
+function apiForPath(pathname) {
+    if (pathname === '/v1/messages') return 'anthropic';
+    if (pathname === '/v1/responses') return 'responses';
+    return 'openai';
+}
+// Replace credential values of loaded accounts and bearer tokens, then clip.
+// Applied when a row is stored and again when it is served.
+function scrubLogText(text) {
+    if (text === null || text === undefined || text === '') return null;
+    let out = String(text);
+    const secrets = new Set();
+    for (const account of accounts) {
+        const config = account.config || {};
+        for (const value of [config.token, config.hif_dliq, config.hif_leim]) {
+            if (typeof value === 'string' && value.length >= 6) secrets.add(value);
+        }
+        for (const pair of String(config.cookie || '').split(';')) {
+            const value = pair.slice(pair.indexOf('=') + 1).trim();
+            if (pair.includes('=') && value.length >= 6) secrets.add(value);
+        }
+    }
+    for (const secret of [...secrets].sort((a, b) => b.length - a.length)) out = out.split(secret).join('[redacted]');
+    out = out.replace(/\bBearer\s+(?!\[redacted\])[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]');
+    return out.length > LOG_TEXT_MAX_CHARS ? `${out.slice(0, LOG_TEXT_MAX_CHARS - 1)}…` : out;
+}
+function addUsageToMinute(entry) {
+    const now = Date.now();
+    const ts = Number(entry.ts) || now;
+    if (ts < now - USAGE_RETENTION_MS) return;
+    const minute = Math.floor(ts / USAGE_MINUTE_MS) * USAGE_MINUTE_MS;
+    let bucket = usageMinutes.get(minute);
+    if (!bucket) {
+        for (const key of usageMinutes.keys()) if (key < now - USAGE_RETENTION_MS - USAGE_MINUTE_MS) usageMinutes.delete(key);
+        bucket = { totals: newUsageCounters(), account: new Map(), model: new Map(), endpoint: new Map(), agent: new Map() };
+        usageMinutes.set(minute, bucket);
+    }
+    addUsage(bucket.totals, entry);
+    const dims = { account: entry.account ?? null, model: entry.model ?? null, endpoint: entry.path ?? null, agent: entry.agent ?? null };
+    for (const [dim, rawKey] of Object.entries(dims)) {
+        const map = bucket[dim];
+        const key = rawKey === null ? null : String(rawKey).slice(0, 200);
+        const slot = map.has(key) || map.size < USAGE_MAX_KEYS_PER_DIMENSION ? key : '(other)';
+        if (!map.has(slot)) map.set(slot, newUsageCounters());
+        addUsage(map.get(slot), entry);
+    }
 }
 function recordRequest(entry) {
+    entry.id = ++requestSeq;
+    if (!entry.api) entry.api = apiForPath(entry.path);
+    entry.error_message = scrubLogText(entry.error_message);
     requestLog.push(entry);
     while (requestLog.length > MAX_REQUEST_LOG) requestLog.shift();
+    addUsage(lifetimeUsage, entry);
+    addUsageToMinute(entry);
     if (!entry.account) return;
     const prev = usageByAccount.get(entry.account) || { prompt_tokens: 0, completion_tokens: 0, usd: 0, requests: 0 };
     prev.prompt_tokens += entry.prompt_tokens || 0;
@@ -476,6 +581,12 @@ function recordRequest(entry) {
     prev.usd += entry.usd || 0;
     prev.requests += 1;
     usageByAccount.set(entry.account, prev);
+}
+function clearRequestStats() {
+    requestLog.length = 0;
+    usageByAccount.clear();
+    usageMinutes.clear();
+    lifetimeUsage = newUsageCounters();
 }
 function jsonResponse(res, status, body, extraHeaders = {}) {
     res.writeHead(status, { 'Content-Type': 'application/json', ...extraHeaders });
@@ -2927,6 +3038,8 @@ function adminAccountView(account, now = Date.now()) {
     return {
         id: account.id,
         name: String(config.name || account.id),
+        // Optional "email" in the auth file, shown by the dashboard account switcher.
+        email: typeof config.email === 'string' && config.email.trim() ? config.email.trim().slice(0, 254) : null,
         status: adminAccountStatus(account, now),
         enabled: isAccountEnabled(account),
         disabled_by: config.enabled === false ? 'file' : (account.adminDisabled === true ? 'admin' : null),
@@ -2987,8 +3100,330 @@ function adminError(res, status, type, message, extraHeaders = {}, extra = {}) {
     adminJson(res, status, { error: { message, type, ...extra } }, extraHeaders);
 }
 
+// --- Recent requests and usage aggregates ---
+function adminRequestView(row) {
+    return {
+        id: row.id,
+        ts: row.ts,
+        path: row.path,
+        api: row.api || apiForPath(row.path),
+        model: row.model ?? null,
+        account: row.account ?? null,
+        agent: row.agent ?? null,
+        ip: row.ip ?? null,
+        status: row.status || 0,
+        ok: row.ok === true,
+        stream: typeof row.stream === 'boolean' ? row.stream : null,
+        local: row.local === true,
+        ms: row.ms || 0,
+        prompt_tokens: row.prompt_tokens || 0,
+        completion_tokens: row.completion_tokens || 0,
+        reasoning_tokens: row.reasoning_tokens || 0,
+        usd: row.usd || 0,
+        error_type: row.error_type || null,
+        error_message: scrubLogText(row.error_message),
+    };
+}
+class AdminQueryError extends Error {}
+function positiveIntParam(params, name, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+    if (!params.has(name)) return null;
+    const raw = params.get(name);
+    if (!/^\d+$/.test(raw) || Number(raw) < min || Number(raw) > max) {
+        throw new AdminQueryError(`${name} must be an integer between ${min} and ${max}`);
+    }
+    return Number(raw);
+}
+const REQUEST_APIS = new Set(['openai', 'anthropic', 'responses']);
+function adminRequestsList(params) {
+    const limit = positiveIntParam(params, 'limit', { max: MAX_REQUEST_LOG }) ?? 100;
+    const beforeId = positiveIntParam(params, 'before_id');
+    const status = params.get('status');
+    if (status !== null && !['ok', 'error'].includes(status) && !/^[1-5]\d\d$/.test(status)) {
+        throw new AdminQueryError('status must be ok, error, or an HTTP status code');
+    }
+    const api = params.get('api');
+    if (api !== null && !REQUEST_APIS.has(api)) throw new AdminQueryError(`api must be one of ${[...REQUEST_APIS].join(', ')}`);
+    const exact = ['account', 'model', 'agent'].filter(name => params.has(name)).map(name => [name, params.get(name)]);
+    const matched = [];
+    for (let i = requestLog.length - 1; i >= 0; i--) {
+        const row = requestLog[i];
+        if (beforeId !== null && !(row.id < beforeId)) continue;
+        if (status === 'ok' && !row.ok) continue;
+        if (status === 'error' && row.ok) continue;
+        if (status !== null && status !== 'ok' && status !== 'error' && row.status !== Number(status)) continue;
+        if (api !== null && (row.api || apiForPath(row.path)) !== api) continue;
+        if (exact.some(([name, value]) => String(row[name] ?? '') !== value)) continue;
+        matched.push(row);
+    }
+    return {
+        now: Date.now(),
+        capacity: MAX_REQUEST_LOG,
+        total: requestLog.length,
+        oldest_ts: requestLog[0]?.ts ?? null,
+        matched: matched.length,
+        requests: matched.slice(0, limit).map(adminRequestView),
+    };
+}
+const USAGE_WINDOWS = { '15m': 15 * 60 * 1000, '1h': 60 * 60 * 1000, '6h': 6 * 60 * 60 * 1000, '24h': USAGE_RETENTION_MS };
+const USAGE_BUCKETS = { '1m': 60 * 1000, '5m': 5 * 60 * 1000, '15m': 15 * 60 * 1000, '1h': 60 * 60 * 1000 };
+const USAGE_DEFAULT_BUCKET = { '15m': '1m', '1h': '1m', '6h': '5m', '24h': '15m' };
+function usageCountersView(counters) {
+    const { ms_total, ...rest } = counters;
+    return { ...rest, avg_ms: counters.requests ? Math.round(ms_total / counters.requests) : 0 };
+}
+function sortedBreakdown(map) {
+    return [...map.entries()]
+        .map(([key, counters]) => ({ key, ...usageCountersView(counters) }))
+        .sort((a, b) => b.requests - a.requests || (b.prompt_tokens + b.completion_tokens) - (a.prompt_tokens + a.completion_tokens));
+}
+function adminUsageSummary(params) {
+    const windowKey = params.get('window') ?? '24h';
+    if (!Object.hasOwn(USAGE_WINDOWS, windowKey)) throw new AdminQueryError(`window must be one of ${Object.keys(USAGE_WINDOWS).join(', ')}`);
+    const bucketKey = params.get('bucket') ?? USAGE_DEFAULT_BUCKET[windowKey];
+    if (!Object.hasOwn(USAGE_BUCKETS, bucketKey)) throw new AdminQueryError(`bucket must be one of ${Object.keys(USAGE_BUCKETS).join(', ')}`);
+    const windowMs = USAGE_WINDOWS[windowKey];
+    const bucketMs = USAGE_BUCKETS[bucketKey];
+    if (bucketMs > windowMs) throw new AdminQueryError(`bucket ${bucketKey} is larger than window ${windowKey}`);
+    const now = Date.now();
+    const points = Math.ceil(windowMs / bucketMs);
+    const from = Math.floor(now / bucketMs) * bucketMs - (points - 1) * bucketMs;
+    const series = Array.from({ length: points }, (_, i) => ({ t: from + i * bucketMs, counters: newUsageCounters() }));
+    const totals = newUsageCounters();
+    const dims = { account: new Map(), model: new Map(), endpoint: new Map(), agent: new Map() };
+    const merge = (target, src) => { for (const k of Object.keys(target)) target[k] += src[k]; };
+    for (const [minute, bucket] of usageMinutes) {
+        if (minute < from || minute > now) continue;
+        merge(series[Math.floor((minute - from) / bucketMs)].counters, bucket.totals);
+        merge(totals, bucket.totals);
+        for (const dim of Object.keys(dims)) {
+            for (const [key, counters] of bucket[dim]) {
+                if (!dims[dim].has(key)) dims[dim].set(key, newUsageCounters());
+                merge(dims[dim].get(key), counters);
+            }
+        }
+    }
+    return {
+        now,
+        estimated: true,
+        pricing: { input_per_m: USD_PER_M_INPUT, output_per_m: USD_PER_M_OUTPUT, currency: 'USD' },
+        window: { key: windowKey, ms: windowMs, from, to: now },
+        bucket: { key: bucketKey, ms: bucketMs },
+        retention_ms: USAGE_RETENTION_MS,
+        totals: usageCountersView(totals),
+        by_account: sortedBreakdown(dims.account),
+        by_model: sortedBreakdown(dims.model),
+        by_endpoint: sortedBreakdown(dims.endpoint),
+        by_agent: sortedBreakdown(dims.agent),
+        series: series.map(({ t, counters }) => ({ t, ...usageCountersView(counters) })),
+        lifetime: {
+            since: STATS_STARTED_AT,
+            ...usageCountersView(lifetimeUsage),
+            by_account: [...usageByAccount.entries()]
+                .map(([key, u]) => ({ key, requests: u.requests, prompt_tokens: u.prompt_tokens, completion_tokens: u.completion_tokens, usd: u.usd }))
+                .sort((a, b) => b.requests - a.requests),
+        },
+    };
+}
+
+// --- Account files: import, rename / persistent enable, archive ---
+const ADMIN_MAX_BODY_BYTES = 64 * 1024;
+const ACCOUNT_NAME_MAX_CHARS = 64;
+class AdminHttpError extends Error {
+    constructor(status, type, message, extra = {}) { super(message); this.status = status; this.type = type; this.extra = extra; }
+}
+function readAdminJsonBody(req, maxBytes = ADMIN_MAX_BODY_BYTES) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        let size = 0;
+        let tooLarge = false;
+        req.on('data', (chunk) => {
+            size += chunk.length;
+            if (size > maxBytes) tooLarge = true;
+            if (!tooLarge) chunks.push(chunk);
+        });
+        req.on('end', () => {
+            if (tooLarge) return reject(new AdminHttpError(413, 'payload_too_large', `Request body is larger than ${maxBytes} bytes`));
+            const text = Buffer.concat(chunks).toString('utf8');
+            try {
+                const value = JSON.parse(text || 'null');
+                if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                    return reject(new AdminHttpError(422, 'invalid_request', 'Request body must be a JSON object'));
+                }
+                resolve(value);
+            } catch (e) {
+                reject(new AdminHttpError(400, 'invalid_json', 'Request body is not valid JSON'));
+            }
+        });
+        req.on('error', reject);
+    });
+}
+// The directory the dashboard may write auth files to, or null when auth files come
+// from an explicit DEEPSEEK_AUTH_PATH list. Mirrors discoverAuthPaths.
+function managedAccountsDir() {
+    if (process.env.DEEPSEEK_AUTH_DIR) return path.resolve(process.env.DEEPSEEK_AUTH_DIR);
+    if (process.env.DEEPSEEK_AUTH_PATH && process.env.DEEPSEEK_AUTH_PATH.includes(',')) return null;
+    return path.resolve(ACCOUNTS_DIR);
+}
+function validAccountName(value) {
+    if (typeof value !== 'string' || !value.trim()) {
+        throw new AdminHttpError(422, 'invalid_request', 'name must be a non-empty string');
+    }
+    const name = value.trim();
+    if (name.length > ACCOUNT_NAME_MAX_CHARS) {
+        throw new AdminHttpError(422, 'invalid_request', `name must be at most ${ACCOUNT_NAME_MAX_CHARS} characters`);
+    }
+    return name;
+}
+function accountSlug(name, taken) {
+    const slug = name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 48);
+    if (slug) return slug;
+    let n = 1;
+    while (taken(`account-${n}`)) n++;
+    return `account-${n}`;
+}
+function writeAuthFileAtomic(file, data) {
+    const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
+    try {
+        fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600, flag: 'wx' });
+        if (process.platform !== 'win32') fs.chmodSync(tmp, 0o600);
+        fs.renameSync(tmp, file);
+    } catch (e) {
+        try { fs.unlinkSync(tmp); } catch (cleanup) { /* temp file was never created */ }
+        throw new AdminHttpError(500, 'auth_file_write_failed', `Could not write auth file ${path.basename(file)}: ${e.code || 'error'}`);
+    }
+}
+function adminImportAccount(body) {
+    const name = validAccountName(body.name);
+    if (!body.auth || typeof body.auth !== 'object' || Array.isArray(body.auth)) {
+        throw new AdminHttpError(422, 'invalid_request', 'auth must be a JSON object with token and cookie (the deepseek-auth.json shape)');
+    }
+    const dir = managedAccountsDir();
+    if (!dir) {
+        throw new AdminHttpError(409, 'import_unsupported', 'Auth files come from an explicit DEEPSEEK_AUTH_PATH list. Set DEEPSEEK_AUTH_DIR (or unset DEEPSEEK_AUTH_PATH) to import accounts from the dashboard.');
+    }
+    // Lazy: the container image ships without scripts/; only this route needs it.
+    const { normalizeAuth, validateAuth } = require('./scripts/auth_import');
+    const auth = normalizeAuth(body.auth, {}, { useEnv: false });
+    const errors = validateAuth(auth);
+    if (errors.length) throw new AdminHttpError(422, 'invalid_auth', `Invalid auth: ${errors.join(', ')}`, { errors });
+    const duplicate = accounts.find(a => a.config?.token === auth.token);
+    if (duplicate) {
+        throw new AdminHttpError(409, 'duplicate_account', `This login is already loaded as ${duplicate.id}`, { account: duplicate.id });
+    }
+    const id = accountSlug(name, candidate => accounts.some(a => a.id === candidate) || fs.existsSync(path.join(dir, `${candidate}.json`)));
+    const file = path.join(dir, `${id}.json`);
+    if (accounts.some(a => a.id === id)) throw new AdminHttpError(409, 'account_exists', `An account with id ${id} already exists`, { account: id });
+    try {
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(file, JSON.stringify({ name, ...auth }, null, 2), { mode: 0o600, flag: 'wx' });
+        if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
+    } catch (e) {
+        if (e.code === 'EEXIST') throw new AdminHttpError(409, 'account_exists', `Auth file ${id}.json already exists`, { account: id });
+        throw new AdminHttpError(500, 'auth_file_write_failed', `Could not write auth file ${id}.json: ${e.code || 'error'}`);
+    }
+    console.log(`[admin] imported account file ${id}.json`);
+    const result = adminReloadAccounts();
+    const account = accounts.find(a => a.file && path.resolve(a.file) === file);
+    if (!result.ok || !account) {
+        throw new AdminHttpError(500, 'import_not_loaded', `Wrote ${id}.json but the reload did not load it. Check DEEPSEEK_AUTH_DIR / DEEPSEEK_AUTH_PATH.`, { errors: result.errors || [] });
+    }
+    return { account, result };
+}
+const PATCH_FIELDS = new Set(['name', 'enabled']);
+function adminPatchAccount(account, body) {
+    const keys = Object.keys(body);
+    const unknown = keys.filter(k => !PATCH_FIELDS.has(k));
+    if (unknown.length) throw new AdminHttpError(422, 'invalid_request', `Unsupported field(s): ${unknown.join(', ')}. Allowed: name, enabled`);
+    if (!keys.length) throw new AdminHttpError(422, 'invalid_request', 'Send name and/or enabled');
+    const name = 'name' in body ? validAccountName(body.name) : undefined;
+    if ('enabled' in body && typeof body.enabled !== 'boolean') throw new AdminHttpError(422, 'invalid_request', 'enabled must be true or false');
+    if (!account.file) throw new AdminHttpError(409, 'auth_file_unreadable', `Account ${account.id} has no auth file`);
+    let config;
+    try {
+        config = JSON.parse(fs.readFileSync(account.file, 'utf8'));
+        if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('expected a JSON object');
+    } catch (e) {
+        throw new AdminHttpError(409, 'auth_file_unreadable', `Auth file of ${account.id} could not be read: ${describeAuthFileError(e)}`);
+    }
+    if (name !== undefined) config.name = name;
+    if (body.enabled === false) config.enabled = false;
+    if (body.enabled === true) delete config.enabled;
+    writeAuthFileAtomic(account.file, config);
+    console.log(`[admin] account ${account.id}: updated ${keys.join(', ')} in its auth file`);
+    // Reload so the pool reflects the files exactly; kept logins keep their runtime state.
+    const result = adminReloadAccounts();
+    const file = path.resolve(account.file);
+    const updated = accounts.find(a => a.file && path.resolve(a.file) === file);
+    if (!result.ok || !updated) {
+        throw new AdminHttpError(500, 'reload_failed', `Updated the auth file of ${account.id} but the reload did not load it.`, { errors: result.errors || [] });
+    }
+    if (body.enabled === true) updated.adminDisabled = false;
+    return updated;
+}
+function adminArchiveAccount(account) {
+    const dir = managedAccountsDir();
+    const file = account.file ? path.resolve(account.file) : null;
+    if (!dir || !file || path.dirname(file) !== dir) {
+        throw new AdminHttpError(409, 'account_file_protected', `Account ${account.id} is not loaded from the managed accounts directory. Remove its auth file by hand, then reload accounts.`);
+    }
+    if (accounts.length === 1) {
+        throw new AdminHttpError(409, 'last_account', `Account ${account.id} is the only loaded account. Import another one first.`);
+    }
+    const archived = `${file}.removed-${Date.now()}`;
+    try {
+        fs.renameSync(file, archived);
+    } catch (e) {
+        throw new AdminHttpError(500, 'auth_file_write_failed', `Could not archive ${path.basename(file)}: ${e.code || 'error'}`);
+    }
+    const result = adminReloadAccounts();
+    if (!result.ok) {
+        fs.renameSync(archived, file);
+        throw new AdminHttpError(422, 'no_accounts_found', 'No other auth account could be loaded, so the account was kept.', { errors: result.errors });
+    }
+    console.log(`[admin] account ${account.id}: auth file archived as ${path.basename(archived)}`);
+    return { archived_as: path.basename(archived), result };
+}
+
+const ARCHIVED_AUTH_FILE_RE = /^([A-Za-z0-9._-]+\.json)\.removed-\d+$/;
+function adminRestoreAccount(body) {
+    const name = body.archived_as;
+    const match = typeof name === 'string' && !name.includes('/') && !name.includes('\\') && !name.startsWith('.') ? ARCHIVED_AUTH_FILE_RE.exec(name) : null;
+    if (!match) {
+        throw new AdminHttpError(422, 'invalid_request', 'archived_as must be the archived_as value returned by DELETE /admin/accounts/:id (<file>.json.removed-<time>)');
+    }
+    const dir = managedAccountsDir();
+    if (!dir) {
+        throw new AdminHttpError(409, 'accounts_dir_unmanaged', 'Auth files come from an explicit path list, so there is no accounts directory to restore into.');
+    }
+    const archived = path.join(dir, name);
+    const target = path.join(dir, match[1]);
+    if (!fs.existsSync(archived)) {
+        throw new AdminHttpError(404, 'archive_not_found', `No archived auth file named ${name} in the accounts directory.`);
+    }
+    if (fs.existsSync(target)) {
+        throw new AdminHttpError(409, 'restore_target_exists', `${match[1]} already exists in the accounts directory. Move it away first; ${name} was left in place.`);
+    }
+    const before = new Set(accounts.map(a => a.id));
+    try {
+        fs.renameSync(archived, target);
+    } catch (e) {
+        throw new AdminHttpError(500, 'auth_file_write_failed', `Could not restore ${name}: ${e.code || 'error'}`);
+    }
+    const result = adminReloadAccounts();
+    const restored = accounts.filter(a => a.file && path.resolve(a.file) === target && !before.has(a.id)).map(a => a.id);
+    if (!result.ok || restored.length === 0) {
+        fs.renameSync(target, archived);
+        adminReloadAccounts();
+        throw new AdminHttpError(422, 'restore_failed', `${match[1]} did not load as an account, so it was archived again.`, { errors: result.errors || [] });
+    }
+    console.log(`[admin] restored ${name} as ${match[1]} (${restored.join(', ')})`);
+    return { restored, result };
+}
+
 const ADMIN_ACCOUNT_ACTIONS = new Set(['disable', 'enable', 'clear-cooldown']);
-function handleAdminRequest(req, res, pathname) {
+const ADMIN_COLLECTION_ACTIONS = new Set(['reload', 'import', 'restore']);
+async function handleAdminRequest(req, res, url) {
+    const pathname = url.pathname;
     const access = adminAccessDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers });
     if (!access.allowed) {
         adminJson(res, access.status, { error: access.error });
@@ -2996,63 +3431,117 @@ function handleAdminRequest(req, res, pathname) {
     }
     const methodNotAllowed = (allow) => adminError(res, 405, 'method_not_allowed', `Use ${allow} for ${pathname}`, { Allow: allow });
     const parts = pathname.split('/').filter(Boolean); // ['admin', 'accounts', ...]
-    if (parts[1] !== 'accounts' || parts.length > 4) {
-        adminError(res, 404, 'not_found', `Unknown admin endpoint: ${pathname}`);
-        return;
-    }
-    if (parts.length === 2) {
-        if (req.method !== 'GET') return methodNotAllowed('GET');
-        const now = Date.now();
-        adminJson(res, 200, { now, pool: adminPoolSummary(now), accounts: accounts.map(a => adminAccountView(a, now)) });
-        return;
-    }
-    if (parts.length === 3 && parts[2] === 'reload') {
-        if (req.method !== 'POST') return methodNotAllowed('POST');
-        const result = adminReloadAccounts();
-        if (!result.ok) {
-            adminError(res, 422, 'no_accounts_found', 'No auth account could be loaded. The current pool is unchanged. Import one with npm run auth:import -- --output ./accounts/<name>.json.', {}, { errors: result.errors });
+    try {
+        if ((parts[1] === 'requests' || parts[1] === 'usage') && parts.length === 2) {
+            if (req.method !== 'GET') return methodNotAllowed('GET');
+            adminJson(res, 200, parts[1] === 'requests' ? adminRequestsList(url.searchParams) : adminUsageSummary(url.searchParams));
             return;
         }
-        const now = Date.now();
-        adminJson(res, 200, {
-            added: result.added,
-            removed: result.removed,
-            kept: result.kept,
-            errors: result.errors,
-            accounts: accounts.map(a => adminAccountView(a, now)),
-            pool: adminPoolSummary(now),
-        });
-        return;
-    }
-    if (parts.length !== 4 || !ADMIN_ACCOUNT_ACTIONS.has(parts[3])) {
-        adminError(res, 404, 'not_found', `Unknown admin endpoint: ${pathname}`);
-        return;
-    }
-    if (req.method !== 'POST') return methodNotAllowed('POST');
-    let accountId;
-    try { accountId = decodeURIComponent(parts[2]); }
-    catch (e) { accountId = parts[2]; }
-    const account = accounts.find(a => a.id === accountId);
-    if (!account) {
-        adminError(res, 404, 'account_not_found', `No account with id ${accountId}`);
-        return;
-    }
-    const action = parts[3];
-    if (action === 'disable') {
-        account.adminDisabled = true;
-    } else if (action === 'enable') {
-        if (account.config?.enabled === false) {
-            adminError(res, 409, 'disabled_in_file', `Account ${account.id} is disabled in its auth file ("enabled": false). Edit the file, then reload accounts.`);
+        if (parts[1] !== 'accounts' || parts.length > 4) {
+            adminError(res, 404, 'not_found', `Unknown admin endpoint: ${pathname}`);
             return;
         }
-        account.adminDisabled = false;
-    } else {
-        account.cooldownUntil = 0;
-        account.cooldownReason = null;
+        if (parts.length === 2) {
+            if (req.method !== 'GET') return methodNotAllowed('GET');
+            const now = Date.now();
+            adminJson(res, 200, { now, pool: adminPoolSummary(now), accounts: accounts.map(a => adminAccountView(a, now)) });
+            return;
+        }
+        if (parts.length === 3 && ADMIN_COLLECTION_ACTIONS.has(parts[2]) && req.method !== 'DELETE' && req.method !== 'PATCH') {
+            if (req.method !== 'POST') return methodNotAllowed('POST');
+            if (parts[2] === 'reload') {
+                const result = adminReloadAccounts();
+                if (!result.ok) {
+                    adminError(res, 422, 'no_accounts_found', 'No auth account could be loaded. The current pool is unchanged. Import one with npm run auth:import -- --output ./accounts/<name>.json.', {}, { errors: result.errors });
+                    return;
+                }
+                const now = Date.now();
+                adminJson(res, 200, {
+                    added: result.added,
+                    removed: result.removed,
+                    kept: result.kept,
+                    errors: result.errors,
+                    accounts: accounts.map(a => adminAccountView(a, now)),
+                    pool: adminPoolSummary(now),
+                });
+                return;
+            }
+            if (parts[2] === 'restore') {
+                const { restored, result } = adminRestoreAccount(await readAdminJsonBody(req));
+                const now = Date.now();
+                adminJson(res, 200, {
+                    restored,
+                    errors: result.errors,
+                    accounts: accounts.map(a => adminAccountView(a, now)),
+                    pool: adminPoolSummary(now),
+                });
+                return;
+            }
+            const { account, result } = adminImportAccount(await readAdminJsonBody(req));
+            const now = Date.now();
+            adminJson(res, 201, {
+                account: adminAccountView(account, now),
+                added: result.added,
+                removed: result.removed,
+                errors: result.errors,
+                accounts: accounts.map(a => adminAccountView(a, now)),
+                pool: adminPoolSummary(now),
+            });
+            return;
+        }
+        if (parts.length === 4 && !ADMIN_ACCOUNT_ACTIONS.has(parts[3])) {
+            adminError(res, 404, 'not_found', `Unknown admin endpoint: ${pathname}`);
+            return;
+        }
+        if (parts.length === 4 && req.method !== 'POST') return methodNotAllowed('POST');
+        if (parts.length === 3 && req.method !== 'PATCH' && req.method !== 'DELETE') return methodNotAllowed('PATCH, DELETE');
+        let accountId;
+        try { accountId = decodeURIComponent(parts[2]); }
+        catch (e) { accountId = parts[2]; }
+        const account = accounts.find(a => a.id === accountId);
+        if (!account) {
+            adminError(res, 404, 'account_not_found', `No account with id ${accountId}`);
+            return;
+        }
+        if (parts.length === 3) {
+            if (req.method === 'PATCH') {
+                const updated = adminPatchAccount(account, await readAdminJsonBody(req));
+                const now = Date.now();
+                adminJson(res, 200, { account: adminAccountView(updated, now), pool: adminPoolSummary(now) });
+                return;
+            }
+            const { archived_as, result } = adminArchiveAccount(account);
+            const now = Date.now();
+            adminJson(res, 200, {
+                removed: [account.id],
+                archived_as,
+                errors: result.errors,
+                accounts: accounts.map(a => adminAccountView(a, now)),
+                pool: adminPoolSummary(now),
+            });
+            return;
+        }
+        const action = parts[3];
+        if (action === 'disable') {
+            account.adminDisabled = true;
+        } else if (action === 'enable') {
+            if (account.config?.enabled === false) {
+                adminError(res, 409, 'disabled_in_file', `Account ${account.id} is disabled in its auth file ("enabled": false). Edit the file, then reload accounts.`);
+                return;
+            }
+            account.adminDisabled = false;
+        } else {
+            account.cooldownUntil = 0;
+            account.cooldownReason = null;
+        }
+        console.log(`[admin] account ${account.id}: ${action}`);
+        const now = Date.now();
+        adminJson(res, 200, { account: adminAccountView(account, now), pool: adminPoolSummary(now) });
+    } catch (e) {
+        if (e instanceof AdminQueryError) return adminError(res, 400, 'invalid_query', e.message);
+        if (e instanceof AdminHttpError) return adminError(res, e.status, e.type, e.message, {}, e.extra);
+        throw e;
     }
-    console.log(`[admin] account ${account.id}: ${action}`);
-    const now = Date.now();
-    adminJson(res, 200, { account: adminAccountView(account, now), pool: adminPoolSummary(now) });
 }
 
 const DASHBOARD_DIR = path.join(__dirname, 'public', 'dashboard');
@@ -3063,7 +3552,7 @@ const DASHBOARD_FILES = new Map([
     ['/dashboard/app.css', { file: 'app.css', type: 'text/css; charset=utf-8' }],
 ]);
 const DASHBOARD_HEADERS = {
-    'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
+    'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self'; frame-ancestors 'none'; base-uri 'none'",
     'X-Frame-Options': 'DENY',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
@@ -3072,9 +3561,44 @@ const DASHBOARD_HEADERS = {
 function isDashboardPath(pathname) {
     return pathname === '/dashboard' || pathname.startsWith('/dashboard/');
 }
-// Static files only, from a fixed whitelist: the request path never reaches the filesystem.
-async function serveDashboard(res, pathname) {
-    const entry = DASHBOARD_FILES.get(pathname);
+// Flat dashboard assets: lowercase name without dots or slashes, so the path cannot
+// leave public/dashboard and only .js/.css/.svg/.png/.jpg/.mp4 are served (never .md or dotfiles).
+const DASHBOARD_ASSET_TYPES = {
+    js: 'text/javascript; charset=utf-8',
+    css: 'text/css; charset=utf-8',
+    svg: 'image/svg+xml; charset=utf-8',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    mp4: 'video/mp4',
+};
+// Photos and video never change between releases of a file name; let the browser keep them.
+const DASHBOARD_MEDIA = new Set(['png', 'jpg', 'mp4']);
+function dashboardEntry(pathname) {
+    if (DASHBOARD_FILES.has(pathname)) return DASHBOARD_FILES.get(pathname);
+    const match = /^\/dashboard\/([a-z0-9][a-z0-9-]*)\.(js|css|svg|png|jpg|mp4)$/.exec(pathname);
+    return match ? { file: `${match[1]}.${match[2]}`, type: DASHBOARD_ASSET_TYPES[match[2]], optional: true, media: DASHBOARD_MEDIA.has(match[2]) } : null;
+}
+// One "bytes=a-b" range (RFC 7233), clamped to the file; null when unsatisfiable or multi-range.
+function parseByteRange(header, size) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+    if (!m || (m[1] === '' && m[2] === '')) return null;
+    let start;
+    let end;
+    if (m[1] === '') {
+        const suffix = Number(m[2]);
+        if (!(suffix > 0)) return null;
+        start = Math.max(0, size - suffix);
+        end = size - 1;
+    } else {
+        start = Number(m[1]);
+        end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+    }
+    if (start >= size || start > end) return null;
+    return { start, end };
+}
+// Static files only: index from a fixed map, assets by a strict name pattern.
+async function serveDashboard(req, res, pathname) {
+    const entry = dashboardEntry(pathname);
     if (!entry) {
         jsonResponse(res, 404, { error: { message: `Not found: ${pathname}`, type: 'not_found' } }, { 'X-Content-Type-Options': 'nosniff' });
         return;
@@ -3084,10 +3608,29 @@ async function serveDashboard(res, pathname) {
         content = await fs.promises.readFile(path.join(DASHBOARD_DIR, entry.file));
     } catch (e) {
         if (e.code !== 'ENOENT') throw e;
+        if (entry.optional) {
+            jsonResponse(res, 404, { error: { message: `Not found: ${pathname}`, type: 'not_found' } }, { 'X-Content-Type-Options': 'nosniff' });
+            return;
+        }
         jsonResponse(res, 404, { error: { message: `Dashboard files are not installed (expected public/dashboard/${entry.file} next to server.js).`, type: 'dashboard_unavailable' } });
         return;
     }
-    res.writeHead(200, { 'Content-Type': entry.type, 'Content-Length': content.length, ...DASHBOARD_HEADERS });
+    const headers = { 'Content-Type': entry.type, ...DASHBOARD_HEADERS };
+    if (entry.media) Object.assign(headers, { 'Cache-Control': 'public, max-age=86400', 'Accept-Ranges': 'bytes' });
+    // Video elements (Safari above all) fetch by byte range; answer a single range, refuse the rest.
+    if (entry.media && req.headers.range) {
+        const size = content.length;
+        const range = parseByteRange(req.headers.range, size);
+        if (!range) {
+            res.writeHead(416, { ...headers, 'Content-Range': `bytes */${size}` });
+            res.end();
+            return;
+        }
+        res.writeHead(206, { ...headers, 'Content-Range': `bytes ${range.start}-${range.end}/${size}`, 'Content-Length': range.end - range.start + 1 });
+        res.end(content.subarray(range.start, range.end + 1));
+        return;
+    }
+    res.writeHead(200, { ...headers, 'Content-Length': content.length });
     res.end(content);
 }
 
@@ -3119,7 +3662,7 @@ const server = http.createServer(async (req, res) => {
     // Dashboard: public static page (no data); it calls the gated /admin API.
     if (req.method === 'GET' && isDashboardPath(url.pathname)) {
         try {
-            await serveDashboard(res, url.pathname);
+            await serveDashboard(req, res, url.pathname);
         } catch (e) {
             console.error('[DS-API] dashboard error:', e.message);
             if (!res.headersSent) jsonResponse(res, 500, { error: { message: 'Could not read dashboard files', type: 'server_error' } });
@@ -3128,7 +3671,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
-        handleAdminRequest(req, res, url.pathname);
+        try {
+            await handleAdminRequest(req, res, url);
+        } catch (e) {
+            console.error('[admin] error:', e.message);
+            if (!res.headersSent) adminError(res, 500, 'server_error', `Admin request failed: ${e.message}`);
+        }
         return;
     }
 
@@ -3257,15 +3805,27 @@ const server = http.createServer(async (req, res) => {
             ts: requestStartedAt,
             ip: clientIp(req),
             path: url.pathname,
+            api: apiMode,
             status: 0,
             ok: false,
+            stream: null,
+            local: false,
             prompt_tokens: 0,
             completion_tokens: 0,
+            reasoning_tokens: 0,
             usd: 0,
             ms: 0,
             agent: null,
             account: null,
             model: null,
+            error_type: null,
+            error_message: null,
+        };
+        // Error metadata only; recordRequest scrubs credentials and clips the text.
+        const logError = (status, type, message) => {
+            logRow.status = status;
+            logRow.error_type = type;
+            logRow.error_message = message;
         };
         try {
             const rawParams = JSON.parse(body || '{}');
@@ -3275,6 +3835,7 @@ const server = http.createServer(async (req, res) => {
             const strippedSearch = stripHarnessWebSearchTools(params.tools || []);
             const tools = strippedSearch.tools;
             const stream = params.stream === true;
+            logRow.stream = stream;
             const requestedModel = canonicalizeModelId(params.model || DEFAULT_MODEL_ID);
             const webFlags = agentNativeWebFlags(tools, strippedSearch.names);
             const promptOptions = { nativeSearchNotice: Boolean(webFlags) };
@@ -3287,18 +3848,21 @@ const server = http.createServer(async (req, res) => {
             const agentTag = `[${agentId}]`;
             activeAgentId = agentId;
             lockHolder.agentId = agentId;
+            // Optional: serve this request with one named login (the dashboard account switcher).
+            const pinnedAccount = String(req.headers['x-account-id'] || '').trim();
+            if (pinnedAccount) lockHolder.pinnedAccountId = pinnedAccount;
             logRow.agent = agentId;
             if (strippedSearch.names.length || webFlags) {
                 console.log(`${agentTag} Native DeepSeek Search on${strippedSearch.names.length ? `; stripped harness tools: ${strippedSearch.names.join(', ')}` : ''}`);
             }
             if (!isKnownModel(requestedModel)) {
-                logRow.status = 400;
+                logError(400, 'invalid_model', `Unknown model: ${requestedModel}`);
                 res.writeHead(400, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: { message: `Unknown model: ${requestedModel}`, type: 'invalid_model', supported_models: SUPPORTED_MODEL_IDS, model_capabilities_url: '/v1/model-capabilities' } }));
                 return;
             }
             if (!isSupportedModel(requestedModel)) {
-                logRow.status = 400;
+                logError(400, 'unsupported_model', `${requestedModel} is not currently supported through this DeepSeek Web API path`);
                 const cfg = resolveModelConfig(requestedModel);
                 res.writeHead(400, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: { message: `${requestedModel} is not currently supported through this DeepSeek Web API path`, type: 'unsupported_model', model: requestedModel, real_model: cfg.real_model, reason: cfg.unavailable_reason, capabilities: cfg.capabilities, supported_models: SUPPORTED_MODEL_IDS } }));
@@ -3317,6 +3881,9 @@ const server = http.createServer(async (req, res) => {
                 sessions.set(agentId, createSession());
                 console.log(`${agentTag} /new received — session reset (history cleared: ${historyCount})`);
                 const confirmation = buildTextResponse('Started a new chat. Session and history have been reset.', '/new', requestedModel);
+                logRow.status = 200;
+                logRow.ok = true;
+                logRow.local = true;
                 if (stream) {
                     if (apiMode === 'anthropic') {
                         sendAnthropicStream(res, confirmation);
@@ -3344,6 +3911,7 @@ const server = http.createServer(async (req, res) => {
                 const confirmation = buildTextResponse(title, normalizeMessageContent(lastUserMessage?.content), requestedModel);
                 logRow.status = 200;
                 logRow.ok = true;
+                logRow.local = true;
                 if (stream) {
                     if (apiMode === 'anthropic') {
                         sendAnthropicStream(res, confirmation);
@@ -3600,6 +4168,7 @@ const server = http.createServer(async (req, res) => {
                 // no point burning more PoW solves + account quota for a dead socket.
                 if (clientGone) {
                     console.log(`${agentTag} client disconnected; abandoning empty-retry loop`);
+                    logError(499, 'client_disconnected', 'Client disconnected while recovering an empty DeepSeek response');
                     if (!res.headersSent) {
                         res.writeHead(499, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ error: {
@@ -3861,6 +4430,8 @@ const server = http.createServer(async (req, res) => {
             if (!toolCall && looksLikeToolCallMarkup(fullContent)) {
                 const failure = { failedSessionId: session.id, failedMessageCount: session.messageCount, accountId: session.accountId };
                 console.log(`${agentTag} Keeping chat ${session.id || '(none)'} after malformed tool markup.`);
+                logError(502, 'malformed_tool_call', 'DeepSeek returned malformed or native-only tool-call markup after one repair attempt');
+                logRow.account = session.accountId;
                 res.writeHead(502, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: {
                     message: 'DeepSeek returned malformed or native-only tool-call markup after one repair attempt',
@@ -3901,6 +4472,7 @@ const server = http.createServer(async (req, res) => {
             recordAccountSuccess(accounts.find(a => a.id === session.accountId));
             logRow.prompt_tokens = openaiResponse.usage?.prompt_tokens || 0;
             logRow.completion_tokens = openaiResponse.usage?.completion_tokens || 0;
+            logRow.reasoning_tokens = openaiResponse.usage?.completion_tokens_details?.reasoning_tokens || 0;
             logRow.usd = modelCostUsd(requestedModel, logRow.prompt_tokens, logRow.completion_tokens);
             res.setHeader('x-account-id', session.accountId || '');
 
@@ -3926,13 +4498,23 @@ const server = http.createServer(async (req, res) => {
             }
         } catch (e) {
             console.log('[DS-API] Error:', e.message);
-            if (res.headersSent || clientGone) return;  // streamed/aborted: nothing to send
+            if (clientGone && !res.headersSent) {
+                logError(499, 'client_disconnected', `Client disconnected: ${e.message}`);
+                return;
+            }
+            if (res.headersSent) {
+                logRow.error_type = logRow.error_type || e.type || 'server_error';
+                logRow.error_message = logRow.error_message || e.message;
+                return;
+            }
             // Pool exhaustion / no-auth carry an explicit status so integrators see
             // 429/503 (not a generic 500) and can honor Retry-After.
             const timedOut = isTimeoutError(e);
             const overflowError = isContextTooLongError(e);
             const status = e.status || (overflowError ? 400 : (timedOut ? 504 : 500));
-            logRow.status = status;
+            const errorType = e.type || (overflowError ? 'context_length_exceeded' : (timedOut ? 'request_timeout' : 'server_error'));
+            // A body that is not JSON surfaces as a SyntaxError whose text quotes the body.
+            logError(status, errorType, e instanceof SyntaxError ? 'Request body is not valid JSON' : e.message);
             logRow.account = activeSession?.accountId || null;
             const headers = { 'Content-Type': 'application/json' };
             if (status === 429 && e.retryAfter) headers['Retry-After'] = String(e.retryAfter);
@@ -3943,7 +4525,7 @@ const server = http.createServer(async (req, res) => {
             if (timedOut && activeSession?.id) console.log(`[${activeAgentId}] Keeping chat ${activeSession.id} after timeout.`);
             res.end(JSON.stringify({ error: {
                 message: e.message,
-                type: e.type || (overflowError ? 'context_length_exceeded' : (timedOut ? 'request_timeout' : 'server_error')),
+                type: errorType,
                 ...(failure ? {
                     agent: activeAgentId,
                     failed_session_id: failure.failedSessionId,
@@ -4007,10 +4589,27 @@ async function showModels(langRef) {
     );
 }
 
+function dashboardUrl(host, port) {
+    const h = String(host || '127.0.0.1');
+    // A wildcard bind address is not something a browser can open.
+    const target = (h === '0.0.0.0' || h === '::' || h === '') ? '127.0.0.1' : h;
+    return `http://${target.includes(':') ? `[${target}]` : target}:${port}/dashboard`;
+}
+function openDashboardInBrowser(url) {
+    const { cmd, args } = browserOpenCommand(process.platform, url);
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    child.on('error', (err) => {
+        console.error(`[DS-API] Could not open a browser (${cmd}: ${err.code || err.message}). Open ${url} yourself.`);
+    });
+    child.unref();
+}
+
 async function showStartupMenu() {
-    if (isTruthy(process.env.SKIP_ACCOUNT_MENU) || isTruthy(process.env.NON_INTERACTIVE)) {
-        if (!hasAuthConfig()) loadDeepSeekConfig({ fatal: true });
-        return true;
+    const openDashboard = process.argv.includes('--dashboard') || isTruthy(process.env.OPEN_DASHBOARD);
+    if (isTruthy(process.env.SKIP_ACCOUNT_MENU) || isTruthy(process.env.NON_INTERACTIVE) || openDashboard) {
+        // The dashboard can import the first account itself, so it starts without one.
+        if (!hasAuthConfig()) loadDeepSeekConfig({ fatal: !openDashboard });
+        return { start: true, openDashboard };
     }
     const langRef = { current: loadUiLang() };
     while (true) {
@@ -4023,6 +4622,7 @@ async function showStartupMenu() {
                     status: startupStatus(lang),
                     items: [
                         { id: 'start', label: t(lang, 'start'), help: t(lang, 'helpStart') },
+                        { id: 'dashboard', label: t(lang, 'startDashboard'), help: t(lang, 'helpStartDashboard') },
                         { id: 'login', label: t(lang, 'login'), help: t(lang, 'helpLogin') },
                         { id: 'import', label: t(lang, 'import'), help: t(lang, 'helpImport') },
                         { id: 'models', label: t(lang, 'modelsList'), help: t(lang, 'helpModels') },
@@ -4038,15 +4638,16 @@ async function showStartupMenu() {
             loadDeepSeekConfig({ fatal: false });
         } else if (chosen.id === 'models') {
             await showModels(langRef);
-        } else if (chosen.id === 'start') {
-            if (!hasAuthConfig()) {
+        } else if (chosen.id === 'start' || chosen.id === 'dashboard') {
+            // The dashboard can import the first account itself; plain start needs one.
+            if (chosen.id === 'start' && !hasAuthConfig()) {
                 console.log(t(langRef.current, 'needAuth'));
                 await pause(langRef.current);
                 continue;
             }
-            return true;
+            return { start: true, openDashboard: chosen.id === 'dashboard' };
         } else {
-            return false;
+            return { start: false, openDashboard: false };
         }
     }
 }
@@ -4060,8 +4661,8 @@ async function main() {
             console.warn('[DS-API] WARNING: PROXY_ADMIN_ALLOW_REMOTE=1 without PROXY_API_KEY lets anyone on the network pause, resume, and reload your DeepSeek accounts.');
         }
     }
-    const shouldStart = await showStartupMenu();
-    if (!shouldStart) process.exit(0);
+    const startup = await showStartupMenu();
+    if (!startup.start) process.exit(0);
     server.on('error', (err) => {
         if (err.code === 'EADDRINUSE') console.error(`[DS-API] FATAL: port ${PORT} already in use. Set PORT=<other> or stop the other instance.`);
         else console.error('[DS-API] server error:', err);
@@ -4080,6 +4681,11 @@ async function main() {
         console.log('[DS-API] POST /reset-session?agent=<id> — reset agent session');
         console.log('[DS-API] POST /reset-session?agent=all — reset ALL sessions');
         console.log(`[DS-API] GET  /dashboard — account dashboard (admin API: /admin/accounts${PROXY_API_KEY || PROXY_ADMIN_ALLOW_REMOTE ? '' : ', localhost only'})`);
+        if (startup.openDashboard) {
+            const url = dashboardUrl(HOST, PORT);
+            console.log(`[DS-API] Opening ${url}`);
+            openDashboardInBrowser(url);
+        }
     });
 }
 
@@ -4113,6 +4719,10 @@ module.exports = {
         adminAccessDecision,
         adminAccountView,
         adminPoolSummary,
+        recordRequest,
+        requestLog,
+        clearRequestStats,
+        scrubLogText,
         isAssistantOutputFragment,
         isReasoningFragment,
         isDeepSeekModelErrorEvent,
@@ -4171,6 +4781,10 @@ module.exports = {
         sessions,
         accounts,
         selectAccountForSession,
+        dashboardUrl,
+        dashboardEntry,
+        parseByteRange,
+        browserOpenCommand,
         acquireAccountChatLock,
         releaseAccountChatLock,
         listAccountChatLocks,
