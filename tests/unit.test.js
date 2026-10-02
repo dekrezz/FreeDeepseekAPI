@@ -266,6 +266,8 @@ test('Containerfile keeps the rootless Podman runtime minimal and fail-closed', 
   assert.deepEqual(copyLines, [
     'COPY --chown=1000:1000 package.json server.js ./',
     'COPY --chown=1000:1000 lib/pow.js ./lib/pow.js',
+    'COPY --chown=1000:1000 scripts/lib/tui-menu.js ./scripts/lib/tui-menu.js',
+    'COPY --chown=1000:1000 public/dashboard/index.html public/dashboard/*.css public/dashboard/*.js public/dashboard/*.png public/dashboard/*.jpg public/dashboard/*.mp4 ./public/dashboard/',
   ]);
   assert.doesNotMatch(containerfile, /^\s*(?:COPY|ADD)\s+\.\s/m);
   assert.match(containerfile, /^USER 1000:1000$/m);
@@ -285,6 +287,41 @@ test('Containerfile keeps the rootless Podman runtime minimal and fail-closed', 
   assert.match(readme, /--read-only/);
   assert.match(readme, /--cap-drop=ALL/);
   assert.match(readme, /--security-opt=no-new-privileges/);
+});
+
+test('the files the Containerfile copies are enough to load the server and the dashboard', (t) => {
+  const containerfile = fs.readFileSync(path.join(ROOT, 'Containerfile'), 'utf8');
+  const containerignore = fs.readFileSync(path.join(ROOT, '.containerignore'), 'utf8');
+  const allowed = containerignore.split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('!')).map(l => l.slice(1));
+  const globToRe = (g) => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*')}$`);
+  const allowedRes = allowed.map(globToRe);
+  const isAllowed = (rel) => allowedRes.some(re => re.test(rel)) || allowed.some(a => rel.startsWith(`${a}/`));
+  const image = fs.mkdtempSync(path.join(os.tmpdir(), 'fdsapi-image-'));
+  t.after(() => fs.rmSync(image, { recursive: true, force: true }));
+  for (const line of containerfile.split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('COPY '))) {
+    const parts = line.split(/\s+/).slice(1).filter(p => !p.startsWith('--'));
+    const dest = parts.pop();
+    for (const src of parts) {
+      const dir = path.posix.dirname(src);
+      const matches = src.includes('*')
+        ? fs.readdirSync(path.join(ROOT, dir)).map(f => `${dir}/${f}`).filter(rel => globToRe(src).test(rel))
+        : [src];
+      assert.ok(matches.length, `${src} matches no file`);
+      for (const rel of matches) {
+        assert.ok(isAllowed(rel), `${rel} is copied but excluded by .containerignore`);
+        const target = dest.endsWith('/') ? path.join(image, dest, path.basename(rel)) : path.join(image, dest);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.copyFileSync(path.join(ROOT, rel), target);
+      }
+    }
+  }
+  const run = spawnSync(process.execPath, ['-e', "require('./server.js')"], { cwd: image, encoding: 'utf8', env: { ...process.env, NON_INTERACTIVE: '1' } });
+  assert.equal(run.status, 0, run.stderr);
+  const index = fs.readFileSync(path.join(image, 'public/dashboard/index.html'), 'utf8');
+  const assets = [...index.matchAll(/(?:src|href)="\/dashboard\/([^"]+)"/g)].map(m => m[1]);
+  assert.ok(assets.length > 1);
+  for (const asset of assets) assert.ok(fs.existsSync(path.join(image, 'public/dashboard', asset)), `image lacks /dashboard/${asset}`);
+  assert.deepEqual(fs.readdirSync(path.join(image, 'public/dashboard')).filter(f => !/\.(?:js|css|html|png|jpg|mp4)$/.test(f)), [], 'only static assets ship');
 });
 
 test('loopback host detection covers supported local bind addresses', () => {
@@ -1446,6 +1483,135 @@ test('a paused login is skipped so another ready file can serve', (t) => {
   const selected = serverInternals.selectAccountForSession(session);
   assert.equal(selected.id, 'acct_b');
   assert.equal(session.accountId, 'acct_b');
+});
+
+test('a pool where every login is paused says so instead of asking for a new login', (t) => {
+  const original = serverInternals.accounts.splice(0);
+  t.after(() => {
+    serverInternals.accounts.splice(0, serverInternals.accounts.length, ...original);
+  });
+  const base = { cooldownUntil: 0, lastUsedAt: 0, headers: {}, failures: 0 };
+  serverInternals.accounts.push(
+    { ...base, id: 'paused-one', file: 'p1.json', config: { token: 'tok', cookie: 'ck' }, adminDisabled: true },
+    { ...base, id: 'off-in-file', file: 'p2.json', config: { token: 'tok', cookie: 'ck', enabled: false } },
+    { ...base, id: 'empty', file: 'p3.json', config: {} },
+  );
+  assert.throws(
+    () => serverInternals.selectAccountForSession(serverInternals.createSession()),
+    (err) => err.status === 503 && err.type === 'no_auth'
+      && /paused-one/.test(err.message) && /off-in-file/.test(err.message)
+      && /paused|disabled/i.test(err.message) && !/npm run auth/.test(err.message),
+  );
+});
+
+test('a pool with no credentials at all still points to the login commands', (t) => {
+  const original = serverInternals.accounts.splice(0);
+  t.after(() => {
+    serverInternals.accounts.splice(0, serverInternals.accounts.length, ...original);
+  });
+  serverInternals.accounts.push({ id: 'empty', file: 'e.json', config: {}, cooldownUntil: 0, lastUsedAt: 0, headers: {}, failures: 0 });
+  assert.throws(
+    () => serverInternals.selectAccountForSession(serverInternals.createSession()),
+    (err) => err.status === 503 && err.type === 'no_auth' && /npm run auth/.test(err.message),
+  );
+});
+
+function withPinPool(t, list) {
+  const original = serverInternals.accounts.splice(0);
+  t.after(() => { serverInternals.accounts.splice(0, serverInternals.accounts.length, ...original); });
+  const base = { cooldownUntil: 0, lastUsedAt: 0, headers: {}, failures: 0 };
+  serverInternals.accounts.push(...list.map(a => ({ ...base, file: `${a.id}.json`, config: { token: 't', cookie: 'c' }, ...a })));
+}
+
+test('a request pinned to an account is served by that account, not the least used one', (t) => {
+  withPinPool(t, [{ id: 'fresh', lastUsedAt: 0 }, { id: 'chosen', lastUsedAt: Date.now() }]);
+  const session = serverInternals.createSession();
+  const selected = serverInternals.selectAccountForSession(session, { pinnedAccountId: 'chosen' });
+  assert.equal(selected.id, 'chosen');
+  assert.equal(session.accountId, 'chosen');
+});
+
+test('pinning a different account drops the remote chat that belongs to the previous one', (t) => {
+  withPinPool(t, [{ id: 'one' }, { id: 'two' }]);
+  const session = serverInternals.createSession();
+  session.accountId = 'one';
+  session.id = 'remote-chat-of-one';
+  session.parentMessageId = 'p';
+  const selected = serverInternals.selectAccountForSession(session, { pinnedAccountId: 'two' });
+  assert.equal(selected.id, 'two');
+  assert.equal(session.id, null);
+  assert.equal(session.parentMessageId, null);
+});
+
+test('a pinned account that cannot serve fails loudly instead of switching to another login', (t) => {
+  withPinPool(t, [
+    { id: 'ok' },
+    { id: 'cooling', cooldownUntil: Date.now() + 90_000 },
+    { id: 'paused', adminDisabled: true },
+    { id: 'nokeys', config: {} },
+  ]);
+  const pick = (id) => () => serverInternals.selectAccountForSession(serverInternals.createSession(), { pinnedAccountId: id });
+  assert.throws(pick('cooling'), (e) => e.status === 429 && e.type === 'rate_limit' && e.retryAfter >= 89 && /cooling/.test(e.message));
+  assert.throws(pick('paused'), (e) => e.status === 409 && e.type === 'account_unavailable' && /paused/.test(e.message));
+  assert.throws(pick('nokeys'), (e) => e.status === 409 && e.type === 'account_unavailable' && /credentials/.test(e.message));
+  assert.throws(pick('ghost'), (e) => e.status === 404 && e.type === 'account_not_found' && /ghost/.test(e.message));
+});
+
+test('the admin account view shows the email from the auth file and nothing secret', () => {
+  const base = { id: 'acc', file: 'acc.json', cooldownUntil: 0, lastUsedAt: 0, headers: {}, failures: 0 };
+  const withEmail = serverInternals.adminAccountView({ ...base, config: { token: 'secret-token', cookie: 'a=1', email: 'me@example.com' } });
+  assert.equal(withEmail.email, 'me@example.com');
+  assert.doesNotMatch(JSON.stringify(withEmail), /secret-token|a=1/);
+  assert.equal(serverInternals.adminAccountView({ ...base, config: { token: 't', cookie: 'c' } }).email, null);
+  assert.equal(serverInternals.adminAccountView({ ...base, config: { token: 't', cookie: 'c', email: { nested: true } } }).email, null);
+});
+
+test('dashboardUrl points a browser at a reachable loopback address', () => {
+  const { dashboardUrl } = serverInternals;
+  assert.equal(dashboardUrl('127.0.0.1', 9655), 'http://127.0.0.1:9655/dashboard');
+  assert.equal(dashboardUrl('0.0.0.0', 9655), 'http://127.0.0.1:9655/dashboard');
+  assert.equal(dashboardUrl('::', 8080), 'http://127.0.0.1:8080/dashboard');
+  assert.equal(dashboardUrl('localhost', 1), 'http://localhost:1/dashboard');
+  assert.equal(dashboardUrl('::1', 2), 'http://[::1]:2/dashboard');
+  assert.equal(dashboardUrl('192.168.1.5', 3), 'http://192.168.1.5:3/dashboard');
+});
+
+test('dashboardEntry serves photos and video but never docs or paths outside the folder', () => {
+  const { dashboardEntry } = serverInternals;
+  assert.deepEqual(dashboardEntry('/dashboard/media-liftoff.mp4'), { file: 'media-liftoff.mp4', type: 'video/mp4', optional: true, media: true });
+  assert.equal(dashboardEntry('/dashboard/media-horizon.jpg').type, 'image/jpeg');
+  assert.equal(dashboardEntry('/dashboard/logo.png').type, 'image/png');
+  assert.ok(!dashboardEntry('/dashboard/app.css').media);
+  assert.ok(!dashboardEntry('/dashboard/core.js').media);
+  assert.equal(dashboardEntry('/dashboard/DESIGN.md'), null);
+  assert.equal(dashboardEntry('/dashboard/API.md'), null);
+  assert.equal(dashboardEntry('/dashboard/../server.js'), null);
+  assert.equal(dashboardEntry('/dashboard/.screens.jpg'), null);
+  assert.equal(dashboardEntry('/dashboard/x.jpeg'), null);
+});
+
+test('parseByteRange answers single byte ranges as RFC 7233 defines them', () => {
+  const { parseByteRange } = serverInternals;
+  assert.deepEqual(parseByteRange('bytes=0-99', 1000), { start: 0, end: 99 });
+  assert.deepEqual(parseByteRange('bytes=0-1', 1000), { start: 0, end: 1 });
+  assert.deepEqual(parseByteRange('bytes=500-', 1000), { start: 500, end: 999 });
+  assert.deepEqual(parseByteRange('bytes=-100', 1000), { start: 900, end: 999 });
+  assert.deepEqual(parseByteRange('bytes=-5000', 1000), { start: 0, end: 999 });
+  assert.deepEqual(parseByteRange('bytes=900-5000', 1000), { start: 900, end: 999 });
+  assert.equal(parseByteRange('bytes=1000-', 1000), null);
+  assert.equal(parseByteRange('bytes=5-2', 1000), null);
+  assert.equal(parseByteRange('bytes=-0', 1000), null);
+  assert.equal(parseByteRange('bytes=-', 1000), null);
+  assert.equal(parseByteRange('bytes=0-1,5-6', 1000), null);
+  assert.equal(parseByteRange('items=0-1', 1000), null);
+});
+
+test('browserOpenCommand uses the platform opener without a shell', () => {
+  const { browserOpenCommand } = serverInternals;
+  const url = 'http://127.0.0.1:9655/dashboard';
+  assert.deepEqual(browserOpenCommand('darwin', url), { cmd: 'open', args: [url] });
+  assert.deepEqual(browserOpenCommand('linux', url), { cmd: 'xdg-open', args: [url] });
+  assert.deepEqual(browserOpenCommand('win32', url), { cmd: 'rundll32', args: ['url.dll,FileProtocolHandler', url] });
 });
 
 test('every paused login leaves no account that can serve', (t) => {

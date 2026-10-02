@@ -1,834 +1,482 @@
-'use strict';
-// FreeDeepseekAPI account dashboard. Vanilla JS, no dependencies.
-// Every piece of server data reaches the page through textContent or attributes,
-// never innerHTML. Data: GET /admin/accounts. Actions: POST /admin/accounts/:id/
-// {disable,enable,clear-cooldown} and POST /admin/accounts/reload.
+// FreeDeepseekAPI dashboard: shell. Router, toolbar, sidebar, command palette,
+// keyboard shortcuts and boot. Loaded last; every view is registered by now.
 (() => {
-  const KEY_STORAGE = 'freedeepseek.proxyKey';
-  const POLL_MS = 5000;
-  const MAX_BACKOFF_MS = 30000;
-  const REQUEST_TIMEOUT_MS = 10000;
-  const TOAST_MS = 6000;
+  'use strict';
 
-  const STATUS_LABEL = {
-    ready: 'Ready',
-    busy: 'Busy',
-    cooldown: 'Cooling down',
-    disabled: 'Disabled',
-    no_credentials: 'No credentials',
-  };
-  const REASON_LABEL = { rate_limit: 'Rate limited', auth: 'Login rejected' };
-  const ERROR_KIND_LABEL = { rate_limit: 'Rate limit', auth: 'Auth', upstream: 'Upstream' };
-  const STATUSES = Object.keys(STATUS_LABEL);
-
+  const F = window.FDSA;
+  const { h, fmt } = F;
+  const VIEWS = ['chat', 'status', 'accounts', 'usage', 'requests', 'settings'];
   const $ = (id) => document.getElementById(id);
-  const el = {
-    updated: $('updated'),
-    auto: $('auto'),
-    refresh: $('refresh'),
-    forgetKey: $('forget-key'),
-    reload: $('reload'),
-    headline: $('headline'),
-    headlineSub: $('headline-sub'),
-    strip: $('strip'),
-    legend: $('legend'),
-    banner: $('banner'),
-    bannerIcon: $('banner-icon'),
-    bannerTitle: $('banner-title'),
-    bannerBody: $('banner-body'),
-    bannerRetry: $('banner-retry'),
-    gateKey: $('gate-key'),
-    gateKeyBody: $('gate-key-body'),
-    keyForm: $('key-form'),
-    keyInput: $('key'),
-    gateForbidden: $('gate-forbidden'),
-    accounts: $('accounts'),
-    table: $('table'),
-    rows: $('rows'),
-    empty: $('empty'),
-    emptyReload: $('empty-reload'),
-    toasts: $('toasts'),
-    rowTemplate: $('row-template'),
-  };
 
-  const state = {
-    data: null,          // last good { now, pool, accounts }
-    offsetMs: 0,         // server clock minus client clock
-    lastOkAt: 0,         // client time of the last good response
-    gate: null,          // null | 'key' | 'forbidden'
-    keyRejected: false,
-    error: null,         // { message } while the last poll failed
-    failStreak: 0,
-    inFlight: null,
-    pollTimer: null,
-    expiryRefreshAt: 0,
-  };
-  const rowsById = new Map();
-  const pending = new Set(); // account ids with an action in flight
-  let rowSerial = 0;
+  const app = { view: null, route: null };
 
-  // ---------- Formatting ----------
-
-  const serverNow = () => Date.now() + state.offsetMs;
-  const pad = (n) => String(n).padStart(2, '0');
-
-  function clockTime(ms) {
-    const d = new Date(ms - state.offsetMs);
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  // ---------------------------------------------------------------- mount views
+  for (const name of VIEWS) {
+    const v = F.views[name];
+    if (!v) throw new Error(`Dashboard view "${name}" did not load. Check that public/dashboard/${name}.js is served.`);
+    v.mount($(`view-${name}`));
   }
 
-  function fullTime(ms) {
-    return new Date(ms - state.offsetMs).toLocaleString();
+  // ---------------------------------------------------------------- router
+  function route() {
+    if (F._suppressRoute) return;
+    const r = F.parseHash();
+    if (!r.view) {
+      let last = null;
+      try { last = localStorage.getItem('fdsa.lastRoute'); } catch (e) { /* preference only */ }
+      const lastView = last && F.parseHash(last).view;
+      history.replaceState(null, '', VIEWS.includes(lastView) ? last : '#/chat');
+      return route();
+    }
+    if (!VIEWS.includes(r.view)) {
+      F.toast(`Unknown page #/${r.view}`, { tone: 'warn' });
+      history.replaceState(null, '', '#/chat');
+      return route();
+    }
+    try { localStorage.setItem('fdsa.lastRoute', location.hash); } catch (e) { /* preference only */ }
+    if (r.view === 'chat') app.lastChatHash = location.hash;
+    F.closePopover(false);
+    F.hideTooltip();
+    F.charts.hideTip();
+    closeChatsSheet();
+    const changed = app.view !== r.view;
+    if (changed && app.view) {
+      F.views[app.view].hide();
+      // The chat stays on screen behind the settings window.
+      if (app.view !== 'chat') $(`view-${app.view}`).hidden = true;
+    }
+    const wasSettings = Boolean(app.view) && app.view !== 'chat';
+    app.view = r.view;
+    app.route = r;
+    const el = $(`view-${r.view}`);
+    el.hidden = false;
+    document.getElementById('app').dataset.view = r.view;
+    // Everything except the chat lives in the settings window; the shared toolbar
+    // (title, Live, view actions) moves with the view.
+    const inSettings = r.view !== 'chat';
+    $('settings-layer').hidden = !inSettings;
+    document.body.classList.toggle('settings-open', inSettings);
+    if (inSettings) $('settings-pane').prepend($('toolbar'));
+    else $('main').prepend($('toolbar'));
+    if (inSettings && !wasSettings) requestAnimationFrame(() => $('settings-modal').focus({ preventScroll: true }));
+    if (changed) $('scroll').scrollTop = 0;
+    for (const a of document.querySelectorAll('[data-nav]')) {
+      if (a.dataset.nav === r.view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    }
+    F.views[r.view].show(r);
+    renderToolbar();
+    document.title = `${titleFor(r.view)} · FreeDeepseekAPI`;
+  }
+  window.addEventListener('hashchange', route);
+
+  // ---------------------------------------------------------------- settings window
+  function closeSettings() {
+    if (app.view === 'chat') return false;
+    location.hash = app.lastChatHash || '#/chat';
+    return true;
+  }
+  $('settings-close').addEventListener('click', closeSettings);
+  $('settings-backdrop').addEventListener('click', closeSettings);
+  $('settings-search').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    let any = false;
+    for (const list of document.querySelectorAll('.settings-nav .nav-list')) {
+      let shown = 0;
+      for (const li of list.children) {
+        const hit = !q || li.textContent.toLowerCase().includes(q);
+        li.hidden = !hit;
+        if (hit) shown++;
+      }
+      list.hidden = !shown;
+      list.previousElementSibling.hidden = !shown;
+      if (shown) any = true;
+    }
+    $('settings-nav-empty').hidden = any;
+  });
+
+  function titleFor(view) {
+    const t = F.views[view].title;
+    return typeof t === 'function' ? t() : t;
   }
 
-  function duration(totalSec) {
-    const s = Math.max(0, Math.ceil(totalSec));
-    if (s < 60) return `${s}s`;
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    if (h > 0) return `${h}h ${pad(m)}m`;
-    return `${m}m ${pad(sec)}s`;
+  // ---------------------------------------------------------------- toolbar
+  function renderToolbar() {
+    const v = F.views[app.view];
+    const title = $('view-title');
+    if (!title.querySelector('input')) title.textContent = titleFor(app.view);
+    const actions = v.actions ? v.actions() : [];
+    $('toolbar-actions').replaceChildren(...actions);
   }
+  F.on('chat-title', () => {
+    if (app.view !== 'chat') return;
+    renderToolbar();
+    document.title = `${titleFor('chat')} · FreeDeepseekAPI`;
+  });
 
-  function ago(ms) {
-    const s = Math.max(0, Math.round((serverNow() - ms) / 1000));
-    if (s < 5) return 'just now';
-    if (s < 60) return `${s}s ago`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 48) return `${h}h ago`;
-    return `${Math.floor(h / 24)}d ago`;
-  }
 
-  function compact(n) {
-    const v = Number(n) || 0;
-    if (v < 1000) return String(v);
-    if (v < 1e6) return `${(v / 1000).toFixed(v < 10000 ? 1 : 0)}k`;
-    return `${(v / 1e6).toFixed(1)}M`;
-  }
 
-  function usd(n) {
-    const v = Number(n) || 0;
-    if (v === 0) return '$0';
-    if (v < 0.01) return '<$0.01';
-    return `$${v.toFixed(2)}`;
-  }
 
-  function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
 
-  function setTime(node, ms, text) {
-    if (ms) {
-      node.dateTime = new Date(ms - state.offsetMs).toISOString();
-      node.title = fullTime(ms);
+  // ---------------------------------------------------------------- stale banner + pool signal
+  function renderBanner() {
+    const slot = $('banner-slot');
+    const s = F.store;
+    const v = F.views[app.view];
+    slot.replaceChildren();
+    if (!s.error || !v || !v.live) return;
+    const retry = F.btn('Retry', { size: 'sm', icon: 'reload', onclick: () => F.refresh() });
+    if (s.error.type === 'network') {
+      slot.append(F.notice('crit', `Can't reach the proxy at ${location.host}.`, `${s.error.message} Data below is from ${s.lastOkAt ? fmt.time(s.lastOkAt) : 'nowhere yet'}.`, [retry]));
     } else {
-      node.removeAttribute('datetime');
-      node.removeAttribute('title');
+      slot.append(F.notice('warn', `${s.error.endpoint || 'GET /admin/accounts'} failed${s.error.status ? ` with HTTP ${s.error.status}` : ''}`, F.errorText(s.error), [retry]));
     }
-    node.textContent = text;
-  }
-
-  // ---------- API ----------
-
-  class ApiError extends Error {
-    constructor(message, { status = 0, type = null, body = null } = {}) {
-      super(message);
-      this.status = status;
-      this.type = type;
-      this.body = body;
+    if (s.error.status === 403 && s.error.type === 'cors_error') {
+      slot.lastChild.append(h('p', { class: 'meta', text: `Add ${location.origin} to PROXY_CORS_ORIGINS where the proxy runs.` }));
     }
   }
 
-  function storedKey() {
-    try { return sessionStorage.getItem(KEY_STORAGE) || ''; } catch (e) { return ''; }
-  }
-
-  async function api(method, path) {
-    const headers = { Accept: 'application/json' };
-    const key = storedKey();
-    if (key) headers.Authorization = `Bearer ${key}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    let res;
-    try {
-      res = await fetch(path, { method, headers, cache: 'no-store', credentials: 'omit', signal: controller.signal });
-    } catch (e) {
-      const message = e.name === 'AbortError'
-        ? `The proxy did not answer within ${REQUEST_TIMEOUT_MS / 1000}s.`
-        : 'Could not reach the proxy. Is it still running?';
-      throw new ApiError(message);
-    } finally {
-      clearTimeout(timer);
-    }
-    let body = null;
-    try { body = await res.json(); } catch (e) { body = null; }
-    if (!res.ok) {
-      const message = body?.error?.message || `The proxy answered HTTP ${res.status}.`;
-      throw new ApiError(message, { status: res.status, type: body?.error?.type || null, body });
-    }
-    if (!body || typeof body !== 'object') {
-      throw new ApiError('The proxy sent a response that is not JSON.', { status: res.status });
-    }
-    return body;
-  }
-
-  // Maps auth failures to the right gate. Returns true when the error was a gate.
-  function handleGateError(error) {
-    if (error.status === 401) {
-      state.keyRejected = Boolean(storedKey());
-      state.gate = 'key';
-      render();
-      return true;
-    }
-    if (error.status === 403 && error.type === 'admin_forbidden') {
-      state.gate = 'forbidden';
-      render();
-      return true;
-    }
-    return false;
-  }
-
-  // ---------- Polling ----------
-
-  function nextDelay() {
-    if (state.failStreak === 0) return POLL_MS;
-    return Math.min(MAX_BACKOFF_MS, POLL_MS * 2 ** state.failStreak);
-  }
-
-  function schedule(delay = nextDelay()) {
-    clearTimeout(state.pollTimer);
-    state.pollTimer = null;
-    if (!el.auto.checked || document.visibilityState !== 'visible') return;
-    if (state.gate) return; // waiting for a key or an env change; no point polling
-    state.pollTimer = setTimeout(() => refresh(), delay);
-  }
-
-  function refresh() {
-    if (state.inFlight) return state.inFlight;
-    clearTimeout(state.pollTimer);
-    state.inFlight = (async () => {
-      try {
-        const data = await api('GET', '/admin/accounts');
-        accept(data, data.now);
-        state.gate = null;
-        state.keyRejected = false;
-        state.error = null;
-        state.failStreak = 0;
-      } catch (error) {
-        if (!handleGateError(error)) {
-          state.error = { message: error.message, status: error.status };
-          state.failStreak += 1;
-        }
-      } finally {
-        state.inFlight = null;
-        render();
-        schedule();
-      }
-    })();
-    return state.inFlight;
-  }
-
-  function accept(data, now) {
-    if (typeof now === 'number') state.offsetMs = now - Date.now();
-    state.data = { pool: data.pool, accounts: Array.isArray(data.accounts) ? data.accounts : [] };
-    state.lastOkAt = Date.now();
-  }
-
-  // ---------- Actions ----------
-
-  const ACTION_COPY = {
-    disable: { pending: 'Disabling…', done: 'Disabled' },
-    enable: { pending: 'Enabling…', done: 'Enabled' },
-    'clear-cooldown': { pending: 'Clearing…', done: 'Cleared cooldown for' },
+  // ---------------------------------------------------------------- account switcher
+  // ChatGPT-style account row at the foot of the sidebar. The chosen account serves the
+  // dashboard chat (x-account-id); "Automatic" lets the pool pick. Agents and API clients
+  // are never affected.
+  const ACCOUNT_KEY = 'fdsa.chatAccount';
+  F.chatAccount = {
+    get() { try { return localStorage.getItem(ACCOUNT_KEY) || ''; } catch (e) { return ''; } },
+    set(id) {
+      try { if (id) localStorage.setItem(ACCOUNT_KEY, id); else localStorage.removeItem(ACCOUNT_KEY); }
+      catch (e) { F.toast(`Could not save the chat account: ${e.name}`, { tone: 'error' }); }
+      renderPool();
+      F.emit('chat-account', id);
+    },
   };
-
-  async function runAction(account, action, button) {
-    if (pending.has(account.id)) return;
-    pending.add(account.id);
-    const originalLabel = button.textContent;
-    button.textContent = ACTION_COPY[action].pending;
-    button.setAttribute('aria-busy', 'true');
-    syncRowButtons(account.id);
-    try {
-      const result = await api('POST', `/admin/accounts/${encodeURIComponent(account.id)}/${action}`);
-      if (state.data && result.account) {
-        const i = state.data.accounts.findIndex(a => a.id === result.account.id);
-        if (i >= 0) state.data.accounts[i] = result.account;
-        state.data.pool = result.pool;
-      }
-      toast({ title: `${ACTION_COPY[action].done} ${account.name || account.id}.` });
-    } catch (error) {
-      if (!handleGateError(error)) {
-        toast({ title: `Could not ${action.replace('-', ' ')} ${account.id}.`, body: error.message, tone: 'error' });
-        if (error.status === 404) refresh();
-      }
-    } finally {
-      pending.delete(account.id);
-      button.removeAttribute('aria-busy');
-      button.textContent = originalLabel;
-      render();
-      // Clear cooldown hides its own button; keep keyboard focus in the row.
-      if (action === 'clear-cooldown' && button.hidden) rowsById.get(account.id)?.toggle.focus();
-    }
+  const initials = (name) => {
+    const words = String(name || '?').replace(/[_.-]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+    const letters = words.length > 1 ? words[0][0] + words[1][0] : String(words[0] || '?').slice(0, 2);
+    return letters.toUpperCase();
+  };
+  // Stable hue per account id, so an account keeps its colour across reloads.
+  const hueOf = (id) => { let x = 0; for (const c of String(id)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x % 360; };
+  F.avatar = (account, cls = '') => {
+    const el = h('span', { class: ['avatar', cls], 'aria-hidden': 'true' });
+    paintAvatar(el, account);
+    return el;
+  };
+  function paintAvatar(el, account) {
+    el.classList.remove('is-add', 'is-auto');
+    el.replaceChildren();
+    if (account === 'add') { el.classList.add('is-add'); el.append(F.icon('plus')); return; }
+    if (account === 'auto') { el.classList.add('is-auto'); el.append(F.icon('auto')); return; }
+    el.style.setProperty('--avatar-h', String(hueOf(account.id)));
+    el.textContent = initials(account.name || account.id);
   }
-
-  async function reloadAccounts(trigger) {
-    const buttons = [el.reload, el.emptyReload];
-    for (const b of buttons) { b.disabled = true; }
-    trigger.setAttribute('aria-busy', 'true');
-    const label = trigger.querySelector('.btn-label');
-    if (label) label.textContent = 'Reloading…';
-    try {
-      const result = await api('POST', '/admin/accounts/reload');
-      accept(result, null);
-      state.error = null;
-      const parts = [];
-      parts.push(result.added.length ? `Added ${result.added.join(', ')}.` : 'No new accounts.');
-      if (result.removed.length) parts.push(`Removed ${result.removed.join(', ')}.`);
-      if (result.errors.length) {
-        parts.push(`Skipped ${result.errors.map(e => `${e.file} (${e.message})`).join(', ')}.`);
-      }
-      toast({
-        title: `Reloaded ${plural(result.accounts.length, 'account', 'accounts')}.`,
-        body: parts.join(' '),
-        tone: result.errors.length ? 'error' : null,
-      });
-    } catch (error) {
-      if (!handleGateError(error)) {
-        const skipped = Array.isArray(error.body?.error?.errors) && error.body.error.errors.length
-          ? ` Files: ${error.body.error.errors.map(e => `${e.file} (${e.message})`).join(', ')}.`
-          : '';
-        toast({ title: 'Could not reload accounts.', body: `${error.message}${skipped}`, tone: 'error' });
-      }
-    } finally {
-      for (const b of buttons) { b.disabled = false; }
-      trigger.removeAttribute('aria-busy');
-      if (label) label.textContent = 'Reload accounts';
-      render();
-    }
-  }
-
-  // ---------- Toasts ----------
-
-  function toast({ title, body = '', tone = null }) {
-    const node = document.createElement('div');
-    node.className = 'toast';
-    if (tone) {
-      node.dataset.tone = tone;
-      node.setAttribute('role', 'alert');
-    }
-    const copy = document.createElement('div');
-    copy.className = 'toast-copy';
-    const t = document.createElement('p');
-    t.className = 'toast-title';
-    t.textContent = title;
-    copy.append(t);
-    if (body) {
-      const b = document.createElement('p');
-      b.className = 'toast-body';
-      b.textContent = body;
-      copy.append(b);
-    }
-    const close = document.createElement('button');
-    close.type = 'button';
-    close.className = 'toast-close';
-    close.setAttribute('aria-label', 'Dismiss');
-    close.append(svgIcon('close'));
-    node.append(copy, close);
-
-    let timer = null;
-    const dismiss = () => { clearTimeout(timer); node.remove(); };
-    const arm = () => { clearTimeout(timer); timer = setTimeout(dismiss, tone === 'error' ? TOAST_MS * 2 : TOAST_MS); };
-    close.addEventListener('click', dismiss);
-    // Hovering or focusing a toast keeps it open long enough to read.
-    node.addEventListener('mouseenter', () => clearTimeout(timer));
-    node.addEventListener('mouseleave', arm);
-    node.addEventListener('focusin', () => clearTimeout(timer));
-    node.addEventListener('focusout', arm);
-    el.toasts.append(node);
-    while (el.toasts.children.length > 4) el.toasts.firstElementChild.remove();
-    arm();
-  }
-
-  function svgIcon(name) {
-    const ns = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('class', 'icon');
-    svg.setAttribute('aria-hidden', 'true');
-    const use = document.createElementNS(ns, 'use');
-    use.setAttribute('href', `#i-${name}`);
-    svg.append(use);
-    return svg;
-  }
-
-  // ---------- Rendering ----------
-
-  function render() {
-    renderMasthead();
-    renderGates();
-    renderPool();
-    renderBanner();
-    renderTable();
-  }
-
-  function renderMasthead() {
-    const stale = Boolean(state.error) && Boolean(state.data);
-    if (state.lastOkAt) {
-      const at = new Date(state.lastOkAt);
-      const hhmmss = `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
-      el.updated.textContent = stale ? `Stale since ${hhmmss}` : `Updated ${hhmmss}`;
-    } else {
-      el.updated.textContent = state.gate ? '' : (state.error ? 'Not loaded' : 'Loading…');
-    }
-    el.updated.classList.toggle('is-stale', stale);
-    el.refresh.hidden = el.auto.checked || Boolean(state.error);
-    el.forgetKey.hidden = !storedKey();
-    el.auto.closest('.switch').hidden = Boolean(state.gate);
-    // The empty state carries its own Reload button; one is enough.
-    el.reload.hidden = Boolean(state.gate) || state.data?.accounts.length === 0;
-  }
-
-  function renderGates() {
-    const enteringKeyGate = state.gate === 'key' && el.gateKey.hidden;
-    el.gateKey.hidden = state.gate !== 'key';
-    el.gateForbidden.hidden = state.gate !== 'forbidden';
-    if (state.gate === 'key') {
-      el.gateKeyBody.textContent = state.keyRejected
-        ? 'The proxy rejected that key. Check PROXY_API_KEY and enter it again.'
-        : 'This proxy has PROXY_API_KEY set, so the admin API needs it as a Bearer token.';
-      el.gateKeyBody.classList.toggle('error-line', state.keyRejected);
-      el.keyInput.setAttribute('aria-invalid', String(state.keyRejected));
-      if (enteringKeyGate) el.keyInput.focus();
-    }
-  }
-
-  function poolSummary() {
-    const pool = state.data?.pool;
-    if (!pool) return null;
-    const nextInSec = pool.next_ready_at ? Math.max(0, (pool.next_ready_at - serverNow()) / 1000) : null;
-    return { ...pool, nextInSec };
-  }
+  const accountStateText = (a) => {
+    if (a.status === 'cooldown') return `Cooling down · ${fmt.clock(F.cooldownLeft(a))}`;
+    return { ready: 'Ready', busy: 'Busy', disabled: 'Paused', no_credentials: 'No credentials' }[a.status] || a.status;
+  };
 
   function renderPool() {
-    const pool = poolSummary();
-    const section = el.headline.parentElement;
-    section.hidden = Boolean(state.gate) || (pool !== null && pool.total === 0);
-    section.classList.toggle('is-stale', Boolean(state.error) && Boolean(pool));
-    el.legend.hidden = !pool;
-    if (!pool) {
-      el.headline.textContent = state.error ? 'Account status unavailable' : 'Loading accounts…';
-      el.headlineSub.textContent = '';
-      renderStrip(null);
-      return;
-    }
-    const { total, can_serve: canServe } = pool;
-    let headline;
-    if (total === 0) headline = 'No accounts loaded';
-    else if (canServe === total) headline = total === 1 ? 'The account can take requests' : total === 2 ? 'Both accounts can take requests' : `All ${total} accounts can take requests`;
-    else if (canServe === 0) headline = total === 1 ? 'The account cannot take requests' : total === 2 ? 'Neither account can take requests' : `None of ${total} accounts can take requests`;
-    else headline = `${canServe} of ${plural(total, 'account', 'accounts')} can take requests`;
-    el.headline.textContent = headline;
-
-    const sub = [];
-    if (pool.nextInSec !== null) {
-      sub.push(pool.cooldown === 1
-        ? `One is cooling down, back in ${duration(pool.nextInSec)}.`
-        : `${pool.cooldown} are cooling down; the first is back in ${duration(pool.nextInSec)}.`);
-    }
-    if (pool.busy > 0) sub.push(`${plural(pool.busy, 'login is', 'logins are')} serving a request.`);
-    el.headlineSub.textContent = sub.join(' ');
-
-    for (const status of STATUSES) {
-      const count = pool[status] || 0;
-      const item = el.legend.querySelector(`[data-status="${status}"]`);
-      item.querySelector('strong').textContent = String(count);
-      item.classList.toggle('is-zero', count === 0);
-    }
-    renderStrip(state.data.accounts);
-  }
-
-  function cooldownProgress(account) {
-    // Progress needs a start time. The cooldown starts when last_error is recorded
-    // with the same kind; without that pairing no bar is drawn rather than a guess.
-    const until = account.cooldown_until;
-    const err = account.last_error;
-    if (!until || !err || !err.at || err.kind !== account.cooldown_reason || err.at >= until) return null;
-    const p = (serverNow() - err.at) / (until - err.at);
-    return Math.min(1, Math.max(0, p));
-  }
-
-  function renderStrip(accounts) {
-    if (!accounts) {
-      if (el.strip.childElementCount === 0) {
-        for (let i = 0; i < 3; i++) {
-          const seg = document.createElement('span');
-          seg.className = 'segment is-skeleton';
-          el.strip.append(seg);
-        }
+    const sig = F.poolSignal();
+    const data = F.store.accounts;
+    const btn = $('account-switch');
+    const avatar = $('account-avatar');
+    const name = $('account-name');
+    const sub = $('account-sub');
+    const pinned = F.chatAccount.get();
+    btn.className = 'account-switch';
+    if (!data) {
+      paintAvatar(avatar, 'auto');
+      name.textContent = sig.text;
+      sub.textContent = '';
+    } else if (!data.accounts.length) {
+      paintAvatar(avatar, 'add');
+      name.textContent = 'Add account';
+      sub.textContent = 'No DeepSeek login yet';
+      btn.classList.add('is-empty');
+    } else if (pinned) {
+      const a = data.accounts.find(x => x.id === pinned);
+      if (a) {
+        paintAvatar(avatar, a);
+        name.textContent = a.name || a.id;
+        sub.textContent = a.email || accountStateText(a);
+        if (a.status === 'cooldown') btn.classList.add('is-warn');
+        if (a.status === 'disabled' || a.status === 'no_credentials') btn.classList.add('is-crit');
+      } else {
+        paintAvatar(avatar, { id: pinned, name: pinned });
+        name.textContent = pinned;
+        sub.textContent = 'Not loaded · chat will fail';
+        btn.classList.add('is-crit');
       }
-      el.strip.setAttribute('aria-label', state.error ? 'Account status unavailable' : 'Loading');
-      return;
+    } else {
+      paintAvatar(avatar, 'auto');
+      name.textContent = 'Automatic';
+      sub.textContent = sig.text;
+      if (sig.tone) btn.classList.add(`is-${sig.tone}`);
     }
-    const rank = (a) => { const i = STATUSES.indexOf(a.status); return i < 0 ? STATUSES.length : i; };
-    const ordered = [...accounts].sort((a, b) => rank(a) - rank(b) || (a.cooldown_until || 0) - (b.cooldown_until || 0));
-    while (el.strip.childElementCount > ordered.length) el.strip.lastElementChild.remove();
-    while (el.strip.childElementCount < ordered.length) el.strip.append(document.createElement('span'));
-    ordered.forEach((account, i) => {
-      const seg = el.strip.children[i];
-      seg.className = 'segment';
-      seg.dataset.status = account.status;
-      const p = account.status === 'cooldown' ? cooldownProgress(account) : null;
-      if (p === null) seg.style.removeProperty('--p');
-      else seg.style.setProperty('--p', p.toFixed(3));
-      seg.title = `${account.name}: ${STATUS_LABEL[account.status] || account.status}`;
-    });
-    const counts = STATUSES.filter(s => state.data.pool[s]).map(s => `${state.data.pool[s]} ${STATUS_LABEL[s].toLowerCase()}`);
-    el.strip.setAttribute('aria-label', counts.length ? `Pool: ${counts.join(', ')}` : 'Pool is empty');
+    const label = `Chat account: ${name.textContent}${sub.textContent ? `, ${sub.textContent}` : ''}`;
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('data-tip', label);
+    F.setLamp($('tab-pool-lamp'), sig.state);
+    $('tab-pool-lamp').classList.toggle(`is-${sig.tone}`, Boolean(sig.tone));
   }
 
-  function showBanner({ tone, icon, title, body = '', retry = false }) {
-    el.banner.hidden = false;
-    el.banner.dataset.tone = tone;
-    el.bannerIcon.setAttribute('href', `#i-${icon}`);
-    el.bannerTitle.textContent = title;
-    el.bannerBody.textContent = body;
-    el.bannerRetry.hidden = !retry;
+  function openAddAccount(trigger) {
+    if (!F.views.accounts.openAdd) throw new Error('The Accounts view did not register openAdd().');
+    F.views.accounts.openAdd(trigger);
   }
 
-  function renderBanner() {
-    if (state.gate) { el.banner.hidden = true; return; }
-    if (state.error) {
-      const retryIn = el.auto.checked && document.visibilityState === 'visible'
-        ? ` Trying again in ${Math.round(nextDelay() / 1000)}s.`
-        : '';
-      const since = state.lastOkAt ? new Date(state.lastOkAt) : null;
-      showBanner({
-        tone: 'stale',
-        icon: 'alert',
-        title: state.error.message,
-        body: since
-          ? `The table shows the last data received at ${pad(since.getHours())}:${pad(since.getMinutes())}:${pad(since.getSeconds())}.${retryIn}`
-          : `No account data yet.${retryIn}`,
-        retry: true,
-      });
-      return;
-    }
-    const pool = poolSummary();
-    if (pool && pool.total > 0 && pool.can_serve === 0 && pool.cooldown > 0 && pool.next_ready_at) {
-      showBanner({
-        tone: 'cooldown',
-        icon: 'cooldown',
-        title: `All accounts are cooling down. Requests get 429 until ${clockTime(pool.next_ready_at)} (in ${duration(pool.nextInSec)}).`,
-        body: 'Clients receive Retry-After and can back off. Clear a cooldown only if you know the limit has lifted; DeepSeek may limit the login again.',
-      });
-      return;
-    }
-    if (pool && pool.total > 0 && pool.can_serve === 0) {
-      const accounts = state.data.accounts;
-      const paused = accounts.filter(a => a.status === 'disabled' && a.disabled_by === 'admin').length;
-      const offInFile = accounts.filter(a => a.status === 'disabled' && a.disabled_by === 'file').length;
-      const why = [];
-      if (paused) why.push(`${paused} paused from this page`);
-      if (offInFile) why.push(`${offInFile} off in ${offInFile === 1 ? 'its auth file' : 'their auth files'}`);
-      if (pool.no_credentials) why.push(`${pool.no_credentials} without a token or cookie`);
-      const fixes = [];
-      if (paused) fixes.push(paused === 1 ? 'enable the paused account below' : 'enable a paused account below');
-      if (offInFile) fixes.push('set "enabled": true in an auth file, then reload accounts');
-      if (pool.no_credentials) fixes.push('import a fresh login with npm run auth:import, then reload accounts');
-      const advice = fixes.map((f, i) => `${i === 0 ? f[0].toUpperCase() + f.slice(1) : `Or ${f}`}.`);
-      showBanner({
-        tone: 'error',
-        icon: 'alert',
-        title: 'No account can take requests. The proxy answers 503.',
-        body: `${plural(pool.total, 'account', 'accounts')}: ${why.join(', ')}. ${advice.join(' ')}`,
-      });
-      return;
-    }
-    el.banner.hidden = true;
-  }
-
-  function renderTable() {
-    const hasData = Boolean(state.data);
-    const empty = hasData && state.data.accounts.length === 0;
-    el.accounts.hidden = Boolean(state.gate) || empty || (!hasData && Boolean(state.error));
-    el.empty.hidden = Boolean(state.gate) || !empty;
-    el.accounts.classList.toggle('is-stale', Boolean(state.error) && hasData);
-    el.table.setAttribute('aria-busy', String(!hasData));
-    if (!hasData) { renderSkeleton(); return; }
-    el.rows.querySelectorAll('.skeleton').forEach(n => n.remove());
-
-    const seen = new Set();
-    state.data.accounts.forEach((account, index) => {
-      seen.add(account.id);
-      let row = rowsById.get(account.id);
-      if (!row) {
-        row = createRow(account.id);
-        rowsById.set(account.id, row);
-      }
-      const at = el.rows.children[index];
-      if (at !== row.tr) el.rows.insertBefore(row.tr, at || null);
-      updateRow(row, account);
-    });
-    for (const [id, row] of rowsById) {
-      if (!seen.has(id)) { row.tr.remove(); rowsById.delete(id); }
-    }
-  }
-
-  function renderSkeleton() {
-    if (el.rows.querySelector('.skeleton')) return;
-    // One bone per column of the table header.
-    const widths = [['60%', '70%', '40%', '30%', '80%', '60%', '50%', '70%'], ['55%', '60%', '30%', '30%', '65%', '55%', '45%', '70%'], ['65%', '75%', '35%', '30%', '70%', '50%', '55%', '70%']];
-    for (const row of widths) {
-      const tr = document.createElement('tr');
-      tr.className = 'skeleton';
-      tr.setAttribute('aria-hidden', 'true');
-      for (const w of row) {
-        const td = document.createElement('td');
-        const bone = document.createElement('span');
-        bone.className = 'bone';
-        bone.style.setProperty('width', w);
-        td.append(bone);
-        tr.append(td);
-      }
-      el.rows.append(tr);
-    }
-  }
-
-  function createRow(id) {
-    const tr = el.rowTemplate.content.firstElementChild.cloneNode(true);
-    const q = (sel) => tr.querySelector(sel);
-    const row = {
-      id,
-      tr,
-      badgeUse: q('.badge use'),
-      badgeText: q('.badge-text'),
-      statusDetail: q('.status-detail'),
-      name: q('.acct-name'),
-      acctId: q('.acct-id'),
-      countdown: q('.countdown'),
-      coolBar: q('.cool-bar'),
-      coolBarFill: q('.cool-bar-fill'),
-      cooldownCell: q('.c-cooldown'),
-      errorCell: q('.c-error'),
-      cooldownDetail: q('.cooldown-detail'),
-      failRun: q('.fail-run'),
-      failTotal: q('.fail-total'),
-      errorNone: q('.error-none'),
-      errorDetails: q('.error-details'),
-      errorKind: q('.error-kind'),
-      errorWhen: q('.error-when'),
-      errorPreview: q('.error-preview'),
-      errorMessage: q('.error-message'),
-      successLine: q('.activity-success'),
-      successLabel: q('.activity-success .activity-label'),
-      successAt: q('.success-at'),
-      usedLine: q('.activity-used'),
-      usedLabel: q('.activity-used .activity-label'),
-      usedAt: q('.used-at'),
-      usageRequests: q('.usage-requests'),
-      usageTokens: q('.usage-tokens'),
-      usageCost: q('.usage-cost'),
-      toggle: q('.act-toggle'),
-      clear: q('.act-clear'),
-      note: q('.act-note'),
-      account: null,
+  function openAccountMenu(trigger) {
+    const data = F.store.accounts;
+    if (data && !data.accounts.length) { openAddAccount(trigger); return; }
+    const pinned = F.chatAccount.get();
+    const list = h('div', { class: 'menu account-menu', role: 'menu', 'aria-label': 'Chat account' });
+    const item = (avatarFor, title, detail, checked, run, extra = {}) => {
+      const b = h('button', { type: 'button', role: extra.radio === false ? 'menuitem' : 'menuitemradio', class: ['menu-item', 'account-item', extra.cls], 'aria-checked': extra.radio === false ? null : String(checked) },
+        F.avatar(avatarFor, 'avatar-sm'),
+        h('span', { class: 'account-text' }, h('span', { class: 'account-name', text: title }), detail ? h('span', { class: 'account-sub', text: detail }) : null),
+        checked ? F.icon('check', 'account-check') : null);
+      b.addEventListener('click', () => { F.closePopover(); run(); });
+      return b;
     };
-    row.note.id = `note-${++rowSerial}`;
-    row.toggle.setAttribute('aria-describedby', row.note.id);
-    row.toggle.addEventListener('click', () => {
-      const a = row.account;
-      if (!a || row.toggle.getAttribute('aria-disabled') === 'true') return;
-      runAction(a, a.disabled_by === 'admin' ? 'enable' : 'disable', row.toggle);
-    });
-    row.clear.addEventListener('click', () => {
-      if (!row.account || row.clear.getAttribute('aria-disabled') === 'true') return;
-      runAction(row.account, 'clear-cooldown', row.clear);
-    });
-    return row;
-  }
-
-  function statusDetail(account) {
-    switch (account.status) {
-      case 'busy': {
-        const who = account.busy_agent ? `Serving ${account.busy_agent}` : 'Serving a request';
-        return account.busy_since ? `${who} for ${duration((serverNow() - account.busy_since) / 1000)}` : who;
+    if (data) {
+      list.append(item('auto', 'Automatic', `Pool picks · ${F.poolSignal().text}`, !pinned, () => F.chatAccount.set('')));
+      for (const a of data.accounts) {
+        const tone = a.status === 'cooldown' ? 'is-warn' : (a.status === 'disabled' || a.status === 'no_credentials') ? 'is-crit' : null;
+        list.append(item(a, a.name || a.id, a.email ? `${a.email} · ${accountStateText(a)}` : accountStateText(a), pinned === a.id, () => F.chatAccount.set(a.id), { cls: tone }));
       }
-      case 'disabled':
-        return account.disabled_by === 'file' ? 'Off in its auth file. Edit it, then reload.' : 'Paused from this page';
-      case 'no_credentials': {
-        const missing = [];
-        if (!account.credentials?.token) missing.push('token');
-        if (!account.credentials?.cookie_count) missing.push('cookie');
-        return missing.length ? `Missing ${missing.join(' and ')}` : '';
-      }
-      default:
-        return '';
-    }
-  }
-
-  function updateRow(row, account) {
-    row.account = account;
-    const { tr } = row;
-    tr.dataset.status = account.status;
-    row.badgeUse.setAttribute('href', `#i-${STATUS_LABEL[account.status] ? account.status : 'alert'}`);
-    row.badgeText.textContent = STATUS_LABEL[account.status] || account.status;
-    row.statusDetail.textContent = statusDetail(account);
-
-    row.name.textContent = account.name || account.id;
-    row.acctId.textContent = account.name && account.name !== account.id ? account.id : '';
-
-    updateCooldown(row);
-
-    row.failRun.textContent = String(account.failures);
-    row.failRun.classList.toggle('is-hot', account.failures > 0);
-    row.failTotal.textContent = String(account.total_failures);
-    row.failRun.title = `${plural(account.failures, 'failure', 'failures')} in a row`;
-    row.failTotal.title = `${plural(account.total_failures, 'failure', 'failures')} since the proxy started`;
-
-    const err = account.last_error;
-    row.errorCell.classList.toggle('is-empty', !err);
-    row.errorNone.hidden = Boolean(err);
-    row.errorDetails.hidden = !err;
-    if (err) {
-      row.errorDetails.dataset.kind = err.kind;
-      const kind = ERROR_KIND_LABEL[err.kind] || err.kind;
-      row.errorKind.textContent = err.status ? `${kind} (HTTP ${err.status})` : kind;
-      row.errorPreview.textContent = err.message || 'No message';
-      if (row.errorMessage.textContent !== (err.message || 'No message')) {
-        row.errorMessage.textContent = err.message || 'No message';
-      }
-      row.errorWhen.dataset.at = String(err.at || '');
-    }
-
-    const usage = account.usage || {};
-    const requests = usage.requests || 0;
-    row.usageRequests.textContent = requests ? plural(requests, 'request', 'requests') : 'No requests';
-    row.usageRequests.classList.toggle('none', !requests);
-    row.usageTokens.textContent = requests ? `${compact((usage.prompt_tokens || 0) + (usage.completion_tokens || 0))} tokens` : '';
-    row.usageTokens.title = `${(usage.prompt_tokens || 0).toLocaleString()} prompt, ${(usage.completion_tokens || 0).toLocaleString()} completion`;
-    row.usageCost.textContent = requests ? `${usd(usage.usd)} at API prices` : '';
-    row.usageCost.title = 'What these tokens would cost on the paid DeepSeek API. Nothing is billed.';
-
-    updateTimes(row);
-    syncRowButtons(account.id);
-  }
-
-  function syncRowButtons(id) {
-    const row = rowsById.get(id);
-    if (!row || !row.account) return;
-    const a = row.account;
-    const busy = pending.has(id);
-    if (!row.toggle.hasAttribute('aria-busy')) {
-      row.toggle.textContent = a.disabled_by ? 'Enable' : 'Disable';
-    }
-    // aria-disabled keeps the button focusable so keyboard users reach the note that explains it.
-    row.toggle.setAttribute('aria-disabled', String(busy || a.disabled_by === 'file'));
-    row.clear.hidden = a.status !== 'cooldown' && !row.clear.hasAttribute('aria-busy');
-    row.clear.setAttribute('aria-disabled', String(busy));
-    row.note.textContent = a.disabled_by === 'file'
-      ? 'Turned off in its auth file ("enabled": false). To turn it on, set "enabled": true in that file, then reload accounts.'
-      : '';
-    row.toggle.setAttribute('aria-label', `${row.toggle.textContent} ${a.name || a.id}`);
-    row.clear.setAttribute('aria-label', `Clear cooldown for ${a.name || a.id}`);
-  }
-
-  function updateCooldown(row) {
-    const a = row.account;
-    const remaining = a.cooldown_until ? (a.cooldown_until - serverNow()) / 1000 : 0;
-    const cooling = a.status === 'cooldown' && Boolean(a.cooldown_until);
-    row.cooldownCell.classList.toggle('is-empty', !cooling);
-    if (cooling) {
-      row.countdown.classList.remove('none');
-      row.countdown.textContent = remaining > 0 ? duration(remaining) : 'Ending now';
-      const reason = REASON_LABEL[a.cooldown_reason] || 'Cooling down';
-      row.cooldownDetail.textContent = `${reason}, until ${clockTime(a.cooldown_until)}`;
-      const p = cooldownProgress(a);
-      row.coolBar.hidden = p === null;
-      if (p !== null) row.coolBarFill.style.setProperty('--p', p.toFixed(3));
-      if (remaining <= 0) requestExpiryRefresh();
     } else {
-      row.countdown.classList.add('none');
-      row.countdown.textContent = 'None';
-      row.cooldownDetail.textContent = '';
-      row.coolBar.hidden = true;
+      list.append(h('p', { class: 'meta account-menu-note', text: F.store.error ? `Accounts unavailable: ${F.errorText(F.store.error)}` : 'Loading accounts…' }));
     }
+    list.append(h('div', { class: 'menu-sep', role: 'separator' }));
+    // Plain rows like "Manage accounts", so both labels start on the same line.
+    const add = h('button', { type: 'button', role: 'menuitem', class: 'menu-item' }, F.icon('plus'), h('span', { text: 'Add account' }));
+    add.addEventListener('click', () => { F.closePopover(); openAddAccount(trigger); });
+    list.append(add);
+    const manage = h('button', { type: 'button', role: 'menuitem', class: 'menu-item' }, F.icon('accounts'), h('span', { text: 'Manage accounts' }));
+    manage.addEventListener('click', () => { F.closePopover(); F.navigate('accounts'); });
+    list.append(manage);
+    list.addEventListener('keydown', (e) => {
+      const btns = Array.from(list.querySelectorAll('.menu-item'));
+      const i = btns.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); btns[(i + 1) % btns.length].focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); btns[(i - 1 + btns.length) % btns.length].focus(); }
+    });
+    F.popover(trigger, list, { width: Math.max(244, trigger.getBoundingClientRect().width), align: 'start', role: 'presentation', label: 'Chat account' });
   }
+  $('account-switch').addEventListener('click', (e) => openAccountMenu(e.currentTarget));
+  F.openAccountMenu = openAccountMenu;
 
-  function updateTimes(row) {
-    const a = row.account;
-    const succeeded = Boolean(a.last_success_at);
-    const used = Boolean(a.last_used_at);
-    row.successLabel.textContent = succeeded ? 'Succeeded ' : (used ? 'No success yet' : 'Never used');
-    setTime(row.successAt, a.last_success_at, succeeded ? ago(a.last_success_at) : '');
-    row.successLine.classList.toggle('none', !succeeded);
-    row.usedLine.hidden = !used;
-    row.usedLabel.textContent = used ? 'Used ' : '';
-    setTime(row.usedAt, a.last_used_at, used ? ago(a.last_used_at) : '');
-    if (a.last_error?.at) setTime(row.errorWhen, a.last_error.at, ago(a.last_error.at));
-  }
 
-  // When a countdown reaches zero, fetch fresh state once instead of waiting for the poll.
-  function requestExpiryRefresh() {
-    const now = Date.now();
-    if (now - state.expiryRefreshAt < 3000 || state.gate || state.error) return;
-    state.expiryRefreshAt = now;
-    setTimeout(() => refresh(), 600);
-  }
-
-  // One-second tick: countdowns, relative times, and the pool sentence. No network.
-  function tick() {
-    if (!state.data || state.gate) return;
-    for (const row of rowsById.values()) {
-      if (!row.account) continue;
-      updateCooldown(row);
-      updateTimes(row);
-      if (row.account.status === 'busy') row.statusDetail.textContent = statusDetail(row.account);
-    }
-    renderPool();
+  F.on('poll', () => {
+    document.getElementById('app').classList.toggle('is-stale', Boolean(F.store.error && F.store.lastOkAt));
     renderBanner();
+    renderPool();
+  });
+  F.on('accounts', renderPool);
+  F.on('tick', () => { if (F.store.accounts && (F.store.accounts.pool.can_serve === 0 || F.chatAccount.get())) renderPool(); });
+
+  // ---------------------------------------------------------------- sidebar
+  $('new-chat').addEventListener('click', () => F.views.chat.newChat());
+  $('toolbar-new-chat').addEventListener('click', () => F.views.chat.newChat());
+
+  // Chat list as a sheet below 1100px.
+  function openChatsSheet() {
+    const app$ = $('app');
+    app$.classList.add('chats-open');
+    $('scrim').hidden = false;
+    $('toggle-chats').setAttribute('aria-expanded', 'true');
   }
-
-  // ---------- Wiring ----------
-
-  el.auto.addEventListener('change', () => {
-    if (el.auto.checked) refresh(); else schedule();
-    renderMasthead();
+  function closeChatsSheet() {
+    const app$ = $('app');
+    if (!app$.classList.contains('chats-open')) return false;
+    app$.classList.remove('chats-open');
+    $('scrim').hidden = true;
+    $('toggle-chats').setAttribute('aria-expanded', 'false');
+    return true;
+  }
+  $('toggle-chats').addEventListener('click', () => {
+    if ($('app').classList.contains('rail-collapsed') && innerWidth >= 720) { setRailCollapsed(false); return; }
+    if (innerWidth >= 1100) { showChatFilter(); return; }
+    if ($('app').classList.contains('chats-open')) closeChatsSheet(); else openChatsSheet();
   });
-  el.refresh.addEventListener('click', () => refresh());
-  $('forbidden-retry').addEventListener('click', () => { state.gate = null; refresh(); });
-  el.bannerRetry.addEventListener('click', () => refresh());
-  el.reload.addEventListener('click', () => reloadAccounts(el.reload));
-  el.emptyReload.addEventListener('click', () => reloadAccounts(el.emptyReload));
-  el.forgetKey.addEventListener('click', () => {
-    try { sessionStorage.removeItem(KEY_STORAGE); } catch (e) { /* storage blocked: nothing stored */ }
-    toast({ title: 'Forgot the proxy key for this tab.' });
-    refresh();
+  $('chats-close').addEventListener('click', () => { closeChatsSheet(); $('toggle-chats').focus(); });
+
+  // Sidebar head and actions, as in the Claude app: collapse, search (the ⌘K palette),
+  // and a filter that appears under "Chats" only when asked for.
+  // Collapse slides the whole sidebar away (width animates, contents fade) and is remembered.
+  // Only a user toggle slides the rail; crossing a breakpoint on resize just snaps.
+  let railAnimTimer = null;
+  function setRailCollapsed(collapsed, animate = true) {
+    const app$ = $('app');
+    if (animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      app$.classList.add('rail-animates');
+      clearTimeout(railAnimTimer);
+      railAnimTimer = setTimeout(() => app$.classList.remove('rail-animates'), 400);
+    }
+    app$.classList.toggle('rail-collapsed', collapsed);
+    $('rail-toggle').setAttribute('aria-expanded', String(!collapsed));
+    $('toggle-chats').setAttribute('aria-label', collapsed ? 'Show sidebar' : 'Show chats');
+    try { localStorage.setItem('fdsa.railCollapsed', collapsed ? '1' : '0'); } catch (e) { /* preference only */ }
+  }
+  F.toggleRail = () => setRailCollapsed(!$('app').classList.contains('rail-collapsed'));
+  $('rail-toggle').addEventListener('click', () => { F.toggleRail(); $('toggle-chats').focus({ preventScroll: true }); });
+  try { if (localStorage.getItem('fdsa.railCollapsed') === '1') setRailCollapsed(true, false); } catch (e) { /* preference only */ }
+  $('open-search').addEventListener('click', () => openPalette());
+  function showChatFilter() {
+    $('chats-filter-field').hidden = false;
+    $('chats-filter').setAttribute('aria-expanded', 'true');
+    $('chat-search').focus();
+  }
+  function hideChatFilter() {
+    const input = $('chat-search');
+    $('chats-filter-field').hidden = true;
+    $('chats-filter').setAttribute('aria-expanded', 'false');
+    if (input.value) { input.value = ''; input.dispatchEvent(new Event('input')); }
+  }
+  $('chats-filter').addEventListener('click', () => { if ($('chats-filter-field').hidden) showChatFilter(); else hideChatFilter(); });
+  $('chat-search').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); hideChatFilter(); $('chats-filter').focus(); } });
+  $('scrim').addEventListener('click', closeChatsSheet);
+
+  // ---------------------------------------------------------------- gate
+  $('gate-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = $('gate-input').value.trim();
+    if (!v) return;
+    try { F.key.set(v); } catch (err) { F.toast(`Could not store the key: ${err.name}`, { tone: 'error' }); return; }
+    $('gate-input').value = '';
+    F.hideGate();
+    F.refresh();
+    if (app.view && F.views[app.view].show) F.views[app.view].show(app.route);
   });
-  el.keyForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const key = el.keyInput.value.trim();
-    if (!key) return;
-    try {
-      sessionStorage.setItem(KEY_STORAGE, key);
-    } catch (e) {
-      toast({ title: 'Could not store the key.', body: 'This browser blocks sessionStorage for this page.', tone: 'error' });
+  $('gate-retry').addEventListener('click', () => { F.hideGate(); F.refresh(); });
+
+  // ---------------------------------------------------------------- command palette
+  const palette = { items: [], index: 0 };
+  function paletteItems() {
+    const items = [
+      { label: 'New chat', hint: '⇧⌘O', icon: 'new-chat', run: () => F.views.chat.newChat() },
+      { label: 'Go to Chat', hint: 'g c', icon: 'chat', run: () => F.navigate('chat') },
+      { label: 'Go to Status', hint: 'g s', icon: 'status', run: () => F.navigate('status') },
+      { label: 'Go to Accounts', hint: 'g a', icon: 'accounts', run: () => F.navigate('accounts') },
+      { label: 'Go to Usage', hint: 'g u', icon: 'usage', run: () => F.navigate('usage') },
+      { label: 'Go to Requests', hint: 'g r', icon: 'requests', run: () => F.navigate('requests') },
+      { label: 'Go to Settings', icon: 'settings', run: () => F.navigate('settings') },
+      { label: 'Show errors in Requests', icon: 'error-x', run: () => F.navigate('requests', '', { status: 'error' }) },
+      { label: 'Reload accounts from disk', icon: 'reload', run: () => { F.navigate('accounts'); setTimeout(() => { const b = Array.from(document.querySelectorAll('#toolbar-actions .btn')).find(x => x.textContent.includes('Reload')); F.views.accounts.reload(b); }, 0); } },
+      { label: 'Add account', icon: 'plus', run: () => { F.navigate('accounts'); setTimeout(() => F.views.accounts.openAdd(document.querySelector('#toolbar-actions .btn-primary')), 0); } },
+    ];
+    for (const a of (F.store.accounts && F.store.accounts.accounts) || []) {
+      const name = a.name || a.id;
+      items.push({ label: `Account: ${name}`, detail: F.charts.stateLabel(a), icon: 'accounts', run: () => F.navigate('accounts', a.id) });
+      if (a.status === 'ready' || a.status === 'busy' || a.status === 'cooldown') items.push({ label: `Pause account: ${name}`, icon: 'pause', run: () => F.views.accounts.action(a, 'disable') });
+      if (a.status === 'disabled' && a.disabled_by === 'admin') items.push({ label: `Resume account: ${name}`, icon: 'play', run: () => F.views.accounts.action(a, 'enable') });
+      if (a.status === 'cooldown') items.push({ label: `Clear cooldown: ${name}`, icon: 'clear-cooldown', run: () => F.views.accounts.action(a, 'clear-cooldown') });
+    }
+    for (const c of F.views.chat.conversations().slice(0, 50)) {
+      items.push({ label: `Chat: ${c.title}`, detail: fmt.ago(c.updatedAt, Date.now()), icon: 'chat', run: () => F.navigate('chat', c.id) });
+    }
+    return items;
+  }
+  function renderPalette() {
+    const q = $('palette-input').value;
+    const scored = palette.all.map(it => ({ it, s: F.fuzzy(q, it.label) })).filter(x => x.s >= 0);
+    if (q.trim()) scored.sort((a, b) => b.s - a.s);
+    palette.items = scored.slice(0, 40).map(x => x.it);
+    palette.index = Math.min(palette.index, Math.max(0, palette.items.length - 1));
+    const list = $('palette-list');
+    list.replaceChildren(...palette.items.map((it, i) => {
+      const li = h('li', { role: 'option', id: `pal-${i}`, class: 'palette-item', 'aria-selected': String(i === palette.index) },
+        F.icon(it.icon), h('span', { class: 'palette-label', text: it.label }),
+        it.detail ? h('span', { class: 'palette-detail', text: it.detail }) : null,
+        it.hint ? h('kbd', { class: 'kbd', text: it.hint }) : null);
+      li.addEventListener('pointermove', () => { if (palette.index !== i) { palette.index = i; mark(); } });
+      li.addEventListener('click', () => choose(i));
+      return li;
+    }));
+    if (!palette.items.length) list.append(h('li', { class: 'palette-empty', role: 'presentation', text: 'Nothing matches.' }));
+    mark();
+  }
+  function mark() {
+    for (const li of $('palette-list').querySelectorAll('.palette-item')) li.setAttribute('aria-selected', String(li.id === `pal-${palette.index}`));
+    $('palette-input').setAttribute('aria-activedescendant', palette.items.length ? `pal-${palette.index}` : '');
+    const cur = $(`pal-${palette.index}`);
+    if (cur) cur.scrollIntoView({ block: 'nearest' });
+  }
+  function choose(i) {
+    const it = palette.items[i];
+    if (!it) return;
+    $('palette').close();
+    it.run();
+  }
+  function openPalette() {
+    const dlg = $('palette');
+    if (dlg.open) { dlg.close(); return; }
+    F.closePopover(false);
+    palette.all = paletteItems();
+    palette.index = 0;
+    $('palette-input').value = '';
+    renderPalette();
+    dlg.showModal();
+    $('palette-input').focus();
+  }
+  $('palette-input').addEventListener('input', () => { palette.index = 0; renderPalette(); });
+  $('palette-input').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); palette.index = Math.min(palette.items.length - 1, palette.index + 1); mark(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); palette.index = Math.max(0, palette.index - 1); mark(); }
+    else if (e.key === 'Enter') { e.preventDefault(); choose(palette.index); }
+  });
+  $('palette').addEventListener('click', (e) => { if (e.target === $('palette')) $('palette').close(); });
+  $('add-account').addEventListener('click', (e) => { if (e.target === $('add-account')) $('add-account').close(); });
+
+  // ---------------------------------------------------------------- keyboard
+  let gPending = 0;
+  const isTyping = (el) => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+  document.addEventListener('keydown', (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
+    if (mod && e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); F.views.chat.newChat(); return; }
+    if (mod && e.key === '\\') {
+      e.preventDefault();
+      F.toggleRail();
       return;
     }
-    el.keyInput.value = '';
-    state.gate = null;
-    refresh();
-  });
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      if (el.auto.checked && !state.gate) refresh();
-    } else {
-      clearTimeout(state.pollTimer);
-      state.pollTimer = null;
+    if (e.key === 'Escape') {
+      if (document.querySelector('dialog[open]')) return; // native dialog handles it
+      if (F.closePopover()) { e.preventDefault(); return; }
+      if (closeChatsSheet()) { e.preventDefault(); $('toggle-chats').focus(); return; }
+      if (F.inspector.isOpen) { e.preventDefault(); F.inspector.close(); return; }
+      if (closeSettings()) { e.preventDefault(); return; }
+      if (app.view === 'chat' && F.views.chat.onEscape()) { e.preventDefault(); return; }
+      return;
     }
+    if (mod || e.altKey || isTyping(e.target) || F.gate.mode || document.querySelector('dialog[open]')) return;
+    if (gPending && Date.now() - gPending < 800) {
+      const map = { c: 'chat', s: 'status', a: 'accounts', u: 'usage', r: 'requests' };
+      gPending = 0;
+      if (map[e.key]) { e.preventDefault(); F.navigate(map[e.key]); }
+      return;
+    }
+    if (e.key === 'g') { gPending = Date.now(); return; }
+    if (e.key === '/') {
+      const input = F.views[app.view].filterInput;
+      if (input && input.offsetParent !== null) { e.preventDefault(); input.focus(); input.select && input.select(); }
+      else if (app.view === 'chat') { e.preventDefault(); openChatsSheetIfNeeded(); }
+      return;
+    }
+    const v = F.views[app.view];
+    if (v.onKey && v.onKey(e)) e.preventDefault();
   });
+  function openChatsSheetIfNeeded() {
+    if ($('app').classList.contains('rail-collapsed') && innerWidth >= 720) setRailCollapsed(false);
+    else if (innerWidth < 1100) openChatsSheet();
+    showChatFilter();
+  }
 
-  render();
-  refresh();
-  setInterval(tick, 1000);
+  document.getElementById('inspector-close').addEventListener('click', () => F.inspector.close());
+
+  // ---------------------------------------------------------------- boot
+  // Polling is always on; the old Live switch is gone, so a stored pause must not strand the dashboard.
+  try { localStorage.removeItem('fdsa.live'); } catch (e) { /* preference only */ }
+  route();
+  renderPool();
+  F.refresh();
 })();

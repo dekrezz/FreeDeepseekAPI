@@ -121,6 +121,7 @@ npm start
 `npm start` opens the launch menu:
 
 - Start proxy
+- Start proxy + open dashboard (also `npm run dashboard`)
 - Sign in with Chrome
 - Import an auth file or a browser cookie export
 - Show the DeepSeek-V4.1-Flash model ids
@@ -443,6 +444,7 @@ The page is static and holds no data. It reads the admin API:
 | `POST` | `/admin/accounts/<id>/enable` | `{ account, pool }`. `409 disabled_in_file` if the file says `"enabled": false` |
 | `POST` | `/admin/accounts/<id>/clear-cooldown` | `{ account, pool }` |
 | `POST` | `/admin/accounts/reload` | `{ added, removed, kept, errors, accounts, pool }`. `422 no_accounts_found` leaves the pool unchanged |
+| `POST` | `/admin/accounts/restore` | Body `{ archived_as }` from a `DELETE`. Renames the file back and reloads: `{ restored, errors, accounts, pool }`. `404 archive_not_found`, `409 restore_target_exists` |
 
 Access rules:
 
@@ -451,7 +453,7 @@ Access rules:
 - Browser POSTs still pass the origin guard. To use the dashboard from a non-loopback address, add that origin to `PROXY_CORS_ORIGINS`.
 - Admin responses never contain tokens, cookies, `hif_*` values, or auth-file names.
 
-The container image does not ship the dashboard files. There `/dashboard` returns `404 dashboard_unavailable`, and the admin API still works.
+The container image ships the dashboard. With `--read-only`, actions that write auth files (add, rename, remove, restore) fail with `500 auth_file_write_failed`; pause, resume, and clear cooldown work.
 
 ---
 

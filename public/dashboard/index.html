@@ -2,174 +2,243 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#000000">
   <meta name="referrer" content="no-referrer">
-  <link rel="icon" href="data:,">
-  <title>FreeDeepseekAPI accounts</title>
+  <link rel="icon" type="image/png" href="/dashboard/logo.png">
+  <title>FreeDeepseekAPI</title>
   <link rel="stylesheet" href="/dashboard/app.css">
+  <script src="/dashboard/core.js" defer></script>
+  <script src="/dashboard/charts.js" defer></script>
+  <script src="/dashboard/markdown.js" defer></script>
+  <script src="/dashboard/status.js" defer></script>
+  <script src="/dashboard/accounts.js" defer></script>
+  <script src="/dashboard/usage.js" defer></script>
+  <script src="/dashboard/requests.js" defer></script>
+  <script src="/dashboard/settings.js" defer></script>
+  <script src="/dashboard/chat.js" defer></script>
   <script src="/dashboard/app.js" defer></script>
 </head>
 <body>
-  <svg class="sprite" aria-hidden="true" focusable="false">
-    <symbol id="i-ready" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.2 2.4 2.4 4.6-5"/></symbol>
-    <symbol id="i-busy" viewBox="0 0 24 24"><path d="M3.5 12h3l2.5-6 4 12 2.5-6h5"/></symbol>
-    <symbol id="i-cooldown" viewBox="0 0 24 24"><path d="M7 3.5h10M7 20.5h10M8 3.5c0 4.5 4 5.5 4 8.5s-4 4-4 8.5M16 3.5c0 4.5-4 5.5-4 8.5s4 4 4 8.5"/></symbol>
-    <symbol id="i-disabled" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M10 9v6M14 9v6"/></symbol>
-    <symbol id="i-no_credentials" viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 7-7M15 8l2.5 2.5M3.5 3.5l17 17"/></symbol>
-    <symbol id="i-reload" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/></symbol>
-    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 21 19.5H3Z"/><path d="M12 10v4M12 17h.01"/></symbol>
-    <symbol id="i-lock" viewBox="0 0 24 24"><path d="M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6zM12 14.5v2"/></symbol>
+  <!-- One stroke set: 24 grid, 20 live area, 1.5 non-scaling stroke (see app.css .icon). -->
+  <svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9.5L4 20.5Z"/></symbol>
+    <symbol id="i-status" viewBox="0 0 24 24"><path d="M3 12.5h4.2l2.3-6 4.5 11.5 2.6-6.5h4.4"/></symbol>
+    <symbol id="i-accounts" viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="4.5" rx="2"/><rect x="4" y="9.75" width="16" height="4.5" rx="2"/><rect x="4" y="16" width="16" height="4.5" rx="2"/></symbol>
+    <symbol id="i-usage" viewBox="0 0 24 24"><path d="M3.5 20.5h17M7 17.5v-6M12 17.5v-12M17 17.5v-8.5"/></symbol>
+    <symbol id="i-requests" viewBox="0 0 24 24"><path d="M11 6h9.5M11 12h9.5M11 18h9.5M2.5 12h5.5M5.5 9 8.5 12l-3 3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M3.5 8h3.5M12 8h8.5M3.5 16h9M17.5 16h3"/><circle cx="9.5" cy="8" r="2.5"/><circle cx="15" cy="16" r="2.5"/></symbol>
+    <symbol id="i-new-chat" viewBox="0 0 24 24"><path d="M11 4.5H6a2 2 0 0 0-2 2V18a2 2 0 0 0 2 2h11.5a2 2 0 0 0 2-2v-5"/><path d="m17.5 3.5 3 3L12 15l-4 1 1-4Z"/></symbol>
+    <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.5 4.5v15"/></symbol>
+    <symbol id="i-attach" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.75"/><path d="M12 8v8M8 12h8"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m20.5 16-5-5-9 8.5"/></symbol>
+    <symbol id="i-think" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.75"/><path d="M12 3.25v17.5M14.75 3.7v16.6M17.5 5.2v13.6"/></symbol>
+    <symbol id="i-search-web" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.75"/><path d="M3.25 12h17.5M12 3.25c2.4 2.6 3.5 5.5 3.5 8.75S14.4 18.15 12 20.75C9.6 18.15 8.5 15.25 8.5 12S9.6 5.85 12 3.25Z"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" class="fill"/></symbol>
+    <symbol id="i-regenerate" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3L19.5 9M19.5 4.5V9H15"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15.5 4.5 4 4L9 19H5v-4ZM13 7l4 4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.25" class="fill"/><circle cx="12" cy="12" r="1.25" class="fill"/><circle cx="18" cy="12" r="1.25" class="fill"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><path d="M3 12h4.5M16.5 12H21M18 9l3 3-3 3"/><circle cx="12" cy="12" r="4.5"/></symbol>
+    <symbol id="i-model" viewBox="0 0 24 24"><path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/></symbol>
+    <symbol id="i-latency" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.25"/><path d="M12 13.5V10M10 3.5h4M18 7l1.5-1.5"/></symbol>
+    <symbol id="i-token" viewBox="0 0 24 24"><ellipse cx="12" cy="8" rx="7.5" ry="3.5"/><path d="M4.5 8v4c0 1.9 3.4 3.5 7.5 3.5s7.5-1.6 7.5-3.5V8M4.5 12v4c0 1.9 3.4 3.5 7.5 3.5s7.5-1.6 7.5-3.5v-4"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><path d="M3.5 7h3c2.2 0 3.4 1 4.6 2.8l2.8 4.4c1.2 1.8 2.4 2.8 4.6 2.8h2M3.5 17h3c1.6 0 2.7-.5 3.6-1.5M14.4 8.5c.9-1 2-1.5 3.6-1.5h2.5M18 4.5 20.5 7 18 9.5M18 14.5l2.5 2.5-2.5 2.5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-reload" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 0 1 12.8-5.3L19.5 9M19.5 4.5V9H15M19.5 12a7.5 7.5 0 0 1-12.8 5.3L4.5 15M4.5 19.5V15H9"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5Z"/></symbol>
+    <symbol id="i-clear-cooldown" viewBox="0 0 24 24"><path d="M7.5 4h9M7.5 20h9M8.5 4c0 4 3.5 5 3.5 8s-3.5 4-3.5 8M15.5 4c0 4-3.5 5-3.5 8s3.5 4 3.5 8M4 4l16 16"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M10 4h4M6.5 7l1 12.5A1.5 1.5 0 0 0 9 21h6a1.5 1.5 0 0 0 1.5-1.5l1-12.5M10 11v6M14 11v6"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14.5 4.5 10 9 5.5M4.5 10h10a5 5 0 0 1 0 10H11"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></symbol>
-    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M13.5 4.5h6v6M19.5 4.5 11 13M17 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h4"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6.5h16M7 12h10M10 17.5h4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.75"/><path d="m15.5 15.5 5 5"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M4.5 19.5h15"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M4.5 19.5h15"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4.25"/><path d="m11 12.5 8.5-8.5M16 7.5l2.5 2.5M13.5 10l2 2"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5v-3a3.5 3.5 0 0 1 7 0v3M12 14.5v2"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 21 19.5H3Z"/><path d="M12 10v4M12 17v.01"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.75"/><path d="M12 11v5.5M12 7.75v.01"/></symbol>
+    <symbol id="i-error-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.75"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
+    <symbol id="i-success" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.75"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></symbol>
+    <symbol id="i-stream" viewBox="0 0 24 24"><path d="M4 8h8M8 12h8M12 16h8"/></symbol>
+    <symbol id="i-local" viewBox="0 0 24 24"><path d="M4 11 12 4.5l8 6.5M6 9.5v10h12v-10M10 19.5v-5h4v5"/></symbol>
+    <symbol id="i-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" class="fill"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10Z"/></symbol>
+    <symbol id="i-display" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M9 20h6M12 16v4"/></symbol>
+    <symbol id="i-material" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="12" height="12" rx="2"/><path d="M15.5 8.5h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-3"/></symbol>
+    <symbol id="i-table-view" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10"/></symbol>
+    <symbol id="i-chart-view" viewBox="0 0 24 24"><path d="M3.5 20.5h17M7 17.5v-6M12 17.5v-12M17 17.5v-8.5"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M8 14h8"/></symbol>
+    <defs>
+      <!-- 45-degree texture: the prompt series' backup channel for forced colors and print. -->
+      <pattern id="texture-45" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="5" stroke="currentColor" stroke-width="2"/></pattern>
+    </defs>
+    <!-- Lamps: 12 grid, filled only where the state shape says so. -->
+    <symbol id="l-ready" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" class="fill"/></symbol>
+    <symbol id="l-busy" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.25"/><path d="M6 1.75a4.25 4.25 0 0 1 0 8.5Z" class="fill"/></symbol>
+    <symbol id="l-cooldown" viewBox="0 0 12 12"><path d="M6 1.5 10.5 6 6 10.5 1.5 6Z"/></symbol>
+    <symbol id="l-disabled" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.25"/></symbol>
+    <symbol id="l-no_credentials" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.25"/><path d="m3 3 6 6"/></symbol>
+    <symbol id="l-error" viewBox="0 0 12 12"><path d="m2.5 2.5 7 7M9.5 2.5l-7 7"/></symbol>
   </svg>
 
-  <div class="shell">
-    <header class="masthead">
-      <div class="title">
-        <h1>Accounts</h1>
-        <p class="subtitle">FreeDeepseekAPI login pool</p>
+  <div class="app" id="app">
+    <nav class="rail" id="rail" aria-label="Main">
+      <div class="rail-head">
+        <a class="wordmark" href="#/chat" aria-label="FreeDeepseekAPI chat">
+          <img class="wordmark-mark" src="/dashboard/logo.png" alt="" width="24" height="24">
+          <span class="wordmark-text rail-label">FreeDeepseek<span class="wordmark-sub">API</span></span>
+        </a>
+        <button type="button" class="icon-btn rail-toggle" id="rail-toggle" aria-label="Toggle sidebar" data-tip="Toggle sidebar (⌘\)"><svg class="icon" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
       </div>
-      <div class="controls">
-        <p class="updated" id="updated" aria-live="off">Not loaded yet</p>
-        <label class="switch">
-          <input type="checkbox" id="auto" checked>
-          <span class="switch-track" aria-hidden="true"></span>
-          <span>Auto-refresh</span>
-        </label>
-        <button type="button" class="btn btn-quiet" id="refresh" hidden>Refresh now</button>
-        <button type="button" class="btn btn-quiet" id="forget-key" hidden>Forget key</button>
-        <button type="button" class="btn btn-primary" id="reload">
-          <svg class="icon" aria-hidden="true"><use href="#i-reload"/></svg>
-          <span class="btn-label">Reload accounts</span>
-        </button>
-      </div>
-    </header>
-
-    <section class="pool" aria-labelledby="headline">
-      <h2 class="headline" id="headline">Loading accounts…</h2>
-      <p class="headline-sub" id="headline-sub"></p>
-      <div class="strip" id="strip" role="img" aria-label="Loading"></div>
-      <ul class="legend" id="legend" aria-label="Accounts by status">
-        <li data-status="ready"><span class="swatch"></span>Ready <strong data-count="ready">0</strong></li>
-        <li data-status="busy"><span class="swatch"></span>Busy <strong data-count="busy">0</strong></li>
-        <li data-status="cooldown"><span class="swatch"></span>Cooling down <strong data-count="cooldown">0</strong></li>
-        <li data-status="disabled"><span class="swatch"></span>Disabled <strong data-count="disabled">0</strong></li>
-        <li data-status="no_credentials"><span class="swatch"></span>No credentials <strong data-count="no_credentials">0</strong></li>
+      <ul class="rail-actions" role="list">
+        <li><button type="button" class="nav-item" id="new-chat" data-tip="New chat (⇧⌘O)"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-new-chat"/></svg><span class="rail-label">New chat</span></button></li>
+        <li><button type="button" class="nav-item" id="open-search" data-tip="Search (⌘K)"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-search"/></svg><span class="rail-label">Search</span><span class="rail-kbd rail-label" aria-hidden="true">⌘K</span></button></li>
       </ul>
-    </section>
-
-    <div id="banner" class="banner" hidden>
-      <svg class="icon banner-icon" aria-hidden="true"><use id="banner-icon" href="#i-alert"/></svg>
-      <div class="banner-copy">
-        <p class="banner-title" id="banner-title"></p>
-        <p class="banner-body" id="banner-body"></p>
+      <section class="chats" id="chats" aria-labelledby="chats-heading">
+        <div class="chats-head">
+          <h2 class="chats-title" id="chats-heading">Chats</h2>
+          <button type="button" class="icon-btn icon-btn-sm chats-filter" id="chats-filter" aria-label="Filter chats" aria-controls="chats-filter-field" aria-expanded="false" data-tip="Filter chats"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg></button>
+          <button type="button" class="icon-btn icon-btn-sm chats-close" id="chats-close" aria-label="Close chats"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+        </div>
+        <label class="search-field chats-filter-field" id="chats-filter-field" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+          <input type="search" id="chat-search" placeholder="Filter chats" aria-label="Filter chats" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="chat-list" id="chat-list"></div>
+      </section>
+      <div class="rail-foot">
+        <button type="button" class="account-switch" id="account-switch" aria-haspopup="menu" aria-expanded="false">
+          <span class="avatar" id="account-avatar" aria-hidden="true"></span>
+          <span class="account-text rail-label">
+            <span class="account-name" id="account-name">Loading accounts…</span>
+            <span class="account-sub" id="account-sub"></span>
+          </span>
+          <svg class="icon icon-sm account-chev rail-label" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+        </button>
+        <a class="nav-item" href="#/settings" id="open-settings" data-tip="Settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span class="rail-label">Settings</span></a>
       </div>
-      <button type="button" class="btn btn-quiet" id="banner-retry" hidden>Retry now</button>
+    </nav>
+
+    <div class="main" id="main">
+      <header class="toolbar glass glass-thin" id="toolbar">
+        <button type="button" class="icon-btn" id="toggle-chats" aria-label="Show chats" aria-controls="chats" aria-expanded="false" hidden><svg class="icon" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
+        <h1 class="toolbar-title" id="view-title">FreeDeepseekAPI</h1>
+        <div class="toolbar-right">
+          <div class="toolbar-actions" id="toolbar-actions"></div>
+          <button type="button" class="icon-btn toolbar-mobile" id="toolbar-new-chat" aria-label="New chat"><svg class="icon" aria-hidden="true"><use href="#i-new-chat"/></svg></button>
+          <a class="icon-btn toolbar-mobile" id="toolbar-settings" href="#/settings" aria-label="Settings"><svg class="icon" aria-hidden="true"><use href="#i-gear"/></svg></a>
+        </div>
+      </header>
+
+      <section class="view view-chat" id="view-chat" data-view="chat"></section>
+
     </div>
 
-    <section class="gate" id="gate-key" hidden aria-labelledby="gate-key-title">
-      <svg class="icon gate-icon" aria-hidden="true"><use href="#i-lock"/></svg>
-      <h2 id="gate-key-title">Enter the proxy API key</h2>
-      <p id="gate-key-body" aria-live="polite">This proxy has PROXY_API_KEY set, so the admin API needs it as a Bearer token.</p>
-      <form id="key-form" class="key-form">
-        <label for="key">Proxy API key</label>
-        <div class="key-row">
-          <input id="key" name="key" type="password" autocomplete="off" spellcheck="false" required aria-describedby="gate-key-body key-hint">
-          <button type="submit" class="btn btn-primary">Use key</button>
+    <div class="settings-layer" id="settings-layer" hidden>
+      <div class="settings-backdrop" id="settings-backdrop"></div>
+      <div class="settings-modal" id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="view-title" tabindex="-1">
+        <nav class="settings-nav" aria-label="Settings sections">
+          <label class="search-field settings-search">
+            <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+            <input type="search" id="settings-search" placeholder="Search" aria-label="Search settings" autocomplete="off" spellcheck="false">
+          </label>
+          <p class="settings-nav-title">Settings</p>
+          <ul class="nav-list" role="list">
+            <li><a class="nav-item" href="#/settings" data-nav="settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span>General</span></a></li>
+          </ul>
+          <p class="settings-nav-title">Proxy</p>
+          <ul class="nav-list" role="list">
+            <li><a class="nav-item" href="#/status" data-nav="status"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-status"/></svg><span>Status</span></a></li>
+            <li><a class="nav-item" href="#/accounts" data-nav="accounts"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-accounts"/></svg><span>Accounts</span></a></li>
+            <li><a class="nav-item" href="#/usage" data-nav="usage"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-usage"/></svg><span>Usage</span></a></li>
+            <li><a class="nav-item" href="#/requests" data-nav="requests"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-requests"/></svg><span>Requests</span></a></li>
+          </ul>
+          <p class="settings-nav-empty" id="settings-nav-empty" hidden>Nothing matches.</p>
+        </nav>
+        <div class="settings-pane" id="settings-pane">
+          <main class="scroll" id="scroll" tabindex="-1">
+            <div class="banner-slot" id="banner-slot"></div>
+            <section class="view" id="view-status" data-view="status" hidden></section>
+            <section class="view" id="view-accounts" data-view="accounts" hidden></section>
+            <section class="view" id="view-usage" data-view="usage" hidden></section>
+            <section class="view" id="view-requests" data-view="requests" hidden></section>
+            <section class="view" id="view-settings" data-view="settings" hidden></section>
+          </main>
+          <aside class="inspector glass glass-thick" id="inspector" aria-labelledby="inspector-title" hidden>
+            <div class="sheet-grabber" id="inspector-grabber" aria-hidden="true"></div>
+            <div class="inspector-head">
+              <div class="inspector-heading">
+                <h2 class="inspector-title" id="inspector-title" tabindex="-1"></h2>
+                <p class="inspector-sub" id="inspector-sub"></p>
+              </div>
+              <button type="button" class="icon-btn" id="inspector-close" aria-label="Close inspector"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+            </div>
+            <div class="inspector-body" id="inspector-body"></div>
+          </aside>
+          <button type="button" class="icon-btn settings-close" id="settings-close" aria-label="Close settings" data-tip="Close (Esc)"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
         </div>
-        <p class="hint" id="key-hint">Kept in this browser tab only (sessionStorage) and sent to this proxy only.</p>
-      </form>
-    </section>
-
-    <section class="gate" id="gate-forbidden" hidden aria-labelledby="gate-forbidden-title">
-      <svg class="icon gate-icon" aria-hidden="true"><use href="#i-lock"/></svg>
-      <h2 id="gate-forbidden-title">The admin API only answers this machine</h2>
-      <p id="gate-forbidden-body">Without PROXY_API_KEY, account controls accept direct requests from localhost only. Requests relayed by a reverse proxy (X-Forwarded-For or Forwarded) count as remote.</p>
-      <p>To manage accounts from another host, set one of these and restart the proxy:</p>
-      <ul class="env-list">
-        <li><code>PROXY_API_KEY</code> then enter the key on this page.</li>
-        <li><code>PROXY_ADMIN_ALLOW_REMOTE=1</code> to allow remote admin without a key.</li>
-      </ul>
-      <p class="hint">Browsers on another origin also need that origin listed in <code>PROXY_CORS_ORIGINS</code>.</p>
-      <button type="button" class="btn btn-quiet" id="forbidden-retry">Check again</button>
-    </section>
-
-    <section class="accounts" id="accounts" aria-label="Accounts">
-      <div class="table-scroll">
-        <table id="table" aria-busy="true">
-          <thead>
-            <tr>
-              <th scope="col">Status</th>
-              <th scope="col">Account</th>
-              <th scope="col">Cooldown</th>
-              <th scope="col" class="num">Failures<span class="th-sub">in a row / total</span></th>
-              <th scope="col">Last error</th>
-              <th scope="col">Activity</th>
-              <th scope="col" class="num">Usage</th>
-              <th scope="col"><span class="visually-hidden">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
       </div>
-    </section>
+    </div>
 
-    <section class="empty" id="empty" hidden aria-labelledby="empty-title">
-      <h2 id="empty-title">No accounts loaded</h2>
-      <p>Import a DeepSeek web login into the accounts folder, then reload.</p>
-      <pre><code>npm run auth:import -- --output ./accounts/&lt;name&gt;.json</code></pre>
-      <button type="button" class="btn btn-primary" id="empty-reload">
-        <svg class="icon" aria-hidden="true"><use href="#i-reload"/></svg>
-        <span class="btn-label">Reload accounts</span>
-      </button>
-    </section>
+    <nav class="tabbar glass glass-regular" aria-label="Views">
+      <a class="tab" href="#/chat" data-nav="chat"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-chat"/></svg><span>Chat</span></a>
+      <a class="tab" href="#/status" data-nav="status"><span class="tab-icon"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-status"/></svg><svg class="lamp tab-badge" id="tab-pool-lamp" aria-hidden="true"><use href="#l-disabled"/></svg></span><span>Status</span></a>
+      <a class="tab" href="#/accounts" data-nav="accounts"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-accounts"/></svg><span>Accounts</span></a>
+      <a class="tab" href="#/usage" data-nav="usage"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-usage"/></svg><span>Usage</span></a>
+      <a class="tab" href="#/requests" data-nav="requests"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-requests"/></svg><span>Requests</span></a>
+    </nav>
+    <div class="scrim" id="scrim" hidden></div>
   </div>
 
-  <div class="toasts" id="toasts" aria-live="polite" aria-relevant="additions"></div>
+  <div class="gate" id="gate" hidden>
+    <div class="gate-card glass glass-thick" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+      <svg class="icon gate-icon" aria-hidden="true"><use href="#i-lock"/></svg>
+      <h2 class="gate-title" id="gate-title">Enter the proxy access key</h2>
+      <div id="gate-key">
+        <p class="gate-text" id="gate-key-text">This proxy has PROXY_API_KEY set. The key is kept in this tab only and sent as a Bearer header.</p>
+        <form class="gate-form" id="gate-form" autocomplete="off">
+          <label class="field-label" for="gate-input">Access key</label>
+          <input class="input" id="gate-input" type="password" autocomplete="current-password" spellcheck="false" required>
+          <button type="submit" class="btn btn-primary">Unlock</button>
+        </form>
+      </div>
+      <div id="gate-forbidden" hidden>
+        <p class="gate-text">The admin API only answers browsers on this machine unless one of these is set where the proxy runs:</p>
+        <ul class="gate-envs" role="list">
+          <li><code class="mono-id">PROXY_API_KEY</code><span>then enter the key here</span></li>
+          <li><code class="mono-id">PROXY_ADMIN_ALLOW_REMOTE=1</code><span>allow keyless remote admin (trusted networks only)</span></li>
+          <li><code class="mono-id">PROXY_CORS_ORIGINS</code><span>add this page's origin when it is opened through a LAN address</span></li>
+        </ul>
+        <p class="gate-server" id="gate-server-message"></p>
+        <button type="button" class="btn btn-secondary" id="gate-retry">Try again</button>
+      </div>
+    </div>
+  </div>
 
-  <template id="row-template">
-    <tr>
-      <td data-label="Status" class="c-status">
-        <span class="badge"><svg class="icon" aria-hidden="true"><use/></svg><span class="badge-text"></span></span>
-        <span class="detail status-detail"></span>
-      </td>
-      <td data-label="Account" class="c-account">
-        <span class="acct-name"></span>
-        <span class="detail acct-id"></span>
-      </td>
-      <td data-label="Cooldown" class="c-cooldown">
-        <span class="countdown"></span>
-        <span class="cool-bar" hidden><span class="cool-bar-fill"></span></span>
-        <span class="detail cooldown-detail"></span>
-      </td>
-      <td data-label="Failures" class="c-failures num">
-        <span class="fail-run"></span><span class="fail-sep"> / </span><span class="fail-total"></span>
-      </td>
-      <td data-label="Last error" class="c-error">
-        <span class="none error-none">None</span>
-        <details class="error-details">
-          <summary><span class="error-kind"></span> <span class="error-meta"><time class="error-when"></time><svg class="icon error-chevron" aria-hidden="true"><use href="#i-chevron"/></svg></span><span class="visually-hidden">: </span><span class="error-preview"></span></summary>
-          <p class="error-message"></p>
-        </details>
-      </td>
-      <td data-label="Activity" class="c-activity">
-        <span class="activity-success"><span class="activity-label"></span><time class="rel success-at"></time></span>
-        <span class="detail activity-used"><span class="activity-label"></span><time class="rel used-at"></time></span>
-      </td>
-      <td data-label="Usage" class="c-usage num">
-        <span class="usage-requests"></span>
-        <span class="detail usage-tokens"></span>
-        <span class="detail usage-cost"></span>
-      </td>
-      <td data-label="Actions" class="c-actions">
-        <div class="actions">
-          <button type="button" class="btn btn-small act-toggle"></button>
-          <button type="button" class="btn btn-small act-clear">Clear cooldown</button>
-        </div>
-        <span class="detail act-note"></span>
-      </td>
-    </tr>
-  </template>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <div class="chart-tip" id="chart-tip" hidden></div>
+  <p class="sr-only" id="announcer" aria-live="polite"></p>
+
+  <dialog class="palette glass glass-thick" id="palette" aria-label="Command palette">
+    <div class="palette-field">
+      <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="text" id="palette-input" placeholder="Go to a view, account or chat" aria-label="Search commands" aria-controls="palette-list" aria-autocomplete="list" autocomplete="off" spellcheck="false">
+    </div>
+    <ul class="palette-list" id="palette-list" role="listbox" aria-label="Commands"></ul>
+  </dialog>
+
+  <dialog class="dialog glass glass-thick" id="add-account" aria-labelledby="add-title"></dialog>
 </body>
 </html>

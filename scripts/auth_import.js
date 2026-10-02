@@ -46,8 +46,11 @@ function normalizeCookieInput(input) {
   if (typeof input.cookies === 'string') return input.cookies.trim();
   return '';
 }
-function normalizeAuth(input, extra = {}) {
-  const token = String(input.token || input.access_token || input.accessToken || input.auth_token || extra.token || process.env.DEEPSEEK_TOKEN || '').trim().replace(/^Bearer\s+/i, '');
+// `useEnv: false` keeps DEEPSEEK_TOKEN out of the result: the dashboard import must
+// only store what the browser sent, never a token from the server's environment.
+function normalizeAuth(input, extra = {}, { useEnv = true } = {}) {
+  const envToken = useEnv ? process.env.DEEPSEEK_TOKEN : '';
+  const token = String(input.token || input.access_token || input.accessToken || input.auth_token || extra.token || envToken || '').trim().replace(/^Bearer\s+/i, '');
   const cookie = normalizeCookieInput(input) || extra.cookie || '';
   const auth = {
     token,

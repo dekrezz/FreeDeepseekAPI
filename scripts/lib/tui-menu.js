@@ -41,6 +41,8 @@ const STRINGS = {
     helpStatus: 'Print token / cookie / profile details',
     helpRemove: 'Delete deepseek-auth.json only',
     helpStart: 'Listen on the local API port',
+    startDashboard: 'Start proxy + open dashboard',
+    helpStartDashboard: 'Start, then open /dashboard in the browser',
     helpModels: 'List supported model ids',
     helpQuit: 'Leave this menu',
     importPath: 'Path to JSON',
@@ -73,6 +75,20 @@ const STRINGS = {
     openingChrome: 'Opening Chrome…',
     authReady: 'Connected. Your DeepSeek session is ready.',
     configureAgents: 'Configure coding agents',
+    chromeMissing: 'Chrome is not installed',
+    chromeSearching: 'Looking for Chrome…',
+    chromeChecked: 'checked',
+    chromeFound: 'Chrome found',
+    installBrew: 'Install with Homebrew',
+    helpInstallBrew: 'brew install --cask google-chrome',
+    openChromeSite: 'Open google.com/chrome',
+    helpOpenChromeSite: 'Download Chrome in your default browser',
+    retryChrome: 'I installed it — check again',
+    helpRetryChrome: 'Search for Chrome again',
+    brewInstalling: 'Installing Google Chrome with Homebrew…',
+    brewFailed: 'Homebrew could not install Chrome',
+    brewMissing: 'not found — use the download page',
+    siteOpened: 'Download page opened. Install Chrome, then check again.',
   },
   ru: {
     authTitle: 'Вход',
@@ -109,6 +125,8 @@ const STRINGS = {
     helpStatus: 'Показать token / cookie / профиль',
     helpRemove: 'Удалить только deepseek-auth.json',
     helpStart: 'Слушать локальный порт API',
+    startDashboard: 'Запустить прокси + открыть дашборд',
+    helpStartDashboard: 'Запустить и открыть /dashboard в браузере',
     helpModels: 'Список рабочих model id',
     helpQuit: 'Закрыть меню',
     importPath: 'Путь к JSON',
@@ -141,6 +159,20 @@ const STRINGS = {
     openingChrome: 'Открываю Chrome…',
     authReady: 'Готово. Сессия DeepSeek подключена.',
     configureAgents: 'Настроить coding-агентов',
+    chromeMissing: 'Chrome не установлен',
+    chromeSearching: 'Ищу Chrome…',
+    chromeChecked: 'проверено',
+    chromeFound: 'Chrome найден',
+    installBrew: 'Установить через Homebrew',
+    helpInstallBrew: 'brew install --cask google-chrome',
+    openChromeSite: 'Открыть google.com/chrome',
+    helpOpenChromeSite: 'Скачать Chrome в браузере по умолчанию',
+    retryChrome: 'Я установил — проверить снова',
+    helpRetryChrome: 'Ещё раз поискать Chrome',
+    brewInstalling: 'Устанавливаю Google Chrome через Homebrew…',
+    brewFailed: 'Homebrew не смог установить Chrome',
+    brewMissing: 'не найден — используйте страницу загрузки',
+    siteOpened: 'Страница загрузки открыта. Установите Chrome и проверьте снова.',
   },
   zh: {
     authTitle: '登录',
@@ -177,6 +209,8 @@ const STRINGS = {
     helpStatus: '显示 token / cookie / 配置',
     helpRemove: '只删除 deepseek-auth.json',
     helpStart: '监听本地 API 端口',
+    startDashboard: '启动代理并打开控制台',
+    helpStartDashboard: '启动后在浏览器中打开 /dashboard',
     helpModels: '列出可用 model id',
     helpQuit: '离开菜单',
     importPath: 'JSON 路径',
@@ -209,6 +243,20 @@ const STRINGS = {
     openingChrome: '正在打开 Chrome…',
     authReady: '连接成功。DeepSeek 会话已就绪。',
     configureAgents: '配置 Coding Agent',
+    chromeMissing: '未安装 Chrome',
+    chromeSearching: '正在查找 Chrome…',
+    chromeChecked: '已检查',
+    chromeFound: '已找到 Chrome',
+    installBrew: '用 Homebrew 安装',
+    helpInstallBrew: 'brew install --cask google-chrome',
+    openChromeSite: '打开 google.com/chrome',
+    helpOpenChromeSite: '在默认浏览器中下载 Chrome',
+    retryChrome: '已安装 — 重新检查',
+    helpRetryChrome: '再次查找 Chrome',
+    brewInstalling: '正在用 Homebrew 安装 Google Chrome…',
+    brewFailed: 'Homebrew 未能安装 Chrome',
+    brewMissing: '未找到 — 请使用下载页面',
+    siteOpened: '已打开下载页面。安装 Chrome 后重新检查。',
   },
 };
 
@@ -388,6 +436,9 @@ function disableInteractive() {
   if (process.stdin.isTTY) {
     try { process.stdin.setRawMode(false); } catch { /* already cooked */ }
   }
+  // A resumed stdin keeps the event loop alive, so the script would never exit
+  // after its last menu. The next menu or readline prompt resumes it again.
+  process.stdin.pause();
 }
 
 function renderFrame(state) {
@@ -685,6 +736,13 @@ async function runProgress(getState, task) {
   }
 }
 
+function browserOpenCommand(platform, url) {
+  if (platform === 'darwin') return { cmd: 'open', args: [url] };
+  // rundll32 opens the URL without going through cmd.exe, so nothing in it is shell-parsed.
+  if (platform === 'win32') return { cmd: 'rundll32', args: ['url.dll,FileProtocolHandler', url] };
+  return { cmd: 'xdg-open', args: [url] };
+}
+
 function printWordmark(subtitle = '') {
   const width = Math.max(60, process.stdout.columns || 80);
   console.log('');
@@ -781,5 +839,6 @@ module.exports = {
   askText,
   printWordmark,
   wordmarkLines,
+  browserOpenCommand,
   C,
 };

@@ -19,7 +19,13 @@
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { t, loadUiLang, saveUiLang, pick, runProgress } = require('./lib/tui-menu');
+const { t, loadUiLang, saveUiLang, pick, runProgress, browserOpenCommand, visibleWidth, C } = require('./lib/tui-menu');
+const {
+    CHROME_DOWNLOAD_URL,
+    locateChrome,
+    findBrew,
+    brewInstallCommand,
+} = require('./lib/chrome-setup');
 
 const repoRoot = path.resolve(__dirname, '..');
 const qwenRepoRoot = path.resolve(repoRoot, '..', 'FreeQwenApi');
@@ -96,105 +102,25 @@ function removeProfileSafely(dir) {
     }
 }
 
-function resolveChromePath() {
-    if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
-
-    // Prefer Puppeteer's bundled "Google Chrome for Testing" when available.
+// Puppeteer's bundled "Google Chrome for Testing", when puppeteer is installed here or
+// next to FreeQwenApi. The rest of the search lives in lib/chrome-setup.js.
+function puppeteerExecutables() {
+    const found = [];
     for (const base of [repoRoot, qwenRepoRoot]) {
         try {
-            const puppeteerPath = require.resolve('puppeteer', {
-                paths: [base],
-            });
-            const puppeteer = require(puppeteerPath);
+            const puppeteer = require(require.resolve('puppeteer', { paths: [base] }));
             if (typeof puppeteer.executablePath === 'function') {
                 const p = puppeteer.executablePath();
-                if (p && fs.existsSync(p)) return p;
+                if (p) found.push(p);
             }
         } catch {}
     }
-
-    // Try to locate Chrome for Testing in common Puppeteer cache locations.
-    // (The previous version was macOS-only, which broke Windows.)
-    const home = process.env.HOME || process.env.USERPROFILE || '';
-    if (home) {
-        const cacheRoot = path.join(home, '.cache', 'puppeteer', 'chrome');
-        try {
-            // macOS / Linux-style cache layout.
-            const candidates = fs
-                .readdirSync(cacheRoot)
-                .flatMap((dir) => {
-                    const baseDir = path.join(cacheRoot, dir);
-                    if (process.platform === 'darwin') {
-                        return [
-                            path.join(
-                                baseDir,
-                                'chrome-mac-arm64',
-                                'Google Chrome for Testing.app',
-                                'Contents',
-                                'MacOS',
-                                'Google Chrome for Testing',
-                            ),
-                            path.join(
-                                baseDir,
-                                'chrome-mac-x64',
-                                'Google Chrome for Testing.app',
-                                'Contents',
-                                'MacOS',
-                                'Google Chrome for Testing',
-                            ),
-                        ];
-                    }
-                    if (process.platform === 'win32') {
-                        // On Windows, Puppeteer cache layouts are not always identical; try the most common one.
-                        // Also consider that executable might be chrome.exe or chrome-win64\chrome.exe.
-                        return [
-                            path.join(baseDir, 'chrome-win64', 'chrome.exe'),
-                            path.join(baseDir, 'chrome-win64', 'chrome.exe'),
-                        ];
-                    }
-                    // linux
-                    return [
-                        path.join(baseDir, 'chrome-linux64', 'chrome'),
-                        path.join(baseDir, 'chrome-linux64', 'chrome.exe'),
-                    ];
-                })
-                .filter((p) => p && fs.existsSync(p))
-                .sort()
-                .reverse();
-            if (candidates[0]) return candidates[0];
-        } catch {}
-    }
-
-    // Last resort: OS-default Chrome locations.
-    // OS-default Chrome locations (keep it flexible and short).
-    if (process.platform === 'win32') {
-        const candidates = [
-            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        ];
-        for (const c of candidates) {
-            if (fs.existsSync(c)) return c;
-        }
-    } else if (process.platform === 'darwin') {
-        const candidates = [
-            '/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-        ];
-        for (const c of candidates) {
-            if (fs.existsSync(c)) return c;
-        }
-    }
-
-    // Final fallback: try legacy macOS Chrome path for backward compatibility
-    // (harmless on Windows because fs.existsSync above will fail).
-    const legacyMac =
-        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-    if (fs.existsSync(legacyMac)) return legacyMac;
-
-    return ''; // handled by the caller with a better error message.
+    return found;
 }
 
-const chromePath = resolveChromePath();
+function locate() {
+    return locateChrome({ puppeteer: puppeteerExecutables() });
+}
 
 function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
@@ -376,17 +302,23 @@ async function readPageAuth(cdp) {
         cookiesCount: cookies.length,
     };
 }
-function chromeInstallHelp(missingPath) {
-    return `Chrome/Chrome for Testing not found${missingPath ? `: ${missingPath}` : ''}.
+function chromeInstallHelp(checked) {
+    const list = checked.length
+        ? checked.map((c) => `  ✗ ${c.path}  (${c.source})`).join('\n')
+        : '  (no locations for this platform)';
+    return `Chrome/Chrome for Testing not found. Checked:
+${list}
 
 How to fix:
   Windows PowerShell:
     $env:CHROME_PATH="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"; npm run auth
-    # or install Chrome normally: https://www.google.com/chrome/
+    # or install Chrome normally: ${CHROME_DOWNLOAD_URL}
 
   macOS:
+    brew install --cask google-chrome
+    # or download it: ${CHROME_DOWNLOAD_URL}
+    # or point at another install:
     CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm run auth
-    # or install Chrome for Testing / Google Chrome.
 
   Linux / Chromium:
     CHROME_PATH=$(which chromium) npm run auth
@@ -395,11 +327,170 @@ How to fix:
 If Chrome is installed elsewhere, set CHROME_PATH to the real executable path.`;
 }
 
-async function main() {
-    if (!fs.existsSync(chromePath))
-        throw new Error(chromeInstallHelp(chromePath));
+// A missing browser is a setup problem with its own help text, not a crash.
+class ChromeMissingError extends Error {}
 
+const SPIN = ['◐', '◓', '◑', '◒'];
+const isInteractive = () =>
+    Boolean(process.stdin.isTTY && process.stdout.isTTY && !process.env.CI);
+
+function shortPath(p) {
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p;
+}
+
+// "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" → "/Applications/Google Chrome.app".
+function displayPath(p) {
+    return shortPath(p.replace(/(\.app)\/Contents\/MacOS\/[^/]+$/, '$1'));
+}
+
+// Rows are padded to one width so the centered list lines up as a column.
+function checkedRows(lang, checked, shown = checked.length) {
+    const rows = checked.map((c) => ({
+        ok: c.ok,
+        label: c.source === 'CHROME_PATH' ? 'CHROME_PATH' : t(lang, 'chromeChecked'),
+        value: displayPath(c.path),
+    }));
+    const width = Math.max(0, ...rows.map((r) => visibleWidth(r.value)));
+    return rows.slice(0, shown).map((r) => ({ ...r, value: r.value.padEnd(width) }));
+}
+
+// Searches with a short reveal animation so the user sees what was checked.
+async function searchAnimated(langRef) {
+    const found = locate();
+    const stepMs = 110;
+    const tickMs = 180;
+    await runProgress(
+        (tick) => {
+            const shown = Math.min(found.checked.length, Math.floor((tick * tickMs) / stepMs));
+            return {
+                lang: langRef.current,
+                subtitle: t(langRef.current, 'login'),
+                status: [
+                    { ok: true, label: '', value: `${SPIN[tick % 4]}  ${t(langRef.current, 'chromeSearching')}` },
+                    ...checkedRows(langRef.current, found.checked, shown),
+                ],
+                items: [],
+            };
+        },
+        () => sleep(Math.min(2000, stepMs * found.checked.length + 400)),
+    );
+    return found;
+}
+
+function lastLines(text, n) {
+    return String(text).replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-n);
+}
+
+// Runs `brew install --cask google-chrome` behind a spinner. stdin is closed, so a
+// sudo or confirmation prompt fails fast instead of hanging under the raw-mode TUI.
+async function brewInstall(langRef, brew) {
+    const { cmd, args } = brewInstallCommand(brew);
+    let output = '';
+    const startedAt = Date.now();
+    const code = await runProgress(
+        (tick) => {
+            const secs = Math.floor((Date.now() - startedAt) / 1000);
+            const tail = lastLines(output, 1)[0] || `${cmd} ${args.join(' ')}`;
+            return {
+                lang: langRef.current,
+                subtitle: t(langRef.current, 'installBrew'),
+                status: [
+                    { ok: true, label: '', value: `${SPIN[tick % 4]}  ${t(langRef.current, 'brewInstalling')}  ${secs}s` },
+                    { ok: true, label: 'brew', value: tail.length > 70 ? `${tail.slice(0, 69)}…` : tail },
+                ],
+                items: [],
+            };
+        },
+        () => new Promise((resolve) => {
+            const child = spawn(cmd, args, {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                env: { ...process.env, NONINTERACTIVE: '1', HOMEBREW_NO_ENV_HINTS: '1' },
+            });
+            child.stdout.on('data', (d) => { output += d; });
+            child.stderr.on('data', (d) => { output += d; });
+            child.on('error', (err) => { output += `\n${err.message}`; resolve(-1); });
+            child.on('close', (status) => resolve(status));
+        }),
+    );
+    return { ok: code === 0, output };
+}
+
+function openUrl(target) {
+    const { cmd, args } = browserOpenCommand(process.platform, target);
+    return new Promise((resolve) => {
+        const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+        child.on('error', (err) => resolve(err.message));
+        child.on('spawn', () => { child.unref(); resolve(null); });
+    });
+}
+
+// Returns a Chrome executable path, or null when the user backs out.
+async function ensureChrome(langRef) {
+    const quick = locate();
+    if (quick.path) return quick.path;
+    if (!isInteractive()) throw new ChromeMissingError(chromeInstallHelp(quick.checked));
+
+    let found = await searchAnimated(langRef);
+    let notes = [];
+    while (!found.path) {
+        const brew = findBrew();
+        const chosen = await pick(
+            () => {
+                const lang = langRef.current;
+                const items = [];
+                if (brew) items.push({ id: 'brew', label: t(lang, 'installBrew'), help: t(lang, 'helpInstallBrew') });
+                items.push(
+                    { id: 'site', label: t(lang, 'openChromeSite'), help: t(lang, 'helpOpenChromeSite') },
+                    { id: 'retry', label: t(lang, 'retryChrome'), help: t(lang, 'helpRetryChrome') },
+                    { id: 'back', label: t(lang, 'back'), help: t(lang, 'pressEnter') },
+                );
+                return {
+                    lang,
+                    subtitle: t(lang, 'chromeMissing'),
+                    status: [
+                        { ok: false, label: '', value: `${C.bold}${t(lang, 'chromeMissing')}${C.reset}` },
+                        ...checkedRows(lang, found.checked),
+                        ...(process.platform === 'darwin'
+                            ? [{ ok: Boolean(brew), label: 'Homebrew', value: brew ? shortPath(brew) : t(lang, 'brewMissing') }]
+                            : []),
+                        ...notes.map((n) => ({ ok: n.ok, label: '', value: n.text })),
+                    ],
+                    items,
+                };
+            },
+            (next) => { langRef.current = next; saveUiLang(next); },
+            { cancelId: 'back' },
+        );
+        notes = [];
+        if (chosen.id === 'brew') {
+            const res = await brewInstall(langRef, brew);
+            if (!res.ok) {
+                notes = [
+                    { ok: false, text: t(langRef.current, 'brewFailed') },
+                    ...lastLines(res.output, 3).map((l) => ({ ok: false, text: l.length > 90 ? `${l.slice(0, 89)}…` : l })),
+                ];
+            }
+            found = await searchAnimated(langRef);
+        } else if (chosen.id === 'site') {
+            const err = await openUrl(CHROME_DOWNLOAD_URL);
+            notes = [{ ok: !err, text: err ? `${CHROME_DOWNLOAD_URL} — ${err}` : t(langRef.current, 'siteOpened') }];
+        } else if (chosen.id === 'retry') {
+            found = await searchAnimated(langRef);
+        } else {
+            return null;
+        }
+    }
+    return found.path;
+}
+
+async function main() {
     const langRef = { current: loadUiLang() };
+    const chromePath = await ensureChrome(langRef);
+    if (!chromePath) {
+        process.exitCode = 3;
+        return;
+    }
     const cdp = await runProgress(
         (tick) => ({
             lang: langRef.current,
@@ -523,6 +614,7 @@ async function main() {
     else if (result.id === 'setup') process.exitCode = 10;
 }
 main().catch((e) => {
-    console.error('[auth] ERROR:', e);
+    if (e instanceof ChromeMissingError) console.error(`[auth] ${e.message}`);
+    else console.error('[auth] ERROR:', e);
     process.exit(1);
 });

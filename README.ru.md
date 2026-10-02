@@ -121,6 +121,7 @@ npm start
 `npm start` открывает меню запуска:
 
 - запустить proxy
+- запустить proxy и открыть дашборд (или `npm run dashboard`)
 - войти через Chrome
 - импортировать auth-файл или экспорт cookies
 - показать id моделей DeepSeek-V4.1-Flash
@@ -443,6 +444,7 @@ npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./account
 | `POST` | `/admin/accounts/<id>/enable` | `{ account, pool }`. `409 disabled_in_file`, если в файле `"enabled": false` |
 | `POST` | `/admin/accounts/<id>/clear-cooldown` | `{ account, pool }` |
 | `POST` | `/admin/accounts/reload` | `{ added, removed, kept, errors, accounts, pool }`. `422 no_accounts_found` оставляет пул как был |
+| `POST` | `/admin/accounts/restore` | Тело `{ archived_as }` из ответа `DELETE`. Возвращает файл на место и перечитывает пул: `{ restored, errors, accounts, pool }`. `404 archive_not_found`, `409 restore_target_exists` |
 
 Доступ:
 
@@ -451,7 +453,7 @@ npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./account
 - POST из браузера по-прежнему проходит проверку origin. Чтобы открывать панель не с loopback-адреса, добавьте этот origin в `PROXY_CORS_ORIGINS`.
 - В ответах admin API нет токенов, cookie, значений `hif_*` и имён auth-файлов.
 
-В образ контейнера файлы панели не входят. Там `/dashboard` отвечает `404 dashboard_unavailable`, а admin API работает.
+Панель входит в образ контейнера. С `--read-only` действия, которые пишут auth-файлы (добавить, переименовать, удалить, восстановить), падают с `500 auth_file_write_failed`; пауза, возобновление и снятие cooldown работают.
 
 ---
 

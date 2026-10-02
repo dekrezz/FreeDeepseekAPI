@@ -3,3 +3,10 @@
 !server.js
 !lib
 !lib/pow.js
+!scripts/lib/tui-menu.js
+!public/dashboard/index.html
+!public/dashboard/*.css
+!public/dashboard/*.js
+!public/dashboard/*.png
+!public/dashboard/*.jpg
+!public/dashboard/*.mp4

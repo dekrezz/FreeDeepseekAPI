@@ -121,6 +121,7 @@ npm start
 `npm start` 打开启动菜单：
 
 - 启动代理
+- 启动代理并打开控制台（或 `npm run dashboard`）
 - 用 Chrome 登录
 - 导入 auth 文件或浏览器 cookie 导出
 - 列出 DeepSeek-V4.1-Flash 的模型 id
@@ -443,6 +444,7 @@ npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./account
 | `POST` | `/admin/accounts/<id>/enable` | `{ account, pool }`。文件里是 `"enabled": false` 时返回 `409 disabled_in_file` |
 | `POST` | `/admin/accounts/<id>/clear-cooldown` | `{ account, pool }` |
 | `POST` | `/admin/accounts/reload` | `{ added, removed, kept, errors, accounts, pool }`。`422 no_accounts_found` 时账号池保持不变 |
+| `POST` | `/admin/accounts/restore` | 请求体 `{ archived_as }` 来自 `DELETE` 的响应。把文件改回原名并重新加载：`{ restored, errors, accounts, pool }`。`404 archive_not_found`、`409 restore_target_exists` |
 
 访问规则：
 
@@ -451,7 +453,7 @@ npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./account
 - 浏览器的 POST 仍要通过 origin 检查。要从非 loopback 地址使用面板，把那个 origin 加进 `PROXY_CORS_ORIGINS`。
 - admin 响应里不会有 token、cookie、`hif_*` 值或 auth 文件名。
 
-容器镜像不包含面板文件。在容器里 `/dashboard` 返回 `404 dashboard_unavailable`，admin API 照常可用。
+容器镜像包含面板。使用 `--read-only` 时，需要写 auth 文件的操作（添加、重命名、删除、恢复）会返回 `500 auth_file_write_failed`；暂停、恢复和清除冷却照常可用。
 
 ---
 

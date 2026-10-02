@@ -679,7 +679,7 @@ function adminFixture(t) {
 
 const ACCOUNT_VIEW_KEYS = [
   'busy', 'busy_agent', 'busy_since', 'cooldown_reason', 'cooldown_remaining_sec', 'cooldown_until',
-  'credentials', 'disabled_by', 'enabled', 'failures', 'id', 'last_error', 'last_success_at',
+  'credentials', 'disabled_by', 'email', 'enabled', 'failures', 'id', 'last_error', 'last_success_at',
   'last_used_at', 'name', 'status', 'total_failures', 'usage',
 ].sort();
 
@@ -883,4 +883,443 @@ test('GET /dashboard serves a whitelisted page with a strict CSP and nothing els
   assert.equal((await request(port, 'GET', '/dashboard/../server.js')).status, 404);
   assert.equal((await request(port, 'GET', '/dashboard/%2e%2e/server.js')).status, 404);
   assert.equal((await request(port, 'GET', '/dashboard/x')).status, 404);
+});
+
+// ---------------------------------------------------------------------------
+// Dashboard data: request log, usage aggregates, account file management
+// ---------------------------------------------------------------------------
+
+function freshRequestStats(t) {
+  S.clearRequestStats();
+  t.after(() => S.clearRequestStats());
+}
+function forgetAgents(t, ...agents) {
+  t.after(() => { for (const agent of agents) S.sessions.delete(agent); });
+}
+
+const REQUEST_VIEW_KEYS = [
+  'account', 'agent', 'api', 'completion_tokens', 'error_message', 'error_type', 'id', 'ip', 'local',
+  'model', 'ms', 'ok', 'path', 'prompt_tokens', 'reasoning_tokens', 'status', 'stream', 'ts', 'usd',
+].sort();
+
+test('GET /admin/requests lists request metadata newest first, never prompt or answer text', async (t) => {
+  freshRequestStats(t);
+  useAccounts(t, [acct('ready')]);
+  installUpstream(t, { completion: { ready: [() => sse(okSse('ANSWER_PRIVATE_TEXT'))] } });
+  forgetAgents(t, 'dashboard:log-1', 'dashboard:log-2', 'dashboard:log-3');
+  const port = await startServer(t);
+
+  let res = await chat(port, 'dashboard:log-1', [{ role: 'user', content: 'PROMPT_PRIVATE_TEXT' }]);
+  assert.equal(res.status, 200, res.text);
+  res = await chat(port, 'dashboard:log-2', [{ role: 'user', content: 'hi' }], { model: 'no-such-model' });
+  assert.equal(res.status, 400, res.text);
+  res = await request(port, 'POST', '/v1/messages', {
+    body: { model: 'deepseek-v4-flash', max_tokens: 50, stream: true, messages: [{ role: 'user', content: 'PROMPT_PRIVATE_TEXT 2' }] },
+    headers: { 'x-agent-session': 'dashboard:log-3' },
+  });
+  assert.equal(res.status, 200, res.text);
+
+  res = await request(port, 'GET', '/admin/requests');
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.headers['cache-control'], 'no-store');
+  assert.equal(typeof res.json.now, 'number');
+  assert.equal(res.json.capacity, 400);
+  assert.equal(res.json.total, 3);
+  assert.equal(res.json.matched, 3);
+  const rows = res.json.requests;
+  assert.equal(rows.length, 3);
+  for (const row of rows) assert.deepEqual(Object.keys(row).sort(), REQUEST_VIEW_KEYS);
+  assert.ok(rows[0].id > rows[1].id && rows[1].id > rows[2].id, 'newest first, ids increase');
+
+  const [anthropic, invalid, openai] = rows;
+  assert.equal(openai.path, '/v1/chat/completions');
+  assert.equal(openai.api, 'openai');
+  assert.equal(openai.stream, false);
+  assert.equal(openai.status, 200);
+  assert.equal(openai.ok, true);
+  assert.equal(openai.local, false);
+  assert.equal(openai.account, 'ready');
+  assert.equal(openai.agent, 'dashboard:log-1');
+  assert.equal(openai.model, 'deepseek-v4-flash');
+  assert.ok(openai.prompt_tokens > 0 && openai.completion_tokens > 0);
+  assert.equal(openai.reasoning_tokens, 0);
+  assert.ok(openai.usd > 0);
+  assert.equal(openai.error_type, null);
+  assert.equal(openai.error_message, null);
+
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.error_type, 'invalid_model');
+  assert.match(invalid.error_message, /no-such-model/);
+  assert.equal(invalid.account, null);
+
+  assert.equal(anthropic.api, 'anthropic');
+  assert.equal(anthropic.path, '/v1/messages');
+  assert.equal(anthropic.stream, true);
+  assert.equal(anthropic.ok, true);
+
+  assert.doesNotMatch(res.text, /PRIVATE_TEXT/, 'the log never carries message content');
+  assert.doesNotMatch(res.text, /SECRET/);
+});
+
+test('GET /admin/requests filters, pages, and rejects bad queries precisely', async (t) => {
+  freshRequestStats(t);
+  const now = Date.now();
+  const base = { ip: '127.0.0.1', path: '/v1/chat/completions', prompt_tokens: 10, completion_tokens: 5, usd: 0.001, ms: 900 };
+  S.recordRequest({ ...base, ts: now - 4000, status: 200, ok: true, agent: 'a1', account: 'acc1', model: 'deepseek-v4-flash' });
+  S.recordRequest({ ...base, ts: now - 3000, status: 429, ok: false, agent: 'a2', account: 'acc2', model: 'deepseek-v4-flash-thinking', error_type: 'rate_limit', error_message: 'All accounts are cooling down' });
+  S.recordRequest({ ...base, ts: now - 2000, status: 200, ok: true, agent: 'a1', account: 'acc2', model: 'deepseek-v4-flash', path: '/v1/messages', api: 'anthropic' });
+  S.recordRequest({ ...base, ts: now - 1000, status: 500, ok: false, agent: 'a3', account: 'acc1', model: 'deepseek-v4-flash', error_type: 'server_error', error_message: 'boom' });
+  const port = await startServer(t);
+
+  const ids = async (query) => {
+    const res = await request(port, 'GET', `/admin/requests${query}`);
+    assert.equal(res.status, 200, res.text);
+    return res.json.requests.map(r => r.agent + ':' + r.status);
+  };
+  assert.deepEqual(await ids('?status=error'), ['a3:500', 'a2:429']);
+  assert.deepEqual(await ids('?status=ok'), ['a1:200', 'a1:200']);
+  assert.deepEqual(await ids('?status=429'), ['a2:429']);
+  assert.deepEqual(await ids('?account=acc2'), ['a1:200', 'a2:429']);
+  assert.deepEqual(await ids('?model=deepseek-v4-flash-thinking'), ['a2:429']);
+  assert.deepEqual(await ids('?api=anthropic'), ['a1:200']);
+  assert.deepEqual(await ids('?agent=a1'), ['a1:200', 'a1:200']);
+  assert.deepEqual(await ids('?limit=2'), ['a3:500', 'a1:200']);
+
+  const all = (await request(port, 'GET', '/admin/requests')).json.requests;
+  assert.equal(all[0].api, 'openai', 'rows without api derive it from the path');
+  const page = await request(port, 'GET', `/admin/requests?before_id=${all[1].id}&limit=10`);
+  assert.deepEqual(page.json.requests.map(r => r.id), [all[2].id, all[3].id]);
+  assert.equal(page.json.matched, 2);
+
+  for (const bad of ['?limit=0', '?limit=401', '?limit=abc', '?status=maybe', '?before_id=x', '?api=grpc']) {
+    const res = await request(port, 'GET', `/admin/requests${bad}`);
+    assert.equal(res.status, 400, `${bad}: ${res.text}`);
+    assert.equal(res.json.error.type, 'invalid_query');
+  }
+  assert.equal((await request(port, 'POST', '/admin/requests')).status, 405);
+});
+
+test('the request log is capped at 400 rows and error text is scrubbed of credentials', async (t) => {
+  freshRequestStats(t);
+  useAccounts(t, [acct('ready')]);
+  for (let i = 0; i < 405; i++) {
+    S.recordRequest({ ts: Date.now(), ip: '127.0.0.1', path: '/v1/chat/completions', status: 200, ok: true, prompt_tokens: 1, completion_tokens: 1, usd: 0, ms: 1, agent: `bulk-${i}`, account: null, model: 'deepseek-v4-flash' });
+  }
+  S.recordRequest({
+    ts: Date.now(), ip: '127.0.0.1', path: '/v1/chat/completions', status: 502, ok: false, prompt_tokens: 0, completion_tokens: 0, usd: 0, ms: 1,
+    agent: 'leaky', account: 'ready', model: 'deepseek-v4-flash', error_type: 'server_error',
+    error_message: `upstream said Authorization: Bearer tok-ready-SECRET and cookie CK-ready-SECRET ${'x'.repeat(1000)}`,
+  });
+  const port = await startServer(t);
+  const res = await request(port, 'GET', '/admin/requests?limit=400');
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.total, 400);
+  assert.equal(res.json.requests.length, 400);
+  assert.equal(res.json.requests[0].agent, 'leaky');
+  assert.equal(res.json.requests.at(-1).agent, 'bulk-6', 'the oldest rows are dropped first');
+  assert.doesNotMatch(res.text, /SECRET/);
+  assert.match(res.json.requests[0].error_message, /\[redacted\]/);
+  assert.ok(res.json.requests[0].error_message.length <= 300, 'error text is clipped');
+});
+
+test('GET /admin/usage aggregates estimated tokens by account, model, endpoint, agent, and time', async (t) => {
+  freshRequestStats(t);
+  const now = Date.now();
+  const row = (ago, extra) => ({ ts: now - ago, ip: '127.0.0.1', path: '/v1/chat/completions', status: 200, ok: true, prompt_tokens: 100, completion_tokens: 50, reasoning_tokens: 0, usd: 0.0001, ms: 1000, agent: 'cli', account: 'acc1', model: 'deepseek-v4-flash', ...extra });
+  S.recordRequest(row(10 * 60_000));
+  S.recordRequest(row(20 * 60_000, { account: 'acc2', model: 'deepseek-v4-flash-thinking', reasoning_tokens: 20, agent: 'dashboard:c1' }));
+  S.recordRequest(row(30 * 60_000, { ok: false, status: 429, prompt_tokens: 0, completion_tokens: 0, usd: 0, account: null, error_type: 'rate_limit' }));
+  S.recordRequest(row(2 * 3600_000, { path: '/v1/messages', api: 'anthropic' }));
+  S.recordRequest(row(30 * 3600_000, { account: 'acc2' }));
+  const port = await startServer(t);
+
+  let res = await request(port, 'GET', '/admin/usage?window=1h');
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.headers['cache-control'], 'no-store');
+  const hour = res.json;
+  assert.equal(hour.estimated, true);
+  assert.deepEqual(hour.pricing, { input_per_m: 0.22, output_per_m: 0.66, currency: 'USD' });
+  assert.equal(hour.window.key, '1h');
+  assert.equal(hour.bucket.key, '1m');
+  assert.equal(hour.series.length, 60);
+  assert.deepEqual(
+    { requests: hour.totals.requests, errors: hour.totals.errors, prompt_tokens: hour.totals.prompt_tokens, completion_tokens: hour.totals.completion_tokens, reasoning_tokens: hour.totals.reasoning_tokens },
+    { requests: 3, errors: 1, prompt_tokens: 200, completion_tokens: 100, reasoning_tokens: 20 },
+  );
+  assert.equal(hour.totals.avg_ms, 1000);
+  const seriesSum = hour.series.reduce((sum, b) => sum + b.requests, 0);
+  assert.equal(seriesSum, 3);
+  assert.ok(hour.series.every((b, i, a) => i === 0 || b.t - a[i - 1].t === 60_000), 'dense, evenly spaced buckets');
+  const byKey = (list) => Object.fromEntries(list.map(e => [e.key === null ? '(none)' : e.key, e]));
+  const accounts = byKey(hour.by_account);
+  assert.equal(accounts.acc1.requests, 1);
+  assert.equal(accounts.acc2.requests, 1);
+  assert.equal(accounts['(none)'].errors, 1);
+  assert.equal(byKey(hour.by_model)['deepseek-v4-flash'].requests, 2);
+  assert.equal(byKey(hour.by_model)['deepseek-v4-flash-thinking'].reasoning_tokens, 20);
+  assert.equal(byKey(hour.by_endpoint)['/v1/chat/completions'].requests, 3);
+  assert.equal(byKey(hour.by_agent)['dashboard:c1'].prompt_tokens, 100);
+  assert.deepEqual(hour.by_model.map(e => e.requests), [2, 1], 'breakdowns sort by requests, descending');
+
+  res = await request(port, 'GET', '/admin/usage?window=24h');
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.bucket.key, '15m');
+  assert.equal(res.json.series.length, 96);
+  assert.equal(res.json.totals.requests, 4, 'the 30h-old row is outside the 24h window');
+  assert.equal(byKey(res.json.by_endpoint)['/v1/messages'].requests, 1);
+
+  assert.equal(res.json.lifetime.requests, 5);
+  assert.equal(typeof res.json.lifetime.since, 'number');
+  assert.equal(byKey(res.json.lifetime.by_account).acc2.requests, 2, 'lifetime per-account totals include old rows');
+
+  res = await request(port, 'GET', '/admin/usage?window=6h&bucket=1h');
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.series.length, 6);
+
+  for (const bad of ['?window=7d', '?bucket=2m', '?window=15m&bucket=1h']) {
+    const r = await request(port, 'GET', `/admin/usage${bad}`);
+    assert.equal(r.status, 400, `${bad}: ${r.text}`);
+    assert.equal(r.json.error.type, 'invalid_query');
+  }
+});
+
+function useAuthDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fdsapi-manage-'));
+  const previousDir = process.env.DEEPSEEK_AUTH_DIR;
+  process.env.DEEPSEEK_AUTH_DIR = dir;
+  t.after(() => {
+    if (previousDir === undefined) delete process.env.DEEPSEEK_AUTH_DIR;
+    else process.env.DEEPSEEK_AUTH_DIR = previousDir;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  return dir;
+}
+function rawRequest(port, method, pathName, payload, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method, path: pathName, agent: false, headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), ...headers } }, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', c => { data += c; });
+      res.on('end', () => { let json = null; try { json = JSON.parse(data); } catch (e) { /* */ } resolve({ status: res.statusCode, text: data, json }); });
+    });
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
+test('POST /admin/accounts/import writes a 0600 auth file into the accounts dir and loads it', async (t) => {
+  useAccounts(t, []);
+  const dir = useAuthDir(t);
+  fs.writeFileSync(path.join(dir, 'first.json'), JSON.stringify({ token: 'tok-first-SECRET', cookie: 'a=1' }));
+  const port = await startServer(t);
+  assert.equal((await request(port, 'POST', '/admin/accounts/reload')).status, 200);
+
+  const exported = { token: 'tok-new-SECRET', hif_dliq: 'HD-SECRET', hif_leim: 'HL-SECRET', cookie: 'ds_session_id=CK-new-SECRET; smidV2=x', wasmUrl: 'https://fe-static.deepseek.com/chat/static/x.wasm' };
+  let res = await request(port, 'POST', '/admin/accounts/import', { body: { name: 'Work Main', auth: exported } });
+  assert.equal(res.status, 201, res.text);
+  assert.equal(res.headers['cache-control'], 'no-store');
+  assert.equal(res.json.account.id, 'work-main');
+  assert.equal(res.json.account.name, 'Work Main');
+  assert.equal(res.json.account.status, 'ready');
+  assert.deepEqual(res.json.added, ['work-main']);
+  assert.equal(res.json.pool.total, 2);
+  assert.doesNotMatch(res.text, /SECRET/);
+  assert.equal(res.text.includes(dir), false);
+  const file = path.join(dir, 'work-main.json');
+  const written = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(written.token, 'tok-new-SECRET');
+  assert.equal(written.cookie, exported.cookie);
+  assert.equal(written.hif_dliq, 'HD-SECRET');
+  assert.equal(written.name, 'Work Main');
+  if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.deepEqual(S.accounts.map(a => a.id).sort(), ['first', 'work-main']);
+
+  res = await request(port, 'POST', '/admin/accounts/import', { body: { name: 'Work Main', auth: { token: 'tok-other', cookie: 'b=2' } } });
+  assert.equal(res.status, 409, res.text);
+  assert.equal(res.json.error.type, 'account_exists');
+
+  res = await request(port, 'POST', '/admin/accounts/import', { body: { name: 'Again', auth: exported } });
+  assert.equal(res.status, 409, res.text);
+  assert.equal(res.json.error.type, 'duplicate_account');
+  assert.equal(res.json.error.account, 'work-main');
+
+  res = await request(port, 'POST', '/admin/accounts/import', { body: { name: 'No Cookie', auth: { token: 'tok-x' } } });
+  assert.equal(res.status, 422, res.text);
+  assert.equal(res.json.error.type, 'invalid_auth');
+  assert.deepEqual(res.json.error.errors, ['cookie missing']);
+
+  for (const body of [{ auth: exported }, { name: '   ', auth: exported }, { name: 'x'.repeat(65), auth: exported }, { name: 'ok', auth: 'string' }]) {
+    res = await request(port, 'POST', '/admin/accounts/import', { body });
+    assert.equal(res.status, 422, res.text);
+    assert.equal(res.json.error.type, 'invalid_request');
+  }
+
+  res = await rawRequest(port, 'POST', '/admin/accounts/import', '{"name":');
+  assert.equal(res.status, 400, res.text);
+  assert.equal(res.json.error.type, 'invalid_json');
+
+  res = await rawRequest(port, 'POST', '/admin/accounts/import', JSON.stringify({ name: 'big', auth: { token: 't', cookie: 'c'.repeat(70 * 1024) } }));
+  assert.equal(res.status, 413, res.text);
+  assert.equal(res.json.error.type, 'payload_too_large');
+
+  assert.equal((await request(port, 'GET', '/admin/accounts/import')).status, 405);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['first.json', 'work-main.json'], 'failed imports write nothing');
+});
+
+test('POST /admin/accounts/import refuses when auth files come from an explicit path list', async (t) => {
+  useAccounts(t, [acct('ready')]);
+  const previousDir = process.env.DEEPSEEK_AUTH_DIR;
+  const previousPath = process.env.DEEPSEEK_AUTH_PATH;
+  delete process.env.DEEPSEEK_AUTH_DIR;
+  process.env.DEEPSEEK_AUTH_PATH = '/nonexistent/a.json,/nonexistent/b.json';
+  t.after(() => {
+    if (previousDir === undefined) delete process.env.DEEPSEEK_AUTH_DIR; else process.env.DEEPSEEK_AUTH_DIR = previousDir;
+    if (previousPath === undefined) delete process.env.DEEPSEEK_AUTH_PATH; else process.env.DEEPSEEK_AUTH_PATH = previousPath;
+  });
+  const port = await startServer(t);
+  const res = await request(port, 'POST', '/admin/accounts/import', { body: { name: 'x', auth: { token: 't', cookie: 'c=1' } } });
+  assert.equal(res.status, 409, res.text);
+  assert.equal(res.json.error.type, 'import_unsupported');
+  assert.doesNotMatch(res.text, /nonexistent/);
+});
+
+test('PATCH /admin/accounts/:id renames and persists enabled in the auth file', async (t) => {
+  useAccounts(t, []);
+  const dir = useAuthDir(t);
+  fs.writeFileSync(path.join(dir, 'a.json'), JSON.stringify({ token: 'tok-a-SECRET', cookie: 'a=1' }), { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, 'b.json'), JSON.stringify({ token: 'tok-b-SECRET', cookie: 'b=1' }), { mode: 0o600 });
+  const port = await startServer(t);
+  assert.equal((await request(port, 'POST', '/admin/accounts/reload')).status, 200);
+
+  let res = await request(port, 'PATCH', '/admin/accounts/a', { body: { name: 'Personal', enabled: false } });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.account.id, 'a');
+  assert.equal(res.json.account.name, 'Personal');
+  assert.equal(res.json.account.status, 'disabled');
+  assert.equal(res.json.account.disabled_by, 'file');
+  assert.doesNotMatch(res.text, /SECRET/);
+  let onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'a.json'), 'utf8'));
+  assert.deepEqual(onDisk, { token: 'tok-a-SECRET', cookie: 'a=1', name: 'Personal', enabled: false });
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(dir, 'a.json')).mode & 0o777, 0o600);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['a.json', 'b.json'], 'no temp files left behind');
+
+  S.accounts.find(a => a.id === 'a').adminDisabled = true;
+  res = await request(port, 'PATCH', '/admin/accounts/a', { body: { enabled: true } });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.account.status, 'ready', 'persistent enable also lifts the runtime pause');
+  onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'a.json'), 'utf8'));
+  assert.equal('enabled' in onDisk, false);
+  assert.equal(onDisk.name, 'Personal');
+
+  for (const body of [{}, { enabled: 'no' }, { name: '' }, { token: 'x' }]) {
+    res = await request(port, 'PATCH', '/admin/accounts/a', { body });
+    assert.equal(res.status, 422, `${JSON.stringify(body)}: ${res.text}`);
+    assert.equal(res.json.error.type, 'invalid_request');
+  }
+  res = await request(port, 'PATCH', '/admin/accounts/missing', { body: { name: 'x' } });
+  assert.equal(res.status, 404, res.text);
+  assert.equal(res.json.error.type, 'account_not_found');
+});
+
+test('DELETE /admin/accounts/:id archives the auth file out of the pool', async (t) => {
+  useAccounts(t, []);
+  const dir = useAuthDir(t);
+  fs.writeFileSync(path.join(dir, 'a.json'), JSON.stringify({ token: 'tok-a-SECRET', cookie: 'a=1' }));
+  fs.writeFileSync(path.join(dir, 'b.json'), JSON.stringify({ token: 'tok-b-SECRET', cookie: 'b=1' }));
+  const port = await startServer(t);
+  assert.equal((await request(port, 'POST', '/admin/accounts/reload')).status, 200);
+
+  let res = await request(port, 'DELETE', '/admin/accounts/a');
+  assert.equal(res.status, 200, res.text);
+  assert.deepEqual(res.json.removed, ['a']);
+  assert.match(res.json.archived_as, /^a\.json\.removed-\d+$/);
+  assert.deepEqual(res.json.accounts.map(a => a.id), ['b']);
+  assert.equal(res.json.pool.total, 1);
+  assert.doesNotMatch(res.text, /SECRET/);
+  assert.equal(res.text.includes(dir), false);
+  assert.deepEqual(S.accounts.map(a => a.id), ['b']);
+  const files = fs.readdirSync(dir).sort();
+  assert.equal(files.length, 2);
+  assert.ok(files.includes('b.json'));
+  assert.ok(files.includes(res.json.archived_as), 'credentials are archived, not destroyed');
+
+  res = await request(port, 'DELETE', '/admin/accounts/b');
+  assert.equal(res.status, 409, res.text);
+  assert.equal(res.json.error.type, 'last_account');
+  assert.ok(fs.existsSync(path.join(dir, 'b.json')));
+
+  res = await request(port, 'DELETE', '/admin/accounts/missing');
+  assert.equal(res.status, 404, res.text);
+});
+
+test('POST /admin/accounts/restore brings an archived auth file back into the pool', async (t) => {
+  useAccounts(t, []);
+  const dir = useAuthDir(t);
+  fs.writeFileSync(path.join(dir, 'a.json'), JSON.stringify({ token: 'tok-a-SECRET', cookie: 'a=1' }));
+  fs.writeFileSync(path.join(dir, 'b.json'), JSON.stringify({ token: 'tok-b-SECRET', cookie: 'b=1' }));
+  const port = await startServer(t);
+  assert.equal((await request(port, 'POST', '/admin/accounts/reload')).status, 200);
+  const removed = await request(port, 'DELETE', '/admin/accounts/a');
+  assert.equal(removed.status, 200, removed.text);
+
+  let res = await request(port, 'POST', '/admin/accounts/restore', { body: { archived_as: removed.json.archived_as } });
+  assert.equal(res.status, 200, res.text);
+  assert.deepEqual(res.json.restored, ['a']);
+  assert.deepEqual(res.json.accounts.map(a => a.id).sort(), ['a', 'b']);
+  assert.deepEqual(S.accounts.map(a => a.id).sort(), ['a', 'b']);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['a.json', 'b.json']);
+  assert.doesNotMatch(res.text, /SECRET/);
+  assert.equal(res.text.includes(dir), false);
+
+  res = await request(port, 'POST', '/admin/accounts/restore', { body: { archived_as: removed.json.archived_as } });
+  assert.equal(res.status, 404, res.text);
+  assert.equal(res.json.error.type, 'archive_not_found');
+
+  for (const archived_as of ['../a.json.removed-1', 'a.json', 'sub/a.json.removed-1', '', 7]) {
+    res = await request(port, 'POST', '/admin/accounts/restore', { body: { archived_as } });
+    assert.equal(res.status, 422, `${JSON.stringify(archived_as)}: ${res.text}`);
+    assert.equal(res.json.error.type, 'invalid_request');
+  }
+
+  const second = await request(port, 'DELETE', '/admin/accounts/a');
+  assert.equal(second.status, 200, second.text);
+  fs.writeFileSync(path.join(dir, 'a.json'), JSON.stringify({ token: 'tok-new-SECRET', cookie: 'n=1' }));
+  res = await request(port, 'POST', '/admin/accounts/restore', { body: { archived_as: second.json.archived_as } });
+  assert.equal(res.status, 409, res.text);
+  assert.equal(res.json.error.type, 'restore_target_exists');
+  assert.ok(fs.existsSync(path.join(dir, second.json.archived_as)), 'archive is left in place on conflict');
+  assert.equal((await request(port, 'GET', '/admin/accounts/restore')).status, 405);
+});
+
+test('DELETE /admin/accounts/:id refuses accounts loaded from outside the managed accounts dir', async (t) => {
+  useAccounts(t, [acct('outside'), acct('other')]);
+  useAuthDir(t);
+  const port = await startServer(t);
+  const res = await request(port, 'DELETE', '/admin/accounts/outside');
+  assert.equal(res.status, 409, res.text);
+  assert.equal(res.json.error.type, 'account_file_protected');
+  assert.doesNotMatch(res.text, /fdsapi-secret-dir/);
+  assert.equal(S.accounts.length, 2);
+});
+
+test('new admin routes keep the keyless CSRF / rebinding gate', async (t) => {
+  freshRequestStats(t);
+  const port = await startServer(t);
+  for (const [method, p] of [['GET', '/admin/requests'], ['GET', '/admin/usage'], ['POST', '/admin/accounts/import'], ['DELETE', '/admin/accounts/x'], ['PATCH', '/admin/accounts/x'], ['POST', '/admin/accounts/restore']]) {
+    const res = await request(port, method, p, { headers: { origin: 'http://localhost:1' }, body: method === 'GET' ? undefined : {} });
+    assert.equal(res.status, 403, `${method} ${p}: ${res.text}`);
+    assert.equal(res.json.error.type, 'admin_forbidden');
+  }
+});
+
+test('dashboard serves flat lowercase .js/.css/.svg assets from its folder and nothing else', async (t) => {
+  const port = await startServer(t);
+  for (const p of ['/dashboard/API.md', '/dashboard/DESIGN.md', '/dashboard/missing.js', '/dashboard/App.js', '/dashboard/a.b.js', '/dashboard/sub/app.js', '/dashboard/.hidden.js']) {
+    const res = await request(port, 'GET', p);
+    assert.equal(res.status, 404, `${p}: ${res.text}`);
+  }
+  const res = await request(port, 'GET', '/dashboard/app.css');
+  assert.equal(res.status, 200);
+  assert.match(res.headers['content-security-policy'], /default-src 'none'/);
 });
