@@ -22,7 +22,7 @@ This is a **Web-session** API, not `api.deepseek.com`. One DeepSeek login can se
 | POST | `/v1/chat/completions` | proxy key if set | OpenAI Chat Completions (`stream` true\|false) |
 | POST | `/v1/messages` | proxy key if set | Anthropic Messages |
 | POST | `/v1/responses` | proxy key if set | OpenAI Responses |
-| POST | `/reset-session?agent=<id\|all>` | proxy key if set | Drop a sticky Web chat |
+| POST | `/reset-session?agent=<id\|all>` | proxy key if set | Drop a sticky Web chat. `&history=drop` also clears the proxy's copy of the conversation |
 
 ## Completions
 

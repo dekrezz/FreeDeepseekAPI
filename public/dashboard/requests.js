@@ -44,7 +44,7 @@
     });
     const hero = F.pageHero({ image: '/dashboard/media-airglow-cities.jpg', label: 'Request log', position: '40% 30%' });
     root.append(hero, h('div', { class: 'view-pad' },
-      h('div', { class: 'filter-row' }, statusSeg, selects, h('label', { class: 'search-field search-field-inline' }, F.icon('search'), client), h('kbd', { class: 'kbd', 'aria-hidden': 'true', text: '/' })),
+      h('div', { class: 'filter-row' }, statusSeg, selects, h('label', { class: 'search-field search-field-inline' }, F.icon('search'), client)),
       notice,
       h('div', { class: 'table-scroll' }, table),
       empty, foot),

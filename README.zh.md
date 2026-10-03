@@ -375,6 +375,8 @@ curl -X POST "http://127.0.0.1:9655/reset-session?agent=my-agent"
 curl -X POST "http://127.0.0.1:9655/reset-session?agent=all"
 ```
 
+重置会保留代理这边的对话副本；如果客户端只发来一条消息，这份副本会被带进下一个聊天。如果客户端会自己发送完整记录（比如修改了之前的某条消息），请加上 `&history=drop`，被替换掉的轮次就不会再出现。
+
 DeepSeek 网站上仍然能看到这些聊天。代理走的是 Web Chat API，聊天本身存在 DeepSeek 那边。会话复用只是在当前链还能用的时候，不再另开一个。
 
 正文恰好是 `/new` 的消息会重置这个代理的远程聊天，并且不会发给模型。

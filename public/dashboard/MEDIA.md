@@ -13,3 +13,10 @@ nothing else is changed. NASA's logo or endorsement is not implied.
 | `logo.png` | `docs/assets/logo.png` (project logo) | FreeDeepseekAPI | cropped to the whale, 128×128 PNG with alpha |
 | `media-milky-way.jpg` | `iss063e054340` (Milky Way over Earth's airglow, Expedition 63) | NASA | 1920 px, JPEG q50 |
 | `media-night-earth.jpg` | `iss066e029018` (southern India and Sri Lanka at night with airglow, Expedition 66) | NASA | resized to 2400×1600, JPEG q72; used for the open chat (replaces `media-milky-way.jpg`) |
+
+## Icons
+
+| Symbol | Source | License |
+|---|---|---|
+| `i-files` in `index.html` (Add account drop zone) | Hugeicons `files-02`, https://hugeicons.com (via https://icon-sets.iconify.design/hugeicons/) | MIT |
+| `i-session-reset` in `index.html` (chat menu, Reset server session) | Hugeicons `reload`, https://hugeicons.com (via https://icon-sets.iconify.design/hugeicons/) | MIT |

@@ -719,6 +719,19 @@ function resetRemoteSession(session) {
     return failed;
 }
 
+// POST /reset-session: the next request opens a new DeepSeek chat. Local history is
+// kept as a recovery hint unless the client drops it (it will send its own transcript,
+// e.g. after editing a message, and the replaced turns must not come back).
+function resetAgentSession(agentId, { dropHistory = false } = {}) {
+    const session = sessions.get(agentId);
+    if (!session) return null;
+    if (dropHistory) session.history = [];
+    const historyCount = session.history.length;
+    const historyPreview = session.history.map(e => String(e.user || '').substring(0, 40)).join(' | ');
+    resetRemoteSession(session);
+    return { status: 'session_reset', agent: agentId, history_preserved: historyCount, history: historyPreview };
+}
+
 function prepareSessionForPrompt(session, now = Date.now()) {
     if (!session || !session.id) return null;
     let reason = null;
@@ -3636,10 +3649,19 @@ function parseByteRange(header, size) {
     return { start, end };
 }
 // Static files only: index from a fixed map, assets by a strict name pattern.
+// Fetch Metadata names how the browser wants a file. Photos and video load inside the
+// dashboard as image/video; opening one as a page ("Open image in new tab", a pasted
+// address) is refused. Clients that send no Fetch Metadata still get the file.
+const MEDIA_DIRECT_OPEN_DESTS = new Set(['document', 'iframe', 'frame', 'embed', 'object']);
+
 async function serveDashboard(req, res, pathname) {
     const entry = dashboardEntry(pathname);
     if (!entry) {
         jsonResponse(res, 404, { error: { message: `Not found: ${pathname}`, type: 'not_found' } }, { 'X-Content-Type-Options': 'nosniff' });
+        return;
+    }
+    if (entry.media && MEDIA_DIRECT_OPEN_DESTS.has(String(req.headers['sec-fetch-dest'] || '').toLowerCase())) {
+        jsonResponse(res, 403, { error: { message: 'Dashboard media is shown only inside the dashboard.', type: 'media_direct_open' } }, { 'X-Content-Type-Options': 'nosniff' });
         return;
     }
     let content;
@@ -3655,7 +3677,8 @@ async function serveDashboard(req, res, pathname) {
         return;
     }
     const headers = { 'Content-Type': entry.type, ...DASHBOARD_HEADERS };
-    if (entry.media) Object.assign(headers, { 'Cache-Control': 'public, max-age=86400', 'Accept-Ranges': 'bytes' });
+    // Vary keeps a cached copy loaded by the page from answering a direct open.
+    if (entry.media) Object.assign(headers, { 'Cache-Control': 'public, max-age=86400', 'Accept-Ranges': 'bytes', Vary: 'Origin, Sec-Fetch-Dest' });
     // Video elements (Safari above all) fetch by byte range; answer a single range, refuse the rest.
     if (entry.media && req.headers.range) {
         const size = content.length;
@@ -3790,20 +3813,14 @@ const server = http.createServer(async (req, res) => {
             res.end(JSON.stringify({ status: 'all_sessions_cleared', count }));
             return;
         }
-        const session = sessions.get(agentId);
-        if (!session) {
+        const result = resetAgentSession(agentId, { dropHistory: url.searchParams.get('history') === 'drop' });
+        if (!result) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: `No session for agent: ${agentId}` }));
             return;
         }
-        const historyCount = session.history.length;
-        const historyPreview = session.history.map(e => e.user.substring(0, 40)).join(' | ');
-        session.id = null;
-        session.parentMessageId = null;
-        session.createdAt = null;
-        session.messageCount = 0;
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'session_reset', agent: agentId, history_preserved: historyCount, history: historyPreview }));
+        res.end(JSON.stringify(result));
         return;
     }
 
@@ -4816,6 +4833,7 @@ module.exports = {
         nativeSearchAndThinkNotice,
         adaptHarnessWebAccess,
         createSession,
+        resetAgentSession,
         resetRemoteSession,
         prepareSessionForPrompt,
         sweepIdleSessions,
@@ -4824,6 +4842,7 @@ module.exports = {
         selectAccountForSession,
         dashboardUrl,
         dashboardEntry,
+        serveDashboard,
         parseByteRange,
         browserOpenCommand,
         acquireAccountChatLock,

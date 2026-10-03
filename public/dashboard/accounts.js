@@ -545,16 +545,26 @@
 
   function openAdd(trigger) {
     const dlg = document.getElementById('add-account');
+    dlg.classList.add('dialog-split');
     const close = () => dlg.close();
-    const textarea = h('textarea', { class: 'input input-code', rows: '8', spellcheck: 'false', 'aria-label': 'deepseek-auth.json contents', placeholder: '{ "token": "…", "cookie": "…", "hif_dliq": "…", "hif_leim": "…" }' });
+    // File only: drop it or pick it. The credentials are never shown or typed.
+    let raw = '';
     const fileInput = h('input', { type: 'file', accept: 'application/json,.json', class: 'sr-only', id: 'add-file' });
-    const drop = h('label', { class: 'dropzone', for: 'add-file' },
-      F.icon('upload', 'dropzone-icon'),
-      h('span', { class: 'dropzone-text', text: 'Drop deepseek-auth.json (exported by the DeepSeek Auth Exporter extension) or paste it below.' }),
-      h('span', { class: 'link', text: 'Choose a file' }));
-    const checks = h('ul', { class: 'checks', 'aria-live': 'polite' });
+    const hint = h('div', { class: 'source-empty' },
+      h('span', { class: 'source-empty-icon' }, F.icon('files')),
+      h('p', { class: 'source-empty-title', text: 'Drop deepseek-auth.json' }),
+      h('p', { class: 'source-empty-text' }, h('label', { class: 'source-pick', for: 'add-file', text: 'Choose file' })));
+    const fileName = h('span', { class: 'source-file-name' });
+    const fileMeta = h('span', { class: 'source-file-meta' });
+    const loaded = h('div', { class: 'source-file', hidden: true },
+      h('span', { class: 'source-file-icon' }, F.icon('files')),
+      h('span', { class: 'source-file-text' }, fileName, fileMeta),
+      h('label', { class: 'source-pick', for: 'add-file', text: 'Replace' }));
+    const chips = h('ul', { class: 'chips', 'aria-live': 'polite', 'aria-label': 'Auth file check' });
+    const sourceError = h('p', { class: 'source-error', role: 'alert', hidden: true });
+    const source = h('div', { class: 'source', id: 'add-source' }, hint, loaded, chips);
     const nameInput = h('input', { type: 'text', class: 'input', id: 'add-name', maxlength: '64', spellcheck: 'false', autocomplete: 'off', required: true });
-    const nameHelp = h('p', { class: 'meta', id: 'add-name-help' });
+    const nameHelp = h('p', { class: 'field-help', id: 'add-name-help' });
     nameInput.setAttribute('aria-describedby', 'add-name-help');
     const formErr = h('div', { class: 'form-error', role: 'alert', hidden: true });
     const submit = F.btn('Add account', { kind: 'primary', type: 'submit' });
@@ -563,46 +573,65 @@
       ? F.notice('warn', 'This page is not on HTTPS', `The credentials travel unencrypted to ${location.host}. Anyone on the network path can read them. Import from the machine running the proxy, or put it behind HTTPS.`)
       : null;
 
-    const check = (ok, text, optional) => h('li', { class: ['check', ok ? 'is-ok' : optional ? 'is-optional' : 'is-bad'] }, F.lamp(ok ? 'ready' : optional ? 'disabled' : 'error'), h('span', { text }));
+    // One chip per field the server needs; optional fields only dim when missing.
+    const chip = (label, ok, optional, title) => h('li', { class: ['chip', ok ? 'is-ok' : optional ? 'is-optional' : 'is-bad'], 'data-tip': title },
+      F.icon(ok ? 'check' : optional ? 'info' : 'error-x'), h('span', { text: label }));
+    const showError = (text) => { sourceError.textContent = text || ''; sourceError.hidden = !text; source.classList.toggle('is-invalid', Boolean(text)); };
     let state = { empty: true };
     const validate = () => {
-      state = inspectAuth(textarea.value);
-      checks.replaceChildren();
-      if (state.empty) checks.append(h('li', { class: 'check quiet', text: 'Waiting for the JSON.' }));
-      else if (state.parseError) checks.append(check(false, `Not valid JSON: ${state.parseError}`));
+      state = inspectAuth(raw);
+      chips.replaceChildren();
+      hint.hidden = !state.empty;
+      loaded.hidden = state.empty;
+      source.classList.toggle('has-content', !state.empty);
+      if (state.empty) showError('');
+      else if (state.parseError) showError(`Not valid JSON: ${state.parseError}. Download the file again from the extension.`);
       else {
-        checks.append(
-          check(state.token, state.token ? 'Token found' : 'Token missing: the file has no token field'),
-          check(state.cookieParts > 0, state.cookieParts ? `Cookie found, ${state.cookieParts} part${state.cookieParts === 1 ? '' : 's'}` : 'Cookie missing: the file has no cookie or cookies field'),
-          check(state.hifDliq, state.hifDliq ? 'hif_dliq found' : 'hif_dliq not found (optional)', true),
-          check(state.hifLeim, state.hifLeim ? 'hif_leim found' : 'hif_leim not found (optional)', true));
+        chips.append(
+          chip('Token', state.token, false, state.token ? 'Token found' : 'Token missing'),
+          chip(state.cookieParts ? `Cookie · ${state.cookieParts}` : 'Cookie', state.cookieParts > 0, false, state.cookieParts ? `Cookie found, ${state.cookieParts} part${state.cookieParts === 1 ? '' : 's'}` : 'Cookie missing'),
+          chip('hif_dliq', state.hifDliq, true, state.hifDliq ? 'hif_dliq found' : 'hif_dliq not found (optional)'),
+          chip('hif_leim', state.hifLeim, true, state.hifLeim ? 'hif_leim found' : 'hif_leim not found (optional)'));
+        const missing = [!state.token && 'token', !state.cookieParts && 'cookie'].filter(Boolean);
+        showError(missing.length ? `This file has no ${missing.join(' or ')} field. Sign in on chat.deepseek.com, click Read current tab, then Download again.` : '');
       }
-      const slug = slugFor(nameInput.value.trim());
-      nameHelp.textContent = nameInput.value.trim()
-        ? (slug ? `Saved as accounts/${slug}.json` : 'Saved as accounts/account-N.json (the server picks N because the name has no Latin letters or digits)')
-        : 'Required, up to 64 characters.';
-      const ready = state.ok && nameInput.value.trim().length > 0;
+      const name = nameInput.value.trim();
+      const slug = slugFor(name);
+      nameHelp.textContent = !name ? '' : slug ? `Saved as accounts/${slug}.json` : 'Saved as accounts/account-N.json';
+      const ready = state.ok && name.length > 0;
       submit.setAttribute('aria-disabled', String(!ready));
-      submit.setAttribute('data-tip', ready ? '' : !state.ok ? 'Paste a valid auth JSON first' : 'Enter a name');
+      submit.setAttribute('data-tip', ready ? '' : !state.ok ? 'Drop a valid deepseek-auth.json first' : 'Enter a name');
     };
+    // Anything that is not the auth file gets pointed back at the file to look for.
+    const FIND_FILE = 'Find deepseek-auth.json, the file the extension downloaded (usually in Downloads), and drop that.';
+    const reject = (text) => { raw = ''; validate(); showError(`${text} ${FIND_FILE}`); };
     const loadFile = (file) => {
       if (!file) return;
-      if (file.size > 64 * 1024) { textarea.value = ''; checks.replaceChildren(check(false, `${file.name} is ${fmt.int(file.size / 1024)} KB. The import limit is 64 KB.`)); return; }
+      if (!/\.json$/i.test(file.name) && file.type !== 'application/json') { reject(`${file.name} is not a JSON file.`); return; }
+      if (file.size > 64 * 1024) { reject(`${file.name} is ${fmt.int(file.size / 1024)} KB, too big for an auth file.`); return; }
       const reader = new FileReader();
       reader.onload = () => {
-        textarea.value = String(reader.result || '');
+        raw = String(reader.result || '');
+        fileName.textContent = file.name;
+        fileMeta.textContent = `${fmt.int(Math.max(1, file.size / 1024))} KB`;
         if (!nameInput.value.trim()) nameInput.value = file.name.replace(/\.json$/i, '').replace(/^deepseek-auth$/i, '');
         validate();
         nameInput.focus();
       };
-      reader.onerror = () => checks.replaceChildren(check(false, `Could not read ${file.name}: ${reader.error ? reader.error.name : 'unknown error'}`));
+      reader.onerror = () => reject(`${file.name} could not be read.`);
       reader.readAsText(file);
     };
-    fileInput.addEventListener('change', () => loadFile(fileInput.files[0]));
-    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('is-over'); });
-    drop.addEventListener('dragleave', () => drop.classList.remove('is-over'));
-    drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('is-over'); loadFile(e.dataTransfer.files[0]); });
-    textarea.addEventListener('input', validate);
+    fileInput.addEventListener('change', () => { loadFile(fileInput.files[0]); fileInput.value = ''; });
+    source.addEventListener('dragover', (e) => { e.preventDefault(); source.classList.add('is-over'); });
+    source.addEventListener('dragleave', (e) => { if (!source.contains(e.relatedTarget)) source.classList.remove('is-over'); });
+    source.addEventListener('drop', (e) => {
+      e.preventDefault();
+      source.classList.remove('is-over');
+      const item = e.dataTransfer.items && e.dataTransfer.items[0];
+      const entry = item && item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+      if (entry && entry.isDirectory) { reject(`${entry.name} is a folder.`); return; }
+      loadFile(e.dataTransfer.files[0]);
+    });
     nameInput.addEventListener('input', validate);
 
     const form = h('form', { class: 'dialog-form', method: 'dialog', novalidate: true });
@@ -615,7 +644,7 @@
         const res = await F.api('POST', '/admin/accounts/import', { body: { name: nameInput.value.trim(), auth: state.obj } });
         F.applyAccountUpdate(res);
         const acc = res.account;
-        textarea.value = '';
+        raw = '';
         close();
         F.toast(acc && acc.status === 'ready' ? `Added ${nameOf(acc)}. Ready to serve.` : `Added ${acc ? nameOf(acc) : 'the account'}${acc ? ` (${F.charts.stateWord(acc)})` : ''}.`, { tone: 'success' });
         F.refresh();
@@ -638,22 +667,31 @@
 
     if (warn) form.append(warn);
     form.append(
-      fileInput, drop,
-      h('label', { class: 'field-label', for: 'add-json', text: 'Auth JSON' }),
-      textarea,
-      checks,
+      fileInput,
+      h('label', { class: 'field-label add-label', for: 'add-file', text: 'Auth file' }),
+      source, sourceError,
       h('label', { class: 'field-label', for: 'add-name', text: 'Name' }), nameInput, nameHelp,
-      h('p', { class: 'meta disclosure', text: 'Credentials are sent once to this server and written to disk readable only by your user. They are never shown again.' }),
       formErr,
-      h('div', { class: 'dialog-actions' }, cancel, submit));
-    textarea.id = 'add-json';
+      h('div', { class: 'dialog-foot' }, h('div', { class: 'dialog-actions' }, cancel, submit)));
+    const step = (n, title, detail) => h('li', { class: 'add-step' },
+      h('span', { class: 'add-step-n', 'aria-hidden': 'true', text: String(n) }),
+      h('span', { class: 'add-step-body' }, h('span', { class: 'add-step-title', text: title }), h('span', { class: 'add-step-detail' }, detail)));
+    const code = (text) => h('code', { text });
     dlg.replaceChildren(
-      h('div', { class: 'dialog-head' }, h('h2', { class: 'dialog-title', id: 'add-title', text: 'Add a DeepSeek account' }), F.iconBtn('close', 'Close', { onclick: close })),
-      form);
+      F.iconBtn('close', 'Close', { onclick: close, cls: 'dialog-close' }),
+      h('aside', { class: 'add-visual' },
+        h('img', { class: 'add-visual-media', src: '/dashboard/media-night-launch.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' }),
+        h('div', { class: 'add-visual-inner' },
+          h('h2', { class: 'add-title', id: 'add-title', text: 'Add a DeepSeek account' }),
+          h('ol', { class: 'add-steps', 'aria-label': 'Where the file comes from' },
+            step(1, 'Install DeepSeek Auth Exporter', [h('span', { text: 'In ' }), code('chrome://extensions'), h('span', { text: ' turn on Developer mode, then Load unpacked → the ' }), code('chrome-extension'), h('span', { text: ' folder of FreeDeepseekAPI' })]),
+            step(2, 'Read your session', [h('span', { text: 'On a signed-in chat.deepseek.com tab, click ' }), h('strong', { text: 'Read current tab' })]),
+            step(3, 'Bring the file here', [h('span', { text: 'Click ' }), h('strong', { text: 'Download' }), h('span', { text: ', then drop it into Auth file' })])))),
+      h('div', { class: 'add-panel' }, form));
     validate();
-    dlg.onclose = () => { textarea.value = ''; state = { empty: true }; if (trigger && document.contains(trigger)) trigger.focus(); };
+    dlg.onclose = () => { raw = ''; state = { empty: true }; if (trigger && document.contains(trigger)) trigger.focus(); };
+    // No autofocus on the field: focus would hide the drop hint before it is read.
     dlg.showModal();
-    textarea.focus();
   }
 
   // ---------------------------------------------------------------- keyboard

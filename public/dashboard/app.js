@@ -260,7 +260,7 @@
       if (e.key === 'ArrowDown') { e.preventDefault(); btns[(i + 1) % btns.length].focus(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); btns[(i - 1 + btns.length) % btns.length].focus(); }
     });
-    F.popover(trigger, list, { width: Math.max(244, trigger.getBoundingClientRect().width), align: 'start', role: 'presentation', label: 'Chat account' });
+    F.popover(trigger, list, { width: Math.max(244, trigger.getBoundingClientRect().width), align: 'auto', role: 'presentation', label: 'Chat account' });
   }
   $('account-switch').addEventListener('click', (e) => openAccountMenu(e.currentTarget));
   F.openAccountMenu = openAccountMenu;
@@ -353,12 +353,12 @@
   const palette = { items: [], index: 0 };
   function paletteItems() {
     const items = [
-      { label: 'New chat', hint: '⇧⌘O', icon: 'new-chat', run: () => F.views.chat.newChat() },
-      { label: 'Go to Chat', hint: 'g c', icon: 'chat', run: () => F.navigate('chat') },
-      { label: 'Go to Status', hint: 'g s', icon: 'status', run: () => F.navigate('status') },
-      { label: 'Go to Accounts', hint: 'g a', icon: 'accounts', run: () => F.navigate('accounts') },
-      { label: 'Go to Usage', hint: 'g u', icon: 'usage', run: () => F.navigate('usage') },
-      { label: 'Go to Requests', hint: 'g r', icon: 'requests', run: () => F.navigate('requests') },
+      { label: 'New chat', icon: 'new-chat', run: () => F.views.chat.newChat() },
+      { label: 'Go to Chat', icon: 'chat', run: () => F.navigate('chat') },
+      { label: 'Go to Status', icon: 'status', run: () => F.navigate('status') },
+      { label: 'Go to Accounts', icon: 'accounts', run: () => F.navigate('accounts') },
+      { label: 'Go to Usage', icon: 'usage', run: () => F.navigate('usage') },
+      { label: 'Go to Requests', icon: 'requests', run: () => F.navigate('requests') },
       { label: 'Go to Settings', icon: 'settings', run: () => F.navigate('settings') },
       { label: 'Show errors in Requests', icon: 'error-x', run: () => F.navigate('requests', '', { status: 'error' }) },
       { label: 'Reload accounts from disk', icon: 'reload', run: () => { F.navigate('accounts'); setTimeout(() => { const b = Array.from(document.querySelectorAll('#toolbar-actions .btn')).find(x => x.textContent.includes('Reload')); F.views.accounts.reload(b); }, 0); } },
@@ -386,8 +386,7 @@
     list.replaceChildren(...palette.items.map((it, i) => {
       const li = h('li', { role: 'option', id: `pal-${i}`, class: 'palette-item', 'aria-selected': String(i === palette.index) },
         F.icon(it.icon), h('span', { class: 'palette-label', text: it.label }),
-        it.detail ? h('span', { class: 'palette-detail', text: it.detail }) : null,
-        it.hint ? h('kbd', { class: 'kbd', text: it.hint }) : null);
+        it.detail ? h('span', { class: 'palette-detail', text: it.detail }) : null);
       li.addEventListener('pointermove', () => { if (palette.index !== i) { palette.index = i; mark(); } });
       li.addEventListener('click', () => choose(i));
       return li;
