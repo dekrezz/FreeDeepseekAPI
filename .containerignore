@@ -3,6 +3,7 @@
 !server.js
 !lib
 !lib/pow.js
+!lib/updater.js
 !scripts/lib/tui-menu.js
 !public/dashboard/index.html
 !public/dashboard/*.css

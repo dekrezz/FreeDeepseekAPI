@@ -32,22 +32,25 @@
   };
   F.prefs.applyAll();
 
-  const st = { root: null, els: {}, health: null, healthError: null, visible: false, snippet: 'openai' };
+  const st = { root: null, els: {}, health: null, healthError: null, visible: false, snippet: 'openai',
+    update: { status: null, error: null, channel: null, check: null, phase: 'idle', message: null } };
 
   function mount(root) {
     st.root = root;
     const key = h('div', { class: 'set-group' });
     const conn = h('div', { class: 'set-stack' });
     const server = h('div', { class: 'set-stack' });
+    const updates = h('div', { class: 'set-stack' });
     const appearance = h('div', { class: 'set-group' });
     const chat = h('div', { class: 'set-stack' });
     root.append(h('div', { class: 'view-pad settings' },
       section('Access key', 'Sent as a Bearer header to the admin API and to /v1. Kept in this tab only (sessionStorage), never in localStorage.', key),
       section('Connection', 'Point any OpenAI- or Anthropic-compatible client at this proxy.', conn),
       section('Server', 'Facts from GET /health.', server),
+      section('Updates', 'Stable gets a release once it has been checked. Latest gets every release first.', updates),
       section('Appearance', null, appearance),
       section('Chat data', `Stored in this browser only, for ${location.origin}. 127.0.0.1 and localhost keep separate stores.`, chat)));
-    Object.assign(st.els, { key, conn, server, appearance, chat });
+    Object.assign(st.els, { key, conn, server, updates, appearance, chat });
     F.on('accounts', () => { if (st.visible) renderServer(); });
   }
 
@@ -200,6 +203,124 @@
         F.copyBtn(m, `Copy ${m}`)))));
   }
 
+  // ---------------------------------------------------------------- updates
+  const CHANNEL_LABEL = { stable: 'Stable', latest: 'Latest' };
+  const BLOCKED = {
+    local_changes: 'This copy has uncommitted changes, so installing would overwrite them.',
+    diverged: 'Your local branch has its own commits, so it cannot be moved forward safely.',
+  };
+
+  async function loadUpdate() {
+    try {
+      st.update.status = await F.api('GET', '/admin/update');
+      st.update.error = null;
+      if (!st.update.channel) st.update.channel = st.update.status.channel || 'stable';
+    } catch (e) {
+      if (F.handleGate(e)) return;
+      st.update.error = e;
+    }
+    renderUpdates();
+  }
+
+  async function checkUpdate() {
+    const u = st.update;
+    u.phase = 'checking'; u.check = null; u.message = null;
+    renderUpdates();
+    try { u.check = await F.api('POST', '/admin/update/check', { body: { channel: u.channel }, timeout: 90000 }); u.phase = 'checked'; }
+    catch (e) { if (F.handleGate(e)) return; u.phase = 'idle'; u.message = { tone: 'crit', title: 'Couldn\'t check for updates', text: F.errorText(e) }; }
+    renderUpdates();
+  }
+
+  async function installUpdate() {
+    const u = st.update;
+    u.phase = 'installing'; u.message = null;
+    renderUpdates();
+    try {
+      const res = await F.api('POST', '/admin/update/install', { body: { channel: u.channel }, timeout: 120000 });
+      u.phase = 'installed';
+      u.installed = res;
+    } catch (e) {
+      if (F.handleGate(e)) return;
+      u.phase = 'checked';
+      u.message = { tone: 'crit', title: 'Couldn\'t install the update', text: F.errorText(e) };
+    }
+    renderUpdates();
+  }
+
+  // Restart, then wait for a server on a different commit and reload the page on it.
+  async function restartNow() {
+    const u = st.update;
+    const before = u.status && u.status.commit;
+    u.phase = 'restarting';
+    renderUpdates();
+    try { await F.api('POST', '/admin/restart'); }
+    catch (e) { if (F.handleGate(e)) return; u.phase = 'installed'; u.message = { tone: 'crit', title: 'Couldn\'t restart', text: F.errorText(e) }; renderUpdates(); return; }
+    const until = Date.now() + 60000;
+    while (Date.now() < until) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        const s = await F.api('GET', '/admin/update', { timeout: 2000 });
+        if (s.commit && s.commit !== before) { location.reload(); return; }
+      } catch (e) { /* the server is down while it restarts */ }
+    }
+    u.phase = 'installed';
+    u.message = { tone: 'crit', title: 'The proxy did not come back within a minute', text: 'Check the terminal where it runs.' };
+    renderUpdates();
+  }
+
+  function renderUpdates() {
+    const host = st.els.updates;
+    if (!host) return;
+    const u = st.update;
+    if (u.error) { host.replaceChildren(F.notice('crit', 'GET /admin/update failed', F.errorText(u.error))); return; }
+    const s = u.status;
+    if (!s) { host.replaceChildren(h('div', { class: 'set-group' }, row('Version', null, h('span', { class: 'quiet', text: 'Loading…' }), null, 'download'))); return; }
+    const versionText = [s.version ? `v${s.version}` : null, s.commit, s.channel ? CHANNEL_LABEL[s.channel] : (s.branch ? `branch ${s.branch}` : null)].filter(Boolean).join(' · ');
+    const rows = [row('Installed', null, h('span', { class: 'mono-id', text: versionText || '—' }), null, 'download')];
+    if (s.method !== 'git') {
+      rows.push(row('Updates from the dashboard', 'This copy was not installed with git clone (a container image or a downloaded archive). Pull a new image or download the new release instead.', h('span', { class: 'quiet', text: 'Unavailable' }), null, 'info'));
+      host.replaceChildren(h('div', { class: 'set-group' }, ...rows));
+      return;
+    }
+    const busy = u.phase === 'checking' || u.phase === 'installing' || u.phase === 'restarting';
+    const channel = F.segmented('Update channel', [{ value: 'stable', label: 'Stable' }, { value: 'latest', label: 'Latest' }], u.channel, (v) => {
+      u.channel = v; u.check = null; u.phase = 'idle'; u.message = null; renderUpdates();
+    });
+    rows.push(row('Channel', s.channel && u.channel !== s.channel ? `Installing switches this copy from ${CHANNEL_LABEL[s.channel]} to ${CHANNEL_LABEL[u.channel]}.` : null, channel, null, 'route'));
+    const checkBtn = F.btn(u.phase === 'checking' ? 'Checking…' : 'Check for updates', { icon: 'reload', onclick: checkUpdate });
+    if (busy) checkBtn.setAttribute('aria-disabled', 'true');
+    rows.push(row('Check for updates', 'Asks GitHub for the newest release on this channel.', checkBtn, null, 'search'));
+    const parts = [h('div', { class: 'set-group' }, ...rows)];
+    if (u.message) parts.push(F.notice(u.message.tone, u.message.title, u.message.text));
+    const c = u.check;
+    if (u.phase === 'installed' || u.phase === 'restarting') {
+      const inst = u.installed ? u.installed.installed : null;
+      const auto = (u.installed ? u.installed.restart : s.restart) === 'auto';
+      const restartBtn = F.btn(u.phase === 'restarting' ? 'Restarting…' : 'Restart now', { kind: 'primary', icon: 'reload', onclick: restartNow });
+      if (u.phase === 'restarting') restartBtn.setAttribute('aria-disabled', 'true');
+      parts.push(h('div', { class: 'set-group' },
+        row(`Installed ${inst && inst.version ? `v${inst.version}` : 'the update'}`,
+          auto ? 'Restart the proxy to start using it. Open chats keep going after the restart.' : 'Stop the proxy and start it again with npm start to use it.',
+          auto ? restartBtn : null, null, 'success')));
+    } else if (c && c.upToDate) {
+      parts.push(h('div', { class: 'set-group' }, row(`You're on the newest ${CHANNEL_LABEL[c.channel]} release`, c.available.version ? `v${c.available.version} · ${c.available.commit}` : c.available.commit, null, null, 'success')));
+    } else if (c) {
+      const installBtn = F.btn(u.phase === 'installing' ? 'Installing…' : 'Install', { kind: 'primary', icon: 'download', onclick: installUpdate });
+      if (!c.canInstall || busy) installBtn.setAttribute('aria-disabled', 'true');
+      const changes = c.changes.slice(0, 8);
+      parts.push(h('div', { class: 'set-group update-card' },
+        row(c.available.version ? `v${c.available.version} is available` : 'An update is available', `${CHANNEL_LABEL[c.channel]} · ${c.available.commit}`, c.canInstall ? installBtn : null, null, 'download'),
+        changes.length ? h('ul', { class: 'update-changes' }, changes.map(ch => h('li', null, h('span', { class: 'update-subject', text: ch.subject }), h('code', { class: 'mono-id', text: ch.commit })))) : null,
+        c.changes.length > changes.length ? h('p', { class: 'set-hint update-more', text: `and ${c.changes.length - changes.length} more` }) : null));
+      if (!c.canInstall && c.blockedReason) {
+        parts.push(F.notice('warn', 'Install it by hand', h('div', { class: 'update-manual' },
+          h('p', { class: 'notice-text', text: `${BLOCKED[c.blockedReason] || 'This copy cannot install it from the dashboard.'} Run this where the proxy runs, then restart it:` }),
+          F.codeLine(c.manualCommand))));
+      }
+    }
+    host.replaceChildren(...parts);
+  }
+
   function renderAppearance() {
     const pref = (label, hint, name, options) => row(label, hint, F.segmented(label, options, F.prefs.get(name), (v) => F.prefs.set(name, v)));
     st.els.appearance.replaceChildren(
@@ -238,6 +359,7 @@
     renderKey();
     renderConn();
     renderServer();
+    renderUpdates();
     renderAppearance();
     renderChat();
   }
@@ -246,7 +368,7 @@
     title: 'Settings',
     live: false,
     mount,
-    show() { st.visible = true; render(); loadHealth(); },
+    show() { st.visible = true; render(); loadHealth(); loadUpdate(); },
     hide() { st.visible = false; },
   };
 })();

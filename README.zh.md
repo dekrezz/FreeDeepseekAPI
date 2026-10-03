@@ -42,7 +42,7 @@ FreeDeepseekAPI 在本机启动一个 API 服务，后端是 **DeepSeek Web Chat
 
 网站上现在只有一个模型：**DeepSeek-V4.1-Flash**。chat.deepseek.com 自带的网页搜索**默认打开**，上网查资料走的就是这个搜索。`-thinking` 打开 DeepThink。`-nosearch` 或 `"web_search": false` 关闭搜索。
 
-> 这是实验性的网页聊天代理。DeepSeek 可能不打招呼就改掉内部 Web API。生产环境更稳妥的是官方付费 API。
+> 这是实验性的网页聊天代理。DeepSeek 随时可能修改内部 Web API。一旦变化，项目会跟着更新，本文档也可能随之调整。建议始终使用最新版本：在面板的 Settings → Updates 中更新，或参见[更新](#更新)。
 
 ---
 
@@ -59,6 +59,7 @@ FreeDeepseekAPI 在本机启动一个 API 服务，后端是 **DeepSeek Web Chat
 - [会话复用](#会话复用)
 - [多账号池](#多账号池)
 - [账号面板](#账号面板)
+- [更新](#更新)
 - [登录](#登录)
 - [编程代理](#编程代理)
 - [检查是否正常](#检查是否正常)
@@ -114,7 +115,7 @@ FreeDeepseekAPI 在本机启动一个 API 服务，后端是 **DeepSeek Web Chat
 ## 快速开始
 
 ```bash
-git clone https://github.com/dekrezz/FreeDeepseekAPI.git
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
 cd FreeDeepseekAPI
 npm run auth
 npm start
@@ -164,7 +165,7 @@ PROXY_CORS_ORIGINS='https://ui.example.com,http://192.168.1.20:3000'
 ## Windows
 
 ```powershell
-git clone https://github.com/dekrezz/FreeDeepseekAPI.git
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
 cd FreeDeepseekAPI
 npm run auth
 npm start
@@ -184,7 +185,7 @@ npm run auth
 ## Linux / Chromium
 
 ```bash
-git clone https://github.com/dekrezz/FreeDeepseekAPI.git
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
 cd FreeDeepseekAPI
 CHROME_PATH=$(which chromium) npm run auth
 npm start
@@ -460,6 +461,31 @@ npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./account
 - admin 响应里不会有 token、cookie、`hif_*` 值或 auth 文件名。
 
 容器镜像包含面板。使用 `--read-only` 时，需要写 auth 文件的操作（添加、重命名、删除、恢复）会返回 `500 auth_file_write_failed`；暂停、恢复和清除冷却照常可用。
+
+---
+
+## 更新
+
+DeepSeek 会不时调整网页聊天，FreeDeepseekAPI 会跟着更新。请让你的副本保持最新。
+
+两个渠道，都是 GitHub 上的分支：
+
+| 渠道 | 内容 |
+|---|---|
+| `stable` | 经过检查后的版本。默认渠道，快速开始克隆的就是它。 |
+| `latest` | 每个版本一发布就到。 |
+
+**在面板中：** Settings → Updates。选好渠道，**Check for updates** 显示新内容，**Install** 把副本更新过去，**Restart now** 加载新版本。用 `npm start` 或 `npm run dashboard` 启动时会自动重启；否则请手动停止再启动。
+
+面板只会让副本向前走。如果文件夹里有未提交的已跟踪文件改动，或渠道分支上有你自己的提交，它会停下来并给出手动命令。容器镜像和下载的压缩包没有 git 历史：请拉取新镜像或下载新版本。
+
+**手动更新：**
+
+```bash
+git fetch origin && git switch stable && git merge --ff-only origin/stable
+```
+
+然后重启代理。
 
 ---
 
@@ -838,11 +864,12 @@ FreeDeepseekAPI 是本地网页聊天代理。它依赖 chat.deepseek.com 当前
 
 调用突然不行时：
 
-1. 用 `npm run auth` 重新登录。
-2. 跑 `npm run doctor`。
-3. 看 `GET /v1/model-capabilities`，改用 DeepSeek-V4.1-Flash 的 id。
-4. 同一个聊天还是失败，就调用 `POST /reset-session?agent=<id>` 再试。
-5. 还是不行，多半是 DeepSeek 改了内部 Web API。
+1. 先更新到最新版本（见[更新](#更新)）。
+2. 用 `npm run auth` 重新登录。
+3. 跑 `npm run doctor`。
+4. 看 `GET /v1/model-capabilities`，改用 DeepSeek-V4.1-Flash 的 id。
+5. 同一个聊天还是失败，就调用 `POST /reset-session?agent=<id>` 再试。
+6. 还是不行，多半是 DeepSeek 改了内部 Web API。
 
 安全问题请走非公开的 GitHub advisory，不要开公开 issue。见 [SECURITY.md](SECURITY.md)。维护者名单见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。
 

@@ -1002,6 +1002,13 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 .error-log-code { color: var(--crit); font-size: 0.75rem; }
 .error-log-msg { color: var(--ink); font-size: 0.8125rem; line-height: 1.25rem; overflow-wrap: anywhere; }
 .error-log .facts { margin: 0; }
+/* Settings → Updates */
+.update-changes { list-style: none; margin: 0; padding: 4px 16px 12px 48px; display: grid; gap: 6px; }
+.update-changes li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 0.875rem; }
+.update-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.update-changes .mono-id { flex: none; color: var(--ink-3); font-size: 0.75rem; }
+.update-more { padding: 0 16px 12px 48px; }
+.update-manual { display: grid; gap: 8px; }
 .error-log .fact { grid-template-columns: 5rem minmax(0, 1fr); min-height: 22px; font-size: 0.8125rem; }
 @media (max-width: 560px) {
   .chat-error { width: 100%; }

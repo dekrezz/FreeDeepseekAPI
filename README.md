@@ -42,7 +42,7 @@ The project uses your normal logged-in DeepSeek account. The local server accept
 
 One model is on the site today: **DeepSeek-V4.1-Flash**. The native Web Search built into chat.deepseek.com is **on by default**, and that search is what answers live internet questions. `-thinking` turns DeepThink on. `-nosearch` or `"web_search": false` turns search off.
 
-> This is an experimental Web-chat proxy. DeepSeek can change the private Web API without notice. For a production workload, use the official paid DeepSeek API.
+> This is an experimental Web-chat proxy. DeepSeek can change its private Web API at any time. When it does, the project is updated to follow, and this guide may change with it. Keep your copy on the newest version: Settings → Updates in the dashboard, or see [Updates](#updates).
 
 ---
 
@@ -59,6 +59,7 @@ One model is on the site today: **DeepSeek-V4.1-Flash**. The native Web Search b
 - [Session reuse](#session-reuse)
 - [Multi-account pool](#multi-account-pool)
 - [Dashboard](#dashboard)
+- [Updates](#updates)
 - [Sign-in](#sign-in)
 - [Coding agents](#coding-agents)
 - [Check that it works](#check-that-it-works)
@@ -114,7 +115,7 @@ One model is on the site today: **DeepSeek-V4.1-Flash**. The native Web Search b
 ## Quick start
 
 ```bash
-git clone https://github.com/dekrezz/FreeDeepseekAPI.git
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
 cd FreeDeepseekAPI
 npm run auth
 npm start
@@ -164,7 +165,7 @@ PROXY_CORS_ORIGINS='https://ui.example.com,http://192.168.1.20:3000'
 ## Windows
 
 ```powershell
-git clone https://github.com/dekrezz/FreeDeepseekAPI.git
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
 cd FreeDeepseekAPI
 npm run auth
 npm start
@@ -184,7 +185,7 @@ When Chrome is missing, `npm run auth` prints the install path for Windows, macO
 ## Linux / Chromium
 
 ```bash
-git clone https://github.com/dekrezz/FreeDeepseekAPI.git
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
 cd FreeDeepseekAPI
 CHROME_PATH=$(which chromium) npm run auth
 npm start
@@ -460,6 +461,31 @@ Access rules:
 - Admin responses never contain tokens, cookies, `hif_*` values, or auth-file names.
 
 The container image ships the dashboard. With `--read-only`, actions that write auth files (add, rename, remove, restore) fail with `500 auth_file_write_failed`; pause, resume, and clear cooldown work.
+
+---
+
+## Updates
+
+DeepSeek changes its Web chat from time to time, and FreeDeepseekAPI follows. Keep your copy current.
+
+Two channels, both branches on GitHub:
+
+| Channel | What it gets |
+|---|---|
+| `stable` | A release once it has been checked. The default, and what Quick start clones. |
+| `latest` | Every release as soon as it is out. |
+
+**From the dashboard:** Settings → Updates. Pick a channel, **Check for updates** shows what is new, **Install** moves your copy to it, **Restart now** loads it. The restart is automatic when the proxy runs with `npm start` or `npm run dashboard`; otherwise stop it and start it again.
+
+The dashboard only moves your copy forward. It stops and shows the command to run by hand when the folder has uncommitted changes to tracked files or your channel branch has commits of its own. A container image or a downloaded archive has no git history: pull a new image or download the new release.
+
+**By hand:**
+
+```bash
+git fetch origin && git switch stable && git merge --ff-only origin/stable
+```
+
+Then restart the proxy.
 
 ---
 
@@ -838,11 +864,12 @@ FreeDeepseekAPI is a local Web-chat proxy. It depends on the current chat.deepse
 
 If a call stops working:
 
-1. Refresh the login with `npm run auth`.
-2. Run `npm run doctor`.
-3. Read `GET /v1/model-capabilities` and use a DeepSeek-V4.1-Flash id.
-4. If the same chat keeps failing, `POST /reset-session?agent=<id>` and try once more.
-5. If it still fails, DeepSeek has likely changed the private Web API.
+1. Update to the newest version ([Updates](#updates)).
+2. Refresh the login with `npm run auth`.
+3. Run `npm run doctor`.
+4. Read `GET /v1/model-capabilities` and use a DeepSeek-V4.1-Flash id.
+5. If the same chat keeps failing, `POST /reset-session?agent=<id>` and try once more.
+6. If it still fails, DeepSeek has likely changed the private Web API.
 
 Security reports go to a private GitHub advisory, not a public issue. See [SECURITY.md](SECURITY.md). The maintainer list is [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
