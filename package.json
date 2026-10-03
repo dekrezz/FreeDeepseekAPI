@@ -1,6 +1,6 @@
 {
   "name": "free-deepseek-api",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DeepSeek for free — private, powerful and ready for your favorite apps and coding agents",
   "main": "server.js",
   "bin": {

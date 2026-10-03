@@ -120,6 +120,38 @@ test('check lists what is new and allows installing a fast-forward', async () =>
   assert.ok(calls.some(c => c.startsWith('fetch --quiet origin')), 'fetches before comparing');
 });
 
+test('the same commit on another branch is a channel switch, not an update', async () => {
+  const { exec } = fakeGit([
+    ['rev-parse --abbrev-ref HEAD', 'main\n'],
+    ['rev-parse HEAD', 'aaaaaaa1111111111111111111111111111111111\n'],
+    [/^fetch --quiet origin/, ''],
+    ['status --porcelain --untracked-files=no', ''],
+    ['rev-parse origin/stable', 'aaaaaaa1111111111111111111111111111111111\n'],
+    ['show origin/stable:package.json', JSON.stringify({ version: '0.2.0' })],
+    [/^log /, ''],
+    ['merge-base --is-ancestor origin/stable HEAD', ''],
+    ['rev-parse --verify --quiet refs/heads/stable', gitFail('missing')],
+  ]);
+  const result = await createUpdater({ root: checkout(), exec, env: {} }).check('stable');
+  assert.equal(result.upToDate, false);
+  assert.equal(result.switchOnly, true);
+  assert.deepEqual(result.changes, []);
+  assert.equal(result.canInstall, true);
+});
+
+test('a real update is not a channel switch', async () => {
+  const { exec } = fakeGit(base([
+    ['rev-parse origin/stable', 'bbbbbbb2222222222222222222222222222222222\n'],
+    ['show origin/stable:package.json', JSON.stringify({ version: '0.3.0' })],
+    [/^log /, 'bbbbbbb\tSafer retries\n'],
+    ['merge-base --is-ancestor origin/stable HEAD', gitFail('no')],
+    ['rev-parse --verify --quiet refs/heads/stable', 'aaaaaaa\n'],
+    ['merge-base --is-ancestor refs/heads/stable origin/stable', ''],
+  ]));
+  const result = await createUpdater({ root: checkout(), exec, env: {} }).check('stable');
+  assert.equal(result.switchOnly, false);
+});
+
 test('local edits block installing and the manual command is offered', async () => {
   const { exec } = fakeGit([
     ['status --porcelain --untracked-files=no', ' M server.js\n'],
