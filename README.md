@@ -375,6 +375,8 @@ Reset every session:
 curl -X POST "http://127.0.0.1:9655/reset-session?agent=all"
 ```
 
+A reset keeps the proxy's copy of the conversation and replays it into the next chat when the client sends only one message. Add `&history=drop` when the client will send its own full transcript, for example after editing an earlier message, so the replaced turns do not come back.
+
 You will still see chats in the DeepSeek website. The proxy uses the Web Chat API, and DeepSeek stores the real chats. Session reuse only stops the proxy from opening a new one when the current chain is still good.
 
 A message whose text is exactly `/new` resets that agent's remote chat instead of sending the text to the model.

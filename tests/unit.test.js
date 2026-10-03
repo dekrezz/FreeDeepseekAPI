@@ -1677,6 +1677,62 @@ test('dashboardEntry serves photos and video but never docs or paths outside the
   assert.equal(dashboardEntry('/dashboard/x.jpeg'), null);
 });
 
+test('dashboard photos and video are not served when opened directly as a page', async () => {
+  const { serveDashboard } = serverInternals;
+  const call = async (pathname, dest) => {
+    const res = { status: 0, headers: {}, body: null, writeHead(status, headers) { this.status = status; this.headers = headers || {}; }, end(body) { this.body = body; } };
+    await serveDashboard({ headers: dest ? { 'sec-fetch-dest': dest } : {} }, res, pathname);
+    return res;
+  };
+  for (const pathname of ['/dashboard/media-horizon.jpg', '/dashboard/media-liftoff.mp4', '/dashboard/logo.png']) {
+    for (const dest of ['document', 'iframe', 'embed', 'object']) {
+      const res = await call(pathname, dest);
+      assert.equal(res.status, 403, `${pathname} as ${dest}`);
+      assert.match(String(res.body), /media_direct_open/);
+    }
+  }
+  const image = await call('/dashboard/media-horizon.jpg', 'image');
+  assert.equal(image.status, 200);
+  // Without this, the browser reuses the cached image for a direct open and never asks.
+  assert.match(String(image.headers.Vary), /Sec-Fetch-Dest/);
+  assert.equal((await call('/dashboard/media-liftoff.mp4', 'video')).status, 200);
+  assert.equal((await call('/dashboard/media-horizon.jpg')).status, 200, 'clients without Fetch Metadata still get the file');
+  assert.equal((await call('/dashboard', 'document')).status, 200, 'the page itself still opens');
+});
+
+test('resetting a client session keeps or drops server-side history on request', () => {
+  const { sessions, createSession, resetAgentSession } = serverInternals;
+  const make = () => {
+    const session = createSession();
+    Object.assign(session, { id: 'ds-chat', parentMessageId: 7, createdAt: 1, messageCount: 4, sentSystemFingerprint: 'fp' });
+    session.history = [{ user: 'old question', assistant: 'old answer' }, { user: 'later', assistant: 'later answer' }];
+    return session;
+  };
+
+  sessions.set('keep-x', make());
+  const kept = resetAgentSession('keep-x');
+  const keptSession = sessions.get('keep-x');
+  assert.equal(keptSession.id, null);
+  assert.equal(keptSession.parentMessageId, null);
+  assert.equal(keptSession.messageCount, 0);
+  assert.equal(keptSession.history.length, 2, 'plain reset keeps recovery history');
+  assert.equal(kept.history_preserved, 2);
+
+  // An edited message must not reach DeepSeek next to the turns it replaced.
+  sessions.set('drop-x', make());
+  const dropped = resetAgentSession('drop-x', { dropHistory: true });
+  const droppedSession = sessions.get('drop-x');
+  assert.equal(droppedSession.id, null);
+  assert.deepEqual(droppedSession.history, []);
+  assert.equal(droppedSession.sentSystemFingerprint, null);
+  assert.equal(dropped.history_preserved, 0);
+  assert.equal(serverInternals.buildRecoveryHistoryPrefix(droppedSession.history), '');
+
+  assert.equal(resetAgentSession('missing-x'), null);
+  sessions.delete('keep-x');
+  sessions.delete('drop-x');
+});
+
 test('parseByteRange answers single byte ranges as RFC 7233 defines them', () => {
   const { parseByteRange } = serverInternals;
   assert.deepEqual(parseByteRange('bytes=0-99', 1000), { start: 0, end: 99 });

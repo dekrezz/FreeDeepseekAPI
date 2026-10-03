@@ -296,8 +296,8 @@
     F.on('accounts', () => renderComposer());
     S.grow = grow;
 
-    // title rename by double-click
-    document.getElementById('view-title').addEventListener('dblclick', () => { if (S.visible && active()) renameInline(); });
+    // A click on the title edits it in place.
+    document.getElementById('view-title').addEventListener('click', () => { if (S.visible && active()) renameInline(); });
 
     // sidebar list
     const search = document.getElementById('chat-search');
@@ -398,7 +398,7 @@
       if (e.key === 'ArrowDown') { e.preventDefault(); btns[(i + 1) % btns.length].focus(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); btns[(i - 1 + btns.length) % btns.length].focus(); }
     });
-    F.popover(trigger, list, { width: 300, align: 'start', role: 'presentation', label: 'Model' });
+    F.popover(trigger, list, { width: 300, align: 'auto', role: 'presentation', label: 'Model' });
   }
 
   function chatAccountLabel() {
@@ -415,6 +415,12 @@
     const err = F.store.error;
     if (err && err.type === 'network') return err.message;
     if (F.gate.mode) return 'Unlock the dashboard first.';
+    const conv = active();
+    const left = coolLeftMs(conv);
+    if (left > 0) {
+      const streak = conv.failStreak || 1;
+      return `${streak > 1 ? `${streak} requests failed in a row` : 'The last request failed'}. You can send again in ${fmt.clock(left / 1000)}.`;
+    }
     return null;
   }
 
@@ -436,7 +442,7 @@
     const emptyInput = !textarea.value.trim() && !S.attachments.length;
     S.els.form.classList.toggle('is-running', Boolean(running));
     sendBtn.setAttribute('aria-label', running ? 'Stop' : 'Send');
-    sendBtn.setAttribute('data-tip', running ? 'Stop (Esc)' : reason || (emptyInput ? 'Type a message' : 'Send (Enter)'));
+    sendBtn.setAttribute('data-tip', running ? 'Stop' : reason || (emptyInput ? 'Type a message' : 'Send'));
     sendBtn.setAttribute('aria-disabled', String(!running && (Boolean(reason) || emptyInput)));
     if (reason && !running && (S.els.note.textContent === '' || S.noteFromReason)) setNote(reason, S.models.error ? 'crit' : null, true);
     else if (!reason && S.noteFromReason) setNote('');
@@ -647,17 +653,23 @@
     const pending = runInfo && runInfo.msgId === m.id;
 
     if (pending) {
-      const thinking = parseModel(meta.model || '').think;
       const elapsed = Date.now() - runInfo.startedAt;
+      if (runInfo.firstContentAt) {
+        // The answer is streaming: the clock stops at the time it took to start.
+        li.append(...answerParts(m, false, runInfo.firstContentAt - runInfo.startedAt));
+        return li;
+      }
       li.append(h('div', { class: 'working', 'aria-live': 'off' },
-        h('span', { class: 'sweep', 'aria-hidden': 'true' }),
-        h('p', { class: 'working-label' }, h('span', { text: thinking ? 'Thinking' : 'Working' }), ' ', h('span', { class: 'readout-inline', 'data-run-timer': String(runInfo.startedAt), text: fmt.clock(elapsed / 1000) })),
+        h('p', { class: 'working-label' },
+          thinkGrid(true),
+          h('span', { text: 'Thinking' }),
+          h('span', { class: 'working-time', 'data-run-timer': String(runInfo.startedAt), text: thinkClock(elapsed) })),
         h('p', { class: 'meta working-hint', 'data-slow-hint': String(runInfo.startedAt), hidden: elapsed < SLOW_HINT_MS, text: 'The proxy returns the answer when DeepSeek finishes, so long answers and account failover can take a few minutes. It arrives in one piece.' })));
-      if (m.reasoning || m.content) li.append(...answerParts(m, false));
+      if (m.reasoning) li.append(...answerParts(m, false));
       return li;
     }
 
-    li.append(...answerParts(m, reveal));
+    li.append(...answerParts(m, reveal, meta.workedMs));
 
     if (meta.stopped) li.append(h('p', { class: 'stopped-note', text: 'Stopped. The next message starts a fresh upstream thread.' }));
     if (meta.error) li.append(errorBlock(m));
@@ -666,13 +678,40 @@
     return li;
   }
 
-  function answerParts(m, reveal) {
+  // 3x3 tiles; the eight outer ones light up clockwise (--i), the centre stays still.
+  const RING = [0, 1, 2, 7, null, 3, 6, 5, 4];
+  function thinkGrid(animated) {
+    return h('span', { class: ['think-grid', animated && 'is-running'], 'aria-hidden': 'true' },
+      RING.map((i) => {
+        const cell = h('span', { class: ['think-cell', i === null && 'is-center'] });
+        if (i !== null) cell.style.setProperty('--i', String(i));
+        return cell;
+      }));
+  }
+  // Live clock: 1.1s, 9.8s, then 1m 05s.
+  function thinkClock(ms) {
+    const s = Math.max(0, ms) / 1000;
+    if (s < 60) return `${s.toFixed(1)}s`;
+    return `${Math.floor(s / 60)}m ${String(Math.floor(s % 60)).padStart(2, '0')}s`;
+  }
+  // How long it worked before the answer: 12s, 1m 4s, 10m, 1h 2m.
+  function workedFor(ms) {
+    const s = Math.max(1, Math.round(ms / 1000));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
+    return m % 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 60)}h`;
+  }
+
+  function answerParts(m, reveal, workedMs) {
     const parts = [];
+    const worked = workedMs != null ? `Worked for ${workedFor(workedMs)}` : null;
+    if (worked && !m.reasoning) parts.push(h('p', { class: 'working-label is-done' }, thinkGrid(false), h('span', { text: worked })));
     if (m.reasoning) {
       const open = Boolean(m._reasoningOpen);
       const secs = m.meta && m.meta.reasoningMs ? Math.max(1, Math.round(m.meta.reasoningMs / 1000)) : null;
       const btn = h('button', { type: 'button', class: 'reasoning-toggle', 'aria-expanded': String(open) },
-        F.icon('chevron-right', 'chev'), h('span', { text: secs ? `Reasoned for ${secs} s` : 'Reasoning' }));
+        F.icon('chevron-right', 'chev'), h('span', { text: worked || (secs ? `Reasoned for ${secs} s` : 'Reasoning') }));
       const body = h('div', { class: 'reasoning-body' }, h('div', { class: 'reasoning-inner' }, h('div', { class: 'reasoning-text' }, F.md.render(m.reasoning))));
       const wrap = h('div', { class: ['reasoning', open && 'is-open'] }, btn, body);
       btn.addEventListener('click', () => {
@@ -708,22 +747,65 @@
     if (e.status === 401) actions.append(F.btn('Enter access key', { kind: 'primary', size: 'sm', icon: 'key', onclick: () => F.openKeyGate() }));
     else if (e.status === 403) actions.append(h('a', { class: 'btn btn-secondary btn-sm', href: '#/settings' }, h('span', { class: 'btn-label', text: 'Open Settings' })));
     else if (e.type === 'context_length_exceeded') actions.append(F.btn('Start a new chat', { kind: 'primary', size: 'sm', icon: 'new-chat', onclick: () => newChat() }));
-    else if ((e.status === 429 || e.status === 503) && e.retryAt) {
-      const left = Math.max(0, (e.retryAt - Date.now()) / 1000);
-      const b = F.btn(left > 0 ? `Retry in ${fmt.clock(left)}` : 'Retry', { kind: 'secondary', size: 'sm', icon: 'regenerate', onclick: () => { if (Date.now() >= e.retryAt) retry(); } });
-      b.setAttribute('data-retry-at', String(e.retryAt));
+    else if (e.retryAt) {
+      // Wait for the later of this error's own time and the chat's backoff.
+      const until = Math.max(e.retryAt, (conv && conv.coolUntil) || 0);
+      const left = Math.max(0, (until - Date.now()) / 1000);
+      const b = F.btn(left > 0 ? `Retry in ${fmt.clock(left)}` : 'Retry', { kind: 'secondary', size: 'sm', icon: 'regenerate', onclick: () => { if (Date.now() >= until) retry(); } });
+      b.setAttribute('data-retry-at', String(until));
       if (left > 0) b.setAttribute('aria-disabled', 'true');
       actions.append(b);
     } else actions.append(F.btn('Retry', { size: 'sm', icon: 'regenerate', onclick: retry }));
-    if (conv) actions.append(h('a', { class: 'link', href: F.hashFor('requests', '', { client: agentFor(conv), status: 'error' }), text: 'View in Requests' }));
+    if (conv) actions.append(errorDetailsButton(m, conv));
     return h('div', { class: 'chat-error', role: 'alert' },
       F.icon('error-x', 'chat-error-icon'),
-      h('div', { class: 'chat-error-body' },
-        h('p', { class: 'chat-error-title', text: title }),
-        h('p', { class: 'chat-error-text selectable', text: e.message }),
-        e.type ? h('p', { class: 'mono-id chat-error-type', text: `${e.type}${e.status ? ` · HTTP ${e.status}` : ''}` }) : null,
-        e.status === 403 && e.type === 'cors_error' ? h('p', { class: 'meta', text: `Add ${location.origin} to PROXY_CORS_ORIGINS where the proxy runs, then restart it.` }) : null,
-        actions));
+      h('p', { class: 'chat-error-line' },
+        h('span', { class: 'chat-error-title', text: title }),
+        h('span', { class: 'chat-error-text', text: e.message })),
+      actions,
+      e.status === 403 && e.type === 'cors_error' ? h('p', { class: 'meta chat-error-hint', text: `Add ${location.origin} to PROXY_CORS_ORIGINS where the proxy runs, then restart it.` }) : null);
+  }
+
+  // Details: a short log of the failed request, shown on hover, focus or tap. No navigation.
+  function errorDetailsButton(m, conv) {
+    const e = m.meta.error;
+    const btn = h('button', { type: 'button', class: 'chat-error-details', 'aria-haspopup': 'dialog', 'aria-expanded': 'false' },
+      F.icon('info'), h('span', { text: 'Details' }));
+    let pop = null;
+    let hideTimer = 0;
+    const fact = (label, value) => (value == null || value === '' ? null
+      : h('li', { class: 'fact' }, h('span', { class: 'fact-label', text: label }), h('span', { class: 'fact-value', text: String(value) })));
+    const content = () => {
+      const r = m.meta.requestTs ? nearestRequest(conv, m.meta.requestTs) : null;
+      return h('div', { class: 'error-log' },
+        h('p', { class: 'error-log-code mono-id', text: `${e.type || 'error'}${e.status ? ` · HTTP ${e.status}` : ''}` }),
+        h('p', { class: 'error-log-msg selectable', text: (r && r.error_message) || e.message }),
+        h('ul', { class: 'facts' },
+          fact('Time', m.meta.requestTs ? new Date(m.meta.requestTs).toLocaleTimeString() : null),
+          fact('Model', (r && r.model) || m.meta.model),
+          fact('Account', r && r.account),
+          fact('Took', r && r.ms != null ? `${fmt.int(r.ms)} ms` : null)));
+    };
+    const open = () => {
+      clearTimeout(hideTimer);
+      if (pop && pop.isConnected) return;
+      pop = F.popover(btn, content(), { width: 320, align: 'auto', role: 'dialog', label: 'Error details' });
+      if (pop) {
+        pop.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+        pop.addEventListener('mouseleave', close);
+      }
+    };
+    const close = () => {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => { if (pop && pop.isConnected) F.closePopover(false); pop = null; }, 160);
+    };
+    btn.addEventListener('mouseenter', open);
+    btn.addEventListener('mouseleave', close);
+    btn.addEventListener('focus', open);
+    btn.addEventListener('blur', close);
+    // Tap on touch screens; on desktop hover already opened it. A tap elsewhere closes it.
+    btn.addEventListener('click', open);
+    return btn;
   }
 
   function errorTitle(e) {
@@ -859,8 +941,17 @@
   }
 
   function buildMessages(conv, a) {
-    const list = msgsOf(conv.id).filter(m => m.seq < a.seq);
-    const lastUser = list.filter(m => m.role === 'user').pop();
+    const all = msgsOf(conv.id).filter(m => m.seq < a.seq);
+    const lastUser = all.filter(m => m.role === 'user').pop();
+    // A message whose answer failed (or was stopped empty) is not resent with later
+    // ones: sending in a burst would otherwise replay every unanswered message.
+    const unanswered = new Set();
+    all.forEach((m, i) => {
+      const next = all[i + 1];
+      if (m.role === 'user' && m !== lastUser && next && next.role === 'assistant' && !next.content
+        && next.meta && (next.meta.error || next.meta.stopped)) unanswered.add(m.id);
+    });
+    const list = all.filter(m => !unanswered.has(m.id));
     const out = [];
     for (const m of list) {
       if (m.role === 'assistant') {
@@ -878,7 +969,9 @@
 
   async function resetSession(conv) {
     try {
-      await F.api('POST', `/reset-session?agent=${encodeURIComponent(agentFor(conv))}`, { timeout: 15000 });
+      // history=drop: this chat always sends its own transcript, so the server's copy
+      // (which can hold turns an edit replaced) must not be replayed into the new chat.
+      await F.api('POST', `/reset-session?agent=${encodeURIComponent(agentFor(conv))}&history=drop`, { timeout: 15000 });
     } catch (e) {
       if (e.status === 404) return; // the server has no session for this chat: nothing to reset
       throw Object.assign(new F.ApiError(`POST /reset-session failed before sending: ${e.message}`, { status: e.status, type: 'reset_failed' }), { cause: e });
@@ -889,6 +982,7 @@
     const controller = new AbortController();
     const runInfo = { controller, startedAt: Date.now(), msgId: a.id };
     S.runs.set(conv.id, runInfo);
+    startRunClock();
     a.meta = { model: conv.model, requestTs: F.now() };
     a.content = '';
     a.reasoning = '';
@@ -938,7 +1032,11 @@
           if (!delta) return;
           if (delta.reasoning_content) a.reasoning += delta.reasoning_content;
           if (delta.content) {
-            if (!firstContentAt) firstContentAt = Date.now();
+            if (!firstContentAt) {
+              firstContentAt = Date.now();
+              runInfo.firstContentAt = firstContentAt;
+              if (active() === conv) updateTurn(a, false);
+            }
             a.content += delta.content;
           }
           if (chunk.usage) a.meta.usage = chunk.usage;
@@ -966,6 +1064,7 @@
       }
       a.meta.ms = Date.now() - runInfo.startedAt;
       a.meta.reasoningMs = a.reasoning ? (firstContentAt || Date.now()) - runInfo.startedAt : null;
+      a.meta.workedMs = (firstContentAt || Date.now()) - runInfo.startedAt;
       if (!a.content && !a.reasoning) throw new F.ApiError('The proxy finished without any answer text.', { type: 'empty_response' });
     } catch (e) {
       if (controller.signal.aborted) {
@@ -974,14 +1073,19 @@
       } else {
         const err = e instanceof F.ApiError ? e : new F.ApiError(`${e.name || 'Error'}: ${e.message}`, { type: 'client_error' });
         F.handleGate(err); // a 401 also opens the key gate; the inline block still explains
+        // Each failure in a row makes the next try (Retry or a new message) wait longer.
+        conv.failStreak = (conv.failStreak || 0) + 1;
+        conv.coolUntil = Date.now() + retryBackoffMs(conv.failStreak);
+        const serverRetryAt = err.retryAfter ? Date.now() + err.retryAfter * 1000 : 0;
         a.meta.error = {
           status: err.status || 0, type: err.type || null, message: err.message,
-          retryAt: err.retryAfter ? Date.now() + err.retryAfter * 1000 : ((err.status === 429 || err.status === 503) ? Date.now() + 2000 : null),
+          retryAt: Math.max(serverRetryAt, conv.coolUntil),
         };
         conv.needsReset = true;
       }
     } finally {
       S.runs.delete(conv.id);
+      if (!a.meta.error && !a.meta.stopped) { conv.failStreak = 0; conv.coolUntil = 0; }
       conv.updatedAt = Date.now();
       saveConv(conv);
       saveMsg(a);
@@ -1005,9 +1109,17 @@
     if (r) r.controller.abort();
   }
 
+  // Failed tries in a row back off so a burst of retries or sends cannot hammer
+  // DeepSeek (and get the login blocked): 2, 5, 10, 20, 40, 80, then 120 s at most.
+  const RETRY_BACKOFF_S = [2, 5, 10, 20, 40, 80, 120];
+  function retryBackoffMs(streak) {
+    return RETRY_BACKOFF_S[Math.min(Math.max(streak, 1), RETRY_BACKOFF_S.length) - 1] * 1000;
+  }
+  function coolLeftMs(conv) { return conv ? Math.max(0, (conv.coolUntil || 0) - Date.now()) : 0; }
+
   async function regenerate(m) {
     const conv = active();
-    if (!conv || S.runs.has(conv.id)) return;
+    if (!conv || S.runs.has(conv.id) || coolLeftMs(conv) > 0) return;
     const list = msgsOf(conv.id);
     const drop = list.filter(x => x.seq >= m.seq);
     S.msgs.set(conv.id, list.filter(x => x.seq < m.seq));
@@ -1019,10 +1131,24 @@
   }
 
   // ================================================================ timers
+  // Tenths on the Thinking clock need a faster beat than the 1 s app tick; it only runs while an answer is pending.
+  let runClock = 0;
+  function startRunClock() {
+    if (runClock) return;
+    runClock = setInterval(() => {
+      if (!S.runs.size) { clearInterval(runClock); runClock = 0; return; }
+      if (!S.visible || !S.root) return;
+      const now = Date.now();
+      for (const el of S.root.querySelectorAll('[data-run-timer]')) el.textContent = thinkClock(now - Number(el.dataset.runTimer));
+    }, 100);
+  }
+
   function tick() {
     if (!S.visible || !S.root) return;
     const now = Date.now();
-    for (const el of S.root.querySelectorAll('[data-run-timer]')) el.textContent = fmt.clock((now - Number(el.dataset.runTimer)) / 1000);
+    const cooling = active();
+    if (cooling && (cooling.coolUntil || 0) > now - 1500) renderComposer();
+    for (const el of S.root.querySelectorAll('[data-run-timer]')) el.textContent = thinkClock(now - Number(el.dataset.runTimer));
     for (const el of S.root.querySelectorAll('[data-slow-hint]')) el.hidden = now - Number(el.dataset.slowHint) < SLOW_HINT_MS;
     for (const el of S.root.querySelectorAll('[data-retry-at]')) {
       const left = (Number(el.dataset.retryAt) - now) / 1000;
@@ -1110,6 +1236,8 @@
       done = true;
       const v = input.value.trim();
       if (commit && v && v !== conv.title) { conv.title = v; saveConv(conv); renderList(); }
+      // Drop the input first: the toolbar leaves a title that still holds one untouched.
+      input.remove();
       F.emit('chat-title');
     };
     input.addEventListener('keydown', (e) => {
@@ -1148,7 +1276,7 @@
     F.menu(trigger, [
       { label: 'Rename', icon: 'edit', run: () => renameInline(), movesFocus: true },
       { label: 'Session details', icon: 'info', movesFocus: true, run: () => setTimeout(() => sessionDetails(trigger), 0) },
-      { label: 'Reset server session', icon: 'regenerate', disabled: running, reason: 'Wait for the answer or stop it first', run: async () => {
+      { label: 'Reset server session', icon: 'session-reset', disabled: running, reason: 'Wait for the answer or stop it first', run: async () => {
         try { await resetSession(conv); conv.needsReset = false; saveConv(conv); F.toast('Reset the server session. The next message sends the full transcript.', { tone: 'success' }); }
         catch (e) { if (!F.handleGate(e)) F.toastError('Reset failed', e); }
       } },

@@ -644,15 +644,22 @@
     el.append(content);
     document.body.append(el);
     const r = trigger.getBoundingClientRect();
-    const pr = el.getBoundingClientRect();
+    // Layout size, not getBoundingClientRect: the entry animation scales the box down.
+    const pr = { width: el.offsetWidth, height: el.offsetHeight };
+    // Keep popovers off the window edges: a start-aligned one that would run past the
+    // right edge flips to end-aligned (its right edge under the trigger's right edge).
+    const EDGE = 16;
     let top = r.bottom + 6;
     let originY = 'top';
-    if (top + pr.height > innerHeight - 8 && r.top - pr.height - 6 > 8) { top = r.top - pr.height - 6; originY = 'bottom'; }
-    let left = align === 'end' ? r.right - pr.width : r.left;
-    left = Math.max(8, Math.min(left, innerWidth - pr.width - 8));
-    el.style.setProperty('top', `${Math.max(8, top)}px`);
+    if (top + pr.height > innerHeight - EDGE && r.top - pr.height - 6 > EDGE) { top = r.top - pr.height - 6; originY = 'bottom'; }
+    // 'auto' opens toward the middle of the window: end-aligned for a trigger on the right.
+    let side = align === 'auto' ? ((r.left + r.right) / 2 > innerWidth / 2 ? 'end' : 'start') : align;
+    if (side === 'start' && r.left + pr.width > innerWidth - EDGE) side = 'end';
+    let left = side === 'end' ? r.right - pr.width : r.left;
+    left = Math.max(EDGE, Math.min(left, innerWidth - pr.width - EDGE));
+    el.style.setProperty('top', `${Math.max(EDGE, top)}px`);
     el.style.setProperty('left', `${left}px`);
-    el.style.setProperty('transform-origin', `${align === 'end' ? 'right' : 'left'} ${originY}`);
+    el.style.setProperty('transform-origin', `${side === 'end' ? 'right' : 'left'} ${originY}`);
     trigger.setAttribute('aria-expanded', 'true');
     openPop = { el, trigger, onClose };
     requestAnimationFrame(() => el.classList.add('is-in'));
@@ -813,7 +820,27 @@
 
   F.errorText = (err) => `${err.message}${err.type ? ` (${err.type})` : ''}`;
 
-  F.codeLine = (text) => F.h('div', { class: 'code-line' }, F.h('code', { class: 'mono-id', text }), F.copyBtn(text, 'Copy command'));
+  F.codeLine = (text) => {
+    const code = F.h('code', { class: 'mono-id', text });
+    // The scrollbar is hidden, so mark clipped sides and let a plain mouse wheel scroll sideways.
+    const mark = () => {
+      const max = code.scrollWidth - code.clientWidth;
+      code.classList.toggle('is-clip-start', max > 1 && code.scrollLeft > 1);
+      code.classList.toggle('is-clip-end', max > 1 && code.scrollLeft < max - 1);
+    };
+    code.addEventListener('scroll', mark, { passive: true });
+    code.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+      const max = code.scrollWidth - code.clientWidth;
+      // At either end the wheel goes back to scrolling the page.
+      if (max <= 0 || (e.deltaY < 0 && code.scrollLeft <= 0) || (e.deltaY > 0 && code.scrollLeft >= max - 1)) return;
+      e.preventDefault();
+      code.scrollLeft += e.deltaY;
+    }, { passive: false });
+    if (typeof ResizeObserver === 'function') new ResizeObserver(mark).observe(code);
+    requestAnimationFrame(mark);
+    return F.h('div', { class: 'code-line' }, code, F.copyBtn(text, 'Copy command'));
+  };
 
   F.emptyRequests = (sinceTs) => {
     return F.h('div', { class: 'empty' },
@@ -936,6 +963,17 @@
     crypto.getRandomValues(bytes);
     return Array.from(bytes, b => (b % 36).toString(36)).join('');
   };
+
+  // Photos and video: no right-click save or copy, no drag-out. A surface counts when it is
+  // an <img>/<video> or paints a background photo itself; text on top keeps its menu.
+  const isMediaSurface = (el) => {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.tagName === 'IMG' || el.tagName === 'VIDEO' || el.tagName === 'PICTURE') return true;
+    return getComputedStyle(el).backgroundImage.includes('url(');
+  };
+  for (const type of ['contextmenu', 'dragstart']) {
+    document.addEventListener(type, (e) => { if (isMediaSurface(e.target)) e.preventDefault(); }, true);
+  }
 
   F.isLoopbackHost = () => ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname) || location.hostname.endsWith('.localhost');
 

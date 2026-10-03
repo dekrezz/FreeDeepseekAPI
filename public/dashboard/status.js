@@ -67,6 +67,10 @@
     video.preload = 'metadata';
     video.poster = '/dashboard/media-liftoff.jpg';
     video.setAttribute('aria-hidden', 'true');
+    // No download button, picture-in-picture, or casting for the background footage.
+    video.setAttribute('controlslist', 'nodownload noplaybackrate noremoteplayback');
+    video.disablePictureInPicture = true;
+    video.disableRemotePlayback = true;
     video.src = '/dashboard/media-liftoff.mp4';
     st.els.video = video;
     return h('section', { class: 'hero', 'aria-label': 'Account pool' },

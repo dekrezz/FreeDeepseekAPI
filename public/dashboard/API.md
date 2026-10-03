@@ -295,7 +295,7 @@ All of these need the bearer key when one is set.
   - Request header `x-account-id: <id>` (optional) serves the request with that account only: `404 account_not_found`, `409 account_unavailable` (paused or no credentials) or `429 rate_limit` with `Retry-After` (cooling down) instead of failing over to another account.
   - Response headers: `x-account-id` names the serving account, and `X-FreeDeepseek-Context-Compacted: true` means the prompt was compacted.
   - Error JSON: `{error:{message, type}}`. For 429, honor `Retry-After`.
-- **`POST /reset-session?agent=dashboard:<id>`** must be called before you regenerate, edit, change the system prompt, or send the next message after a Stop.
+- **`POST /reset-session?agent=dashboard:<id>&history=drop`** must be called before you regenerate, edit, change the system prompt, or send the next message after a Stop. `history=drop` clears the server's copy so turns an edit replaced are not replayed.
   - The server keeps a sticky remote thread and sends only the turns after the last assistant message.
   - `404 {error:'No session for agent: …'}` means there was nothing to reset. That error is a bare string.
   - Never call `agent=all`.
