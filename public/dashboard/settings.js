@@ -280,42 +280,60 @@
     if (u.error) { host.replaceChildren(F.notice('crit', 'GET /admin/update failed', F.errorText(u.error))); return; }
     const s = u.status;
     if (!s) { host.replaceChildren(h('div', { class: 'set-group' }, row('Version', null, h('span', { class: 'quiet', text: 'Loading…' }), null, 'download'))); return; }
-    const versionText = [s.version ? `v${s.version}` : null, s.commit, s.channel ? CHANNEL_LABEL[s.channel] : (s.branch ? `branch ${s.branch}` : null)].filter(Boolean).join(' · ');
-    const rows = [row('Installed', null, h('span', { class: 'mono-id', text: versionText || '—' }), null, 'download')];
+    const busy = u.phase === 'checking' || u.phase === 'installing' || u.phase === 'restarting';
+    // Channel name in the label face; a branch name stays exactly as git spells it.
+    const where = s.channel ? [h('span', { text: `${CHANNEL_LABEL[s.channel]} channel` })]
+      : s.branch ? [h('span', { text: 'Branch' }), h('code', { class: 'mono-id update-branch', text: s.branch })] : [h('span', { text: 'No channel' })];
+    const checkBtn = F.btn(u.phase === 'checking' ? 'Checking…' : 'Check for updates', { kind: 'primary', icon: 'reload', onclick: checkUpdate });
+    if (busy || s.method !== 'git') checkBtn.setAttribute('aria-disabled', 'true');
+    // The installed build, set like a launch board over the liftoff photo.
+    const hero = h('div', { class: 'update-hero' },
+      h('img', { class: 'update-hero-media', src: '/dashboard/media-liftoff.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' }),
+      h('div', { class: 'update-hero-body' },
+        h('p', { class: 'update-version', text: s.version ? `v${s.version}` : 'Unknown version' }),
+        h('p', { class: 'update-where' }, ...where, s.commit ? h('code', { class: 'mono-id', text: s.commit }) : null)),
+      s.method === 'git' ? h('div', { class: 'update-hero-action' }, checkBtn) : null);
     if (s.method !== 'git') {
-      rows.push(row('Updates from the dashboard', 'This copy was not installed with git clone (a container image or a downloaded archive). Pull a new image or download the new release instead.', h('span', { class: 'quiet', text: 'Unavailable' }), null, 'info'));
-      host.replaceChildren(h('div', { class: 'set-group' }, ...rows));
+      host.replaceChildren(h('div', { class: 'update-panel' }, hero,
+        h('p', { class: 'update-note', text: 'This copy was not installed with git clone (a container image or a downloaded archive), so it cannot update itself. Pull a new image or download the new release.' })));
       return;
     }
-    const busy = u.phase === 'checking' || u.phase === 'installing' || u.phase === 'restarting';
-    const channel = F.segmented('Update channel', [{ value: 'stable', label: 'Stable' }, { value: 'latest', label: 'Latest' }], u.channel, (v) => {
-      u.channel = v; u.check = null; u.phase = 'idle'; u.message = null; renderUpdates();
-    });
-    rows.push(row('Channel', s.channel && u.channel !== s.channel ? `Installing switches this copy from ${CHANNEL_LABEL[s.channel]} to ${CHANNEL_LABEL[u.channel]}.` : null, channel, null, 'route'));
-    const checkBtn = F.btn(u.phase === 'checking' ? 'Checking…' : 'Check for updates', { icon: 'reload', onclick: checkUpdate });
-    if (busy) checkBtn.setAttribute('aria-disabled', 'true');
-    rows.push(row('Check for updates', 'Asks GitHub for the newest release on this channel.', checkBtn, null, 'search'));
-    const parts = [h('div', { class: 'set-group' }, ...rows)];
+    // Channels as two tiles: what each one gets, the current one marked.
+    const tile = (value, title, desc) => {
+      const on = u.channel === value;
+      const b = h('button', { type: 'button', class: ['channel-tile', on && 'is-on'], role: 'radio', 'aria-checked': String(on) },
+        h('span', { class: 'channel-dot', 'aria-hidden': 'true' }),
+        h('span', { class: 'channel-text' },
+          h('span', { class: 'channel-title' }, h('span', { text: title }), s.channel === value ? h('span', { class: 'channel-current', text: 'Current' }) : null),
+          h('span', { class: 'channel-desc', text: desc })));
+      b.addEventListener('click', () => { if (busy || u.channel === value) return; u.channel = value; u.check = null; u.phase = 'idle'; u.message = null; renderUpdates(); });
+      return b;
+    };
+    const tiles = h('div', { class: 'channel-tiles', role: 'radiogroup', 'aria-label': 'Update channel' },
+      tile('stable', 'Stable', 'Releases that have been checked'),
+      tile('latest', 'Latest', 'Every release, as soon as it is out'));
+    const panel = h('div', { class: 'update-panel' }, hero, tiles);
+    const parts = [panel];
     if (u.message) parts.push(F.notice(u.message.tone, u.message.title, u.message.text));
     const c = u.check;
     if (u.phase === 'switched') {
       const ch = u.installed && u.installed.installed ? u.installed.installed.channel : u.channel;
-      parts.push(h('div', { class: 'set-group' }, row(`Now on ${CHANNEL_LABEL[ch]}`, 'Same code as before, so there is nothing to restart. Updates on this channel show up here.', null, null, 'success')));
+      panel.append(h('div', { class: 'update-result' }, row(`Now on ${CHANNEL_LABEL[ch]}`, 'Same code as before, so there is nothing to restart. Updates on this channel show up here.', null, null, 'success')));
     } else if (u.phase === 'installed' || u.phase === 'restarting') {
       const inst = u.installed ? u.installed.installed : null;
       const auto = (u.installed ? u.installed.restart : s.restart) === 'auto';
       const restartBtn = F.btn(u.phase === 'restarting' ? 'Restarting…' : 'Restart now', { kind: 'primary', icon: 'reload', onclick: restartNow });
       if (u.phase === 'restarting') restartBtn.setAttribute('aria-disabled', 'true');
-      parts.push(h('div', { class: 'set-group' },
+      panel.append(h('div', { class: 'update-result' },
         row(`Installed ${inst && inst.version ? `v${inst.version}` : 'the update'}`,
           auto ? 'Restart the proxy to start using it. Open chats keep going after the restart.' : 'Stop the proxy and start it again with npm start to use it.',
           auto ? restartBtn : null, null, 'success')));
     } else if (c && c.upToDate) {
-      parts.push(h('div', { class: 'set-group' }, row(`You're on the newest ${CHANNEL_LABEL[c.channel]} release`, c.available.version ? `v${c.available.version} · ${c.available.commit}` : c.available.commit, null, null, 'success')));
+      panel.append(h('div', { class: 'update-result' }, row(`You're on the newest ${CHANNEL_LABEL[c.channel]} release`, c.available.version ? `v${c.available.version} · ${c.available.commit}` : c.available.commit, null, null, 'success')));
     } else if (c && c.switchOnly) {
       const switchBtn = F.btn(u.phase === 'installing' ? 'Switching…' : 'Switch', { kind: 'primary', icon: 'route', onclick: installUpdate });
       if (!c.canInstall || busy) switchBtn.setAttribute('aria-disabled', 'true');
-      parts.push(h('div', { class: 'set-group' },
+      panel.append(h('div', { class: 'update-result' },
         row(`Switch to ${CHANNEL_LABEL[c.channel]}`, `You already run this version${c.available.version ? ` (v${c.available.version} · ${c.available.commit})` : ''}. Switching makes this copy follow ${CHANNEL_LABEL[c.channel]} and get its updates.`,
           c.canInstall ? switchBtn : null, null, 'route')));
       if (!c.canInstall && c.blockedReason) {
@@ -327,7 +345,7 @@
       const installBtn = F.btn(u.phase === 'installing' ? 'Installing…' : 'Install', { kind: 'primary', icon: 'download', onclick: installUpdate });
       if (!c.canInstall || busy) installBtn.setAttribute('aria-disabled', 'true');
       const changes = c.changes.slice(0, 8);
-      parts.push(h('div', { class: 'set-group update-card' },
+      panel.append(h('div', { class: 'update-result' },
         row(c.available.version ? `v${c.available.version} is available` : 'An update is available', `${CHANNEL_LABEL[c.channel]} · ${c.available.commit}`, c.canInstall ? installBtn : null, null, 'download'),
         changes.length ? h('ul', { class: 'update-changes' }, changes.map(ch => h('li', null, h('span', { class: 'update-subject', text: ch.subject }), h('code', { class: 'mono-id', text: ch.commit })))) : null,
         c.changes.length > changes.length ? h('p', { class: 'set-hint update-more', text: `and ${c.changes.length - changes.length} more` }) : null));

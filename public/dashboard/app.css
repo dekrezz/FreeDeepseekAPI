@@ -1009,6 +1009,36 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 .update-changes .mono-id { flex: none; color: var(--ink-3); font-size: 0.75rem; }
 .update-more { padding: 0 16px 12px 48px; }
 .update-manual { display: grid; gap: 8px; }
+/* The installed build as a launch board: liftoff photo, the version in the display face. */
+.update-panel { border-radius: var(--r-lg); background: #262626; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.07); overflow: hidden; min-width: 0; }
+.update-hero { position: relative; isolation: isolate; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; min-height: 148px; padding: 20px; background: #000; color: #f0f0fa; }
+.update-hero-media { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; max-width: none; object-fit: cover; object-position: 50% 42%; }
+.update-hero::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(90deg, rgb(0 0 0 / 0.86) 0%, rgb(0 0 0 / 0.55) 55%, rgb(0 0 0 / 0.25) 100%), linear-gradient(0deg, rgb(0 0 0 / 0.5), transparent 60%); }
+.update-hero-body { display: grid; gap: 6px; min-width: 0; }
+.update-version { font-family: var(--font-display); font-size: 2.5rem; line-height: 1; font-weight: 700; letter-spacing: 0.01em; font-variant-numeric: tabular-nums; }
+.update-where { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: rgb(240 240 250 / 0.72); font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.update-where .mono-id { text-transform: none; letter-spacing: 0; color: rgb(240 240 250 / 0.6); padding: 1px 6px; border-radius: 6px; background: rgb(255 255 255 / 0.1); }
+.update-hero-action { flex: none; }
+.update-note { padding: 14px 16px; color: var(--ink-2); font-size: 0.875rem; }
+.channel-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px; }
+.channel-tile { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border: 0; border-radius: var(--r-md); background: #2c2c2c; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06); color: var(--ink); text-align: left; cursor: default; transition: background-color 140ms ease, box-shadow 140ms ease; }
+@media (hover: hover) and (pointer: fine) { .channel-tile:not(.is-on):hover { background: #313131; } }
+.channel-tile.is-on { background: var(--signal-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal) 55%, transparent); }
+.channel-tile:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.channel-dot { flex: none; width: 14px; height: 14px; margin-top: 3px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 0.35); }
+.channel-tile.is-on .channel-dot { box-shadow: inset 0 0 0 4px var(--signal); }
+.channel-text { display: grid; gap: 2px; min-width: 0; }
+.channel-title { display: flex; align-items: center; gap: 8px; font-size: 0.9375rem; font-weight: 600; }
+.channel-current { padding: 1px 7px; border-radius: 999px; background: rgb(255 255 255 / 0.1); color: var(--ink-2); font-size: 0.6875rem; font-weight: 500; }
+.channel-desc { color: var(--ink-3); font-size: 0.8125rem; line-height: 1.125rem; }
+.update-result { border-top: 1px solid rgb(255 255 255 / 0.07); }
+.update-result .set-row { min-height: 52px; }
+@media (max-width: 560px) {
+  .update-hero { flex-direction: column; align-items: stretch; min-height: 0; padding: 16px; }
+  .update-version { font-size: 2rem; }
+  .channel-tiles { grid-template-columns: 1fr; }
+}
 .error-log .fact { grid-template-columns: 5rem minmax(0, 1fr); min-height: 22px; font-size: 0.8125rem; }
 @media (max-width: 560px) {
   .chat-error { width: 100%; }
