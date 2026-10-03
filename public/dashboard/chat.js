@@ -248,7 +248,8 @@
 
     const textarea = h('textarea', { class: 'composer-input', rows: '1', placeholder: 'Message DeepSeek through this proxy…', 'aria-label': 'Message', spellcheck: 'true' });
     const thumbs = h('div', { class: 'attach-row', hidden: true });
-    const fileInput = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', multiple: true, class: 'sr-only', tabindex: '-1', 'aria-hidden': 'true' });
+    // hidden, not just visually hidden: Safari drew an empty focus box for the 1px input.
+    const fileInput = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', multiple: true, hidden: true, tabindex: '-1', 'aria-hidden': 'true' });
     const attachBtn = F.iconBtn('plus', 'Attach images', { onclick: () => fileInput.click() });
     // Under the box, Claude-style: model and mode on the right (the account is in its menu).
     const modelName = h('span', { class: 'meta-btn-label' });
@@ -264,7 +265,8 @@
         h('div', { class: 'composer-left' }, attachBtn),
         h('div', { class: 'composer-right' }, sendBtn)));
     const note = h('p', { class: 'composer-note', role: 'status' });
-    const dock = h('div', { class: 'composer-dock' }, empty, form, meta, note, fileInput);
+    // The note sits above the composer, where the eye already is when a send is refused.
+    const dock = h('div', { class: 'composer-dock' }, empty, note, form, meta, fileInput);
     root.append(scroll, dock);
     Object.assign(S.els, { banners, empty, emptyTitle, emptyLine, unknown, transcript, scroll, textarea, thumbs, fileInput, attachBtn, modelBtn, modelName, modelMode, sendBtn, form, note, dock });
 
@@ -323,8 +325,10 @@
 
   function setNote(text, tone, fromReason = false) {
     S.noteFromReason = fromReason && Boolean(text);
-    S.els.note.textContent = text || '';
-    S.els.note.className = `composer-note${tone ? ` is-${tone}` : ''}`;
+    const note = S.els.note;
+    note.className = `composer-note${tone ? ` is-${tone}` : ''}`;
+    if (!text) { note.replaceChildren(); return; }
+    note.replaceChildren(h('span', { class: 'composer-note-pill' }, F.icon(tone === 'crit' ? 'alert' : 'info'), h('span', { text })));
   }
 
   // Modes are model variants on this server: base, -thinking, and their -nosearch twins.
@@ -419,7 +423,7 @@
     const left = coolLeftMs(conv);
     if (left > 0) {
       const streak = conv.failStreak || 1;
-      return `${streak > 1 ? `${streak} requests failed in a row` : 'The last request failed'}. You can send again in ${fmt.clock(left / 1000)}.`;
+      return `${streak > 1 ? `${streak} requests failed in a row` : 'The last request failed'}. Try again in ${fmt.clock(left / 1000)}`;
     }
     return null;
   }
@@ -444,7 +448,7 @@
     sendBtn.setAttribute('aria-label', running ? 'Stop' : 'Send');
     sendBtn.setAttribute('data-tip', running ? 'Stop' : reason || (emptyInput ? 'Type a message' : 'Send'));
     sendBtn.setAttribute('aria-disabled', String(!running && (Boolean(reason) || emptyInput)));
-    if (reason && !running && (S.els.note.textContent === '' || S.noteFromReason)) setNote(reason, S.models.error ? 'crit' : null, true);
+    if (reason && !running && (S.els.note.textContent === '' || S.noteFromReason)) setNote(reason, S.models.error || coolLeftMs(conv) > 0 ? 'crit' : null, true);
     else if (!reason && S.noteFromReason) setNote('');
   }
   function setDisabled(btn, disabled, reason, tip) {
