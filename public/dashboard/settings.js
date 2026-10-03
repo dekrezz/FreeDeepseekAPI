@@ -237,8 +237,13 @@
     renderUpdates();
     try {
       const res = await F.api('POST', '/admin/update/install', { body: { channel: u.channel }, timeout: 120000 });
-      u.phase = 'installed';
       u.installed = res;
+      if (res.switched) {
+        // Same code on a new branch: nothing to restart, just show where the copy is now.
+        u.phase = 'switched';
+        u.check = null;
+        u.status = await F.api('GET', '/admin/update');
+      } else u.phase = 'installed';
     } catch (e) {
       if (F.handleGate(e)) return;
       u.phase = 'checked';
@@ -293,7 +298,10 @@
     const parts = [h('div', { class: 'set-group' }, ...rows)];
     if (u.message) parts.push(F.notice(u.message.tone, u.message.title, u.message.text));
     const c = u.check;
-    if (u.phase === 'installed' || u.phase === 'restarting') {
+    if (u.phase === 'switched') {
+      const ch = u.installed && u.installed.installed ? u.installed.installed.channel : u.channel;
+      parts.push(h('div', { class: 'set-group' }, row(`Now on ${CHANNEL_LABEL[ch]}`, 'Same code as before, so there is nothing to restart. Updates on this channel show up here.', null, null, 'success')));
+    } else if (u.phase === 'installed' || u.phase === 'restarting') {
       const inst = u.installed ? u.installed.installed : null;
       const auto = (u.installed ? u.installed.restart : s.restart) === 'auto';
       const restartBtn = F.btn(u.phase === 'restarting' ? 'Restarting…' : 'Restart now', { kind: 'primary', icon: 'reload', onclick: restartNow });
@@ -304,6 +312,17 @@
           auto ? restartBtn : null, null, 'success')));
     } else if (c && c.upToDate) {
       parts.push(h('div', { class: 'set-group' }, row(`You're on the newest ${CHANNEL_LABEL[c.channel]} release`, c.available.version ? `v${c.available.version} · ${c.available.commit}` : c.available.commit, null, null, 'success')));
+    } else if (c && c.switchOnly) {
+      const switchBtn = F.btn(u.phase === 'installing' ? 'Switching…' : 'Switch', { kind: 'primary', icon: 'route', onclick: installUpdate });
+      if (!c.canInstall || busy) switchBtn.setAttribute('aria-disabled', 'true');
+      parts.push(h('div', { class: 'set-group' },
+        row(`Switch to ${CHANNEL_LABEL[c.channel]}`, `You already run this version${c.available.version ? ` (v${c.available.version} · ${c.available.commit})` : ''}. Switching makes this copy follow ${CHANNEL_LABEL[c.channel]} and get its updates.`,
+          c.canInstall ? switchBtn : null, null, 'route')));
+      if (!c.canInstall && c.blockedReason) {
+        parts.push(F.notice('warn', 'Switch by hand', h('div', { class: 'update-manual' },
+          h('p', { class: 'notice-text', text: `${BLOCKED[c.blockedReason] || 'This copy cannot switch from the dashboard.'} Run this where the proxy runs:` }),
+          F.codeLine(c.manualCommand))));
+      }
     } else if (c) {
       const installBtn = F.btn(u.phase === 'installing' ? 'Installing…' : 'Install', { kind: 'primary', icon: 'download', onclick: installUpdate });
       if (!c.canInstall || busy) installBtn.setAttribute('aria-disabled', 'true');
