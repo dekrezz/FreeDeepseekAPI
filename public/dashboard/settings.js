@@ -44,7 +44,7 @@
     const appearance = h('div', { class: 'set-group' });
     const chat = h('div', { class: 'set-stack' });
     root.append(h('div', { class: 'view-pad settings' },
-      section('Access key', 'Sent as a Bearer header to the admin API and to /v1. Kept in this tab only (sessionStorage), never in localStorage.', key),
+      section('Access key', 'The PROXY_API_KEY this dashboard signs its requests with.', key),
       section('Connection', 'Point any OpenAI- or Anthropic-compatible client at this proxy.', conn),
       section('Server', 'Facts from GET /health.', server),
       section('Updates', 'Stable gets a release once it has been checked. Latest gets every release first.', updates),
@@ -68,11 +68,45 @@
       control == null || control === '' ? null : h('div', { class: 'set-control' }, control instanceof Node ? control : String(control)));
   }
 
+  // The section shows the one thing a key changes: the Authorization header this tab
+  // sends. It previews live while a key is pasted and settles when it is saved.
+  function maskKey(key) {
+    const tail = key.slice(-4);
+    return { dots: '•'.repeat(Math.min(Math.max(key.length - 4, 4), 12)), tail };
+  }
+
   function renderKey() {
-    const has = Boolean(F.key.get());
-    const input = h('input', { type: 'password', class: 'input', id: 'settings-key', autocomplete: 'off', spellcheck: 'false', placeholder: has ? 'Replace the stored key' : 'PROXY_API_KEY' });
-    const save = F.btn(has ? 'Replace' : 'Save key', { kind: 'primary', type: 'submit' });
-    const form = h('form', { class: 'set-form' }, h('label', { class: 'sr-only', for: 'settings-key', text: 'Access key' }), input, save);
+    const stored = F.key.get();
+    const value = h('span', { class: 'auth-value' });
+    const header = h('p', { class: 'auth-line', 'aria-live': 'polite' }, h('span', { class: 'auth-name', text: 'Authorization:' }), ' ', value);
+    const paint = (key, preview) => {
+      header.classList.toggle('is-preview', Boolean(preview));
+      header.classList.toggle('is-empty', !key);
+      if (!key) { value.replaceChildren(h('span', { class: 'auth-none', text: 'not sent' })); return; }
+      const { dots, tail } = maskKey(key);
+      value.replaceChildren(h('span', { class: 'auth-scheme', text: 'Bearer ' }), h('span', { class: 'auth-dots', text: dots }), h('span', { class: 'auth-tail', text: tail }));
+    };
+    paint(stored, false);
+
+    const input = h('input', { type: 'password', class: 'input auth-input', id: 'settings-key', autocomplete: 'off', spellcheck: 'false', placeholder: stored ? 'Paste a new key to replace it' : 'Paste PROXY_API_KEY' });
+    input.addEventListener('input', () => { const v = input.value.trim(); paint(v || stored, Boolean(v)); });
+    const reveal = F.iconBtn('eye', 'Show key', { cls: 'auth-reveal' });
+    reveal.setAttribute('aria-pressed', 'false');
+    reveal.setAttribute('aria-controls', 'settings-key');
+    reveal.addEventListener('click', () => {
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      reveal.replaceChildren(F.icon(show ? 'eye-off' : 'eye'));
+      const label = show ? 'Hide key' : 'Show key';
+      reveal.setAttribute('aria-label', label);
+      reveal.setAttribute('data-tip', label);
+      reveal.setAttribute('aria-pressed', String(show));
+      input.focus();
+    });
+    const save = F.btn(stored ? 'Replace key' : 'Save key', { kind: 'primary', type: 'submit' });
+    const form = h('form', { class: 'auth-form' },
+      h('label', { class: 'sr-only', for: 'settings-key', text: 'Access key' }),
+      h('span', { class: 'auth-field' }, input, reveal), save);
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const v = input.value.trim();
@@ -83,12 +117,12 @@
       F.refresh();
       render();
     });
-    const state = h('span', { class: 'set-hint set-state' }, F.lamp(has ? 'ready' : 'disabled'),
-      has ? 'A key is stored for this tab only.' : 'No key stored. Keyless access works only from this machine when PROXY_API_KEY is not set.');
-    const forget = has ? F.btn('Forget key', { kind: 'ghost', icon: 'key', onclick: () => { F.key.clear(); F.toast('Forgot the key. Admin calls now go without one.'); F.refresh(); render(); } }) : null;
-    st.els.key.replaceChildren(
-      row('Key for this tab', state, forget),
-      h('div', { class: 'set-row set-row-form' }, form));
+    const forget = stored ? F.iconBtn('trash', 'Forget key', { cls: 'auth-forget' }) : null;
+    if (forget) forget.addEventListener('click', () => { F.key.clear(); F.toast('Forgot the key. Requests from this tab now go without one.'); F.refresh(); render(); });
+
+    st.els.key.replaceChildren(h('div', { class: 'set-group auth' },
+      h('div', { class: 'auth-head' }, header, forget),
+      h('div', { class: 'auth-body' }, form)));
   }
 
   // ---------------------------------------------------------------- code colouring
@@ -206,9 +240,17 @@
   // ---------------------------------------------------------------- updates
   const CHANNEL_LABEL = { stable: 'Stable', latest: 'Latest' };
   const BLOCKED = {
-    local_changes: 'This copy has uncommitted changes, so installing would overwrite them.',
-    diverged: 'Your local branch has its own commits, so it cannot be moved forward safely.',
+    local_changes: 'You have local changes, so update from a terminal:',
+    diverged: 'Your branch has its own commits, so update from a terminal:',
   };
+  // The by-hand command, one step per line, copied as one line.
+  function manualSteps(command, restartAfter) {
+    const steps = command.split(' && ');
+    if (restartAfter) steps.push('# then restart the proxy');
+    return h('div', { class: 'update-manual' },
+      h('pre', { class: 'update-steps' }, steps.map(line => h('code', { class: line.startsWith('#') ? 'is-note' : null, text: line }))),
+      F.copyBtn(command, 'Copy command'));
+  }
 
   async function loadUpdate() {
     try {
@@ -280,61 +322,79 @@
     if (u.error) { host.replaceChildren(F.notice('crit', 'GET /admin/update failed', F.errorText(u.error))); return; }
     const s = u.status;
     if (!s) { host.replaceChildren(h('div', { class: 'set-group' }, row('Version', null, h('span', { class: 'quiet', text: 'Loading…' }), null, 'download'))); return; }
-    const versionText = [s.version ? `v${s.version}` : null, s.commit, s.channel ? CHANNEL_LABEL[s.channel] : (s.branch ? `branch ${s.branch}` : null)].filter(Boolean).join(' · ');
-    const rows = [row('Installed', null, h('span', { class: 'mono-id', text: versionText || '—' }), null, 'download')];
+    const busy = u.phase === 'checking' || u.phase === 'installing' || u.phase === 'restarting';
+    // Channel name in the label face; a branch name stays exactly as git spells it.
+    const where = s.channel ? [h('span', { text: `${CHANNEL_LABEL[s.channel]} channel` })]
+      : s.branch ? [h('span', { text: 'Branch' }), h('code', { class: 'mono-id update-branch', text: s.branch })] : [h('span', { text: 'No channel' })];
+    const checkBtn = F.btn(u.phase === 'checking' ? 'Checking…' : 'Check for updates', { kind: 'primary', icon: 'reload', onclick: checkUpdate });
+    if (busy || s.method !== 'git') checkBtn.setAttribute('aria-disabled', 'true');
+    // The installed build, set like a launch board over the liftoff photo.
+    const hero = h('div', { class: 'update-hero' },
+      h('img', { class: 'update-hero-media', src: '/dashboard/media-liftoff.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' }),
+      h('div', { class: 'update-hero-body' },
+        h('p', { class: 'update-version', text: s.version ? `v${s.version}` : 'Unknown version' }),
+        h('p', { class: 'update-where' }, ...where, s.commit ? h('code', { class: 'mono-id', text: s.commit }) : null)),
+      s.method === 'git' ? h('div', { class: 'update-hero-action' }, checkBtn) : null);
     if (s.method !== 'git') {
-      rows.push(row('Updates from the dashboard', 'This copy was not installed with git clone (a container image or a downloaded archive). Pull a new image or download the new release instead.', h('span', { class: 'quiet', text: 'Unavailable' }), null, 'info'));
-      host.replaceChildren(h('div', { class: 'set-group' }, ...rows));
+      host.replaceChildren(h('div', { class: 'update-panel' }, hero,
+        h('p', { class: 'update-note', text: 'This copy was not installed with git clone (a container image or a downloaded archive), so it cannot update itself. Pull a new image or download the new release.' })));
       return;
     }
-    const busy = u.phase === 'checking' || u.phase === 'installing' || u.phase === 'restarting';
-    const channel = F.segmented('Update channel', [{ value: 'stable', label: 'Stable' }, { value: 'latest', label: 'Latest' }], u.channel, (v) => {
-      u.channel = v; u.check = null; u.phase = 'idle'; u.message = null; renderUpdates();
-    });
-    rows.push(row('Channel', s.channel && u.channel !== s.channel ? `Installing switches this copy from ${CHANNEL_LABEL[s.channel]} to ${CHANNEL_LABEL[u.channel]}.` : null, channel, null, 'route'));
-    const checkBtn = F.btn(u.phase === 'checking' ? 'Checking…' : 'Check for updates', { icon: 'reload', onclick: checkUpdate });
-    if (busy) checkBtn.setAttribute('aria-disabled', 'true');
-    rows.push(row('Check for updates', 'Asks GitHub for the newest release on this channel.', checkBtn, null, 'search'));
-    const parts = [h('div', { class: 'set-group' }, ...rows)];
+    // Channels as two tiles: what each one gets, the current one marked.
+    const tile = (value, title, desc) => {
+      const on = u.channel === value;
+      const b = h('button', { type: 'button', class: ['channel-tile', on && 'is-on'], role: 'radio', 'aria-checked': String(on) },
+        h('span', { class: 'channel-dot', 'aria-hidden': 'true' }),
+        h('span', { class: 'channel-text' },
+          h('span', { class: 'channel-title' }, h('span', { text: title }), s.channel === value ? h('span', { class: 'channel-current', text: 'Current' }) : null),
+          h('span', { class: 'channel-desc', text: desc })));
+      b.addEventListener('click', () => { if (busy || u.channel === value) return; u.channel = value; u.check = null; u.phase = 'idle'; u.message = null; renderUpdates(); });
+      return b;
+    };
+    const tiles = h('div', { class: 'channel-tiles', role: 'radiogroup', 'aria-label': 'Update channel' },
+      tile('stable', 'Stable', 'Releases that have been checked'),
+      tile('latest', 'Latest', 'Every release, as soon as it is out'));
+    const panel = h('div', { class: 'update-panel' }, hero, tiles);
+    const parts = [panel];
     if (u.message) parts.push(F.notice(u.message.tone, u.message.title, u.message.text));
     const c = u.check;
     if (u.phase === 'switched') {
       const ch = u.installed && u.installed.installed ? u.installed.installed.channel : u.channel;
-      parts.push(h('div', { class: 'set-group' }, row(`Now on ${CHANNEL_LABEL[ch]}`, 'Same code as before, so there is nothing to restart. Updates on this channel show up here.', null, null, 'success')));
+      panel.append(h('div', { class: 'update-result' }, row(`Now on ${CHANNEL_LABEL[ch]}`, 'Same code as before, so there is nothing to restart. Updates on this channel show up here.', null, null, 'success')));
     } else if (u.phase === 'installed' || u.phase === 'restarting') {
       const inst = u.installed ? u.installed.installed : null;
       const auto = (u.installed ? u.installed.restart : s.restart) === 'auto';
       const restartBtn = F.btn(u.phase === 'restarting' ? 'Restarting…' : 'Restart now', { kind: 'primary', icon: 'reload', onclick: restartNow });
       if (u.phase === 'restarting') restartBtn.setAttribute('aria-disabled', 'true');
-      parts.push(h('div', { class: 'set-group' },
+      panel.append(h('div', { class: 'update-result' },
         row(`Installed ${inst && inst.version ? `v${inst.version}` : 'the update'}`,
           auto ? 'Restart the proxy to start using it. Open chats keep going after the restart.' : 'Stop the proxy and start it again with npm start to use it.',
           auto ? restartBtn : null, null, 'success')));
     } else if (c && c.upToDate) {
-      parts.push(h('div', { class: 'set-group' }, row(`You're on the newest ${CHANNEL_LABEL[c.channel]} release`, c.available.version ? `v${c.available.version} · ${c.available.commit}` : c.available.commit, null, null, 'success')));
+      panel.append(h('div', { class: 'update-result' }, row(`You're on the newest ${CHANNEL_LABEL[c.channel]} release`, c.available.version ? `v${c.available.version} · ${c.available.commit}` : c.available.commit, null, null, 'success')));
     } else if (c && c.switchOnly) {
       const switchBtn = F.btn(u.phase === 'installing' ? 'Switching…' : 'Switch', { kind: 'primary', icon: 'route', onclick: installUpdate });
       if (!c.canInstall || busy) switchBtn.setAttribute('aria-disabled', 'true');
-      parts.push(h('div', { class: 'set-group' },
+      panel.append(h('div', { class: 'update-result' },
         row(`Switch to ${CHANNEL_LABEL[c.channel]}`, `You already run this version${c.available.version ? ` (v${c.available.version} · ${c.available.commit})` : ''}. Switching makes this copy follow ${CHANNEL_LABEL[c.channel]} and get its updates.`,
           c.canInstall ? switchBtn : null, null, 'route')));
       if (!c.canInstall && c.blockedReason) {
-        parts.push(F.notice('warn', 'Switch by hand', h('div', { class: 'update-manual' },
-          h('p', { class: 'notice-text', text: `${BLOCKED[c.blockedReason] || 'This copy cannot switch from the dashboard.'} Run this where the proxy runs:` }),
-          F.codeLine(c.manualCommand))));
+        panel.append(h('div', { class: 'update-result update-byhand' },
+          h('p', { class: 'update-byhand-text', text: BLOCKED[c.blockedReason] || 'Switch from a terminal:' }),
+          manualSteps(c.manualCommand, false)));
       }
     } else if (c) {
       const installBtn = F.btn(u.phase === 'installing' ? 'Installing…' : 'Install', { kind: 'primary', icon: 'download', onclick: installUpdate });
       if (!c.canInstall || busy) installBtn.setAttribute('aria-disabled', 'true');
       const changes = c.changes.slice(0, 8);
-      parts.push(h('div', { class: 'set-group update-card' },
+      panel.append(h('div', { class: 'update-result' },
         row(c.available.version ? `v${c.available.version} is available` : 'An update is available', `${CHANNEL_LABEL[c.channel]} · ${c.available.commit}`, c.canInstall ? installBtn : null, null, 'download'),
         changes.length ? h('ul', { class: 'update-changes' }, changes.map(ch => h('li', null, h('span', { class: 'update-subject', text: ch.subject }), h('code', { class: 'mono-id', text: ch.commit })))) : null,
         c.changes.length > changes.length ? h('p', { class: 'set-hint update-more', text: `and ${c.changes.length - changes.length} more` }) : null));
       if (!c.canInstall && c.blockedReason) {
-        parts.push(F.notice('warn', 'Install it by hand', h('div', { class: 'update-manual' },
-          h('p', { class: 'notice-text', text: `${BLOCKED[c.blockedReason] || 'This copy cannot install it from the dashboard.'} Run this where the proxy runs, then restart it:` }),
-          F.codeLine(c.manualCommand))));
+        panel.append(h('div', { class: 'update-result update-byhand' },
+          h('p', { class: 'update-byhand-text', text: BLOCKED[c.blockedReason] || 'Update from a terminal:' }),
+          manualSteps(c.manualCommand, true)));
       }
     }
     host.replaceChildren(...parts);

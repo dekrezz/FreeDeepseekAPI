@@ -508,7 +508,9 @@
     const isError = tone === 'error';
     const t = F.h('div', { class: `toast glass glass-regular toast-${tone}`, role: isError ? 'alert' : null });
     const iconName = { error: 'error-x', success: 'success', warn: 'alert' }[tone] || 'info';
-    const body = F.h('div', { class: 'toast-body' }, F.h('p', { class: 'toast-text', text: message }));
+    // One-sentence toasts read as labels: no closing period ("Saved the key for this tab").
+    const text = typeof message === 'string' && /^[^.]+\.$/.test(message) ? message.slice(0, -1) : message;
+    const body = F.h('div', { class: 'toast-body' }, F.h('p', { class: 'toast-text', text }));
     if (detail) body.append(detail);
     t.append(F.icon(iconName, 'toast-icon'), body);
     const close = () => {

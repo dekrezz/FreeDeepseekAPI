@@ -637,14 +637,14 @@ a.hbar:hover { text-decoration: none; }
 .tooltip.is-instant { transition-duration: 0ms; }
 
 .toasts { position: fixed; right: 16px; bottom: 16px; z-index: 70; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; }
-.toast { pointer-events: auto; display: flex; align-items: flex-start; gap: 10px; width: max-content; max-width: min(380px, calc(100vw - 32px)); padding: 12px 8px 12px 14px; border-radius: var(--r-lg); transform: translateY(calc(100% + 16px)); opacity: 0; transition: transform 400ms var(--spring-settle), opacity 300ms var(--ease-out); }
+.toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; width: max-content; max-width: min(380px, calc(100vw - 32px)); padding: 12px 8px 12px 14px; border-radius: var(--r-lg); transform: translateY(calc(100% + 16px)); opacity: 0; transition: transform 400ms var(--spring-settle), opacity 300ms var(--ease-out); }
 .toast.is-in { transform: none; opacity: 1; }
 .toast.is-out { transform: translateY(calc(100% + 16px)); opacity: 0; transition-duration: 180ms; }
-.toast-icon { margin-top: 1px; color: var(--ink-2); }
+.toast-icon { flex: none; color: var(--ink-2); }
 .toast-success .toast-icon { color: var(--ok); }
 .toast-warn .toast-icon { color: var(--warn); }
 .toast-error .toast-icon { color: var(--crit); }
-.toast-body { flex: 1; min-width: 0; padding-top: 1px; }
+.toast-body { flex: 1; min-width: 0; }
 .toast-text { overflow-wrap: anywhere; font-weight: 500; }
 .toast-details { margin-top: 6px; font-size: 0.8125rem; color: var(--ink-2); }
 .toast-details summary { cursor: pointer; }
@@ -920,16 +920,9 @@ body.settings-open .new-pill.new-pill { left: 50%; }
   background:
     radial-gradient(ellipse 34% 26% at 74% 58%, rgb(0 0 0 / 0.5) 0%, rgb(0 0 0 / 0.28) 45%, rgb(0 0 0 / 0) 100%),
     linear-gradient(to bottom, rgb(0 0 0 / 0.55) 0%, rgb(0 0 0 / 0.1) 45%, rgb(0 0 0 / 0.1) 65%, rgb(0 0 0 / 0.6) 100%); }
-/* open chat: southern India and Sri Lanka at night from the ISS (iss066e029018). The sky above the
-   airglow is near-black with sparse stars, so the transcript reads without a veil; the city lights sit
-   lower and fade into black under the composer (--dock-top comes from chat.js). */
-.view-chat:not(.is-empty) { background: #020203 url("/dashboard/media-night-earth.jpg") 50% 34% / cover no-repeat; }
-.view-chat:not(.is-empty)::before { content: ""; position: absolute; inset: 0; pointer-events: none;
-  background:
-    linear-gradient(to top, #020203 0, #020203 calc(var(--dock-top, 140px) - 40px), rgb(2 2 3 / 0) calc(var(--dock-top, 140px) + 140px)),
-    linear-gradient(to bottom, rgb(2 2 3 / 0.55) 0, rgb(2 2 3 / 0) 30%),
-    linear-gradient(to right, rgb(2 2 3 / 0.6) 0, rgb(2 2 3 / 0) 18%, rgb(2 2 3 / 0) 82%, rgb(2 2 3 / 0.6) 100%); }
-.app[data-view=chat]:has(.view-chat:not(.is-empty)) .toolbar { background: linear-gradient(to bottom, rgb(3 4 5 / 0.92), rgb(3 4 5 / 0)); }
+/* An open chat sits on the plain dark ground so the conversation is all there is to read. */
+.view-chat:not(.is-empty) { background: var(--bg); }
+.app[data-view=chat]:has(.view-chat:not(.is-empty)) .toolbar { background: var(--bg); }
 .chat-scroll { position: absolute; inset: 0; overflow-y: auto; padding-top: var(--toolbar-h); outline: none;
   mask-image: linear-gradient(to top, transparent 0, #000 calc(var(--dock-h, 140px) - 40px), #000 100%); }
 .chat-inner { max-width: 768px; margin: 0 auto; padding: 24px 24px calc(var(--dock-h, 140px) + 24px); }
@@ -938,7 +931,9 @@ body.settings-open .new-pill.new-pill { left: 50%; }
 .view-chat.is-empty .transcript { display: none; }
 
 .turn-user { display: grid; justify-items: end; gap: 4px; }
-.bubble { max-width: 70%; background: var(--surface); border-radius: 18px; padding: 10px 16px; font-size: 1rem; line-height: 1.625rem; }
+/* Your messages: a blue bubble with white text. */
+.bubble { max-width: 70%; background: #1f6feb; color: #fff; border-radius: 18px; padding: 10px 16px; font-size: 1rem; line-height: 1.625rem; }
+.bubble ::selection { background: rgb(255 255 255 / 0.35); color: #fff; }
 .bubble-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* Attached images: compact thumbnails on the left, in line with the message text. */
 .bubble-images { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; justify-content: flex-start; }
@@ -1008,7 +1003,69 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 .update-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .update-changes .mono-id { flex: none; color: var(--ink-3); font-size: 0.75rem; }
 .update-more { padding: 0 16px 12px 48px; }
-.update-manual { display: grid; gap: 8px; }
+.update-byhand { display: grid; gap: 10px; padding: 14px 16px 16px; }
+.update-byhand-text { color: var(--ink-2); font-size: 0.875rem; }
+.update-manual { position: relative; }
+.update-steps { display: grid; gap: 2px; margin: 0; padding: 12px 48px 12px 14px; border-radius: var(--r-md); background: #1c1c1c; font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.375rem; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.update-steps .is-note { color: var(--ink-3); }
+.update-manual > .btn { position: absolute; top: 6px; right: 6px; }
+/* Access key: the Authorization header this tab sends is the whole picture. */
+.auth-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 18px; }
+.auth-line { font-family: var(--font-mono); font-size: 1rem; line-height: 1.5rem; color: var(--ink); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.auth-name { color: var(--ink-3); }
+.auth-scheme { color: var(--ink-2); }
+.auth-dots { color: var(--ink-3); letter-spacing: 0.06em; }
+.auth-tail { color: var(--ink); font-weight: 600; }
+.auth-none { color: var(--ink-3); font-style: italic; }
+.auth-line .auth-value { display: inline-block; white-space: nowrap; transition: opacity 180ms var(--ease-out); }
+.auth-line.is-preview .auth-value { opacity: 0.55; }
+.auth-body { padding: 14px 18px 16px; border-top: 1px solid rgb(255 255 255 / 0.06); }
+.auth-form { display: flex; align-items: center; gap: 8px; }
+.auth-field { position: relative; flex: 1; min-width: 0; }
+.auth-input { font-family: var(--font-mono); font-size: 0.875rem; padding-right: 44px; background: #1e1e1e; }
+.auth-input::placeholder { font-family: var(--font-ui); }
+/* Centred by offset, not transform: the shared press scale would replace a translate and make it jump. */
+.auth-field .auth-reveal { position: absolute; top: 0; bottom: 0; right: 4px; margin: auto 0; width: 32px; height: 32px; min-width: 0; min-height: 0; color: var(--ink-3); }
+.auth-reveal .icon { width: 18px; height: 18px; }
+.auth-reveal:focus-visible, .auth-forget:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+@media (hover: hover) and (pointer: fine) { .auth-reveal:hover { color: var(--ink); background: var(--hover-wash); } .auth-forget:hover { color: var(--crit); background: var(--crit-wash); } }
+.auth-head .auth-forget { flex: none; width: 32px; height: 32px; min-width: 0; min-height: 0; margin: -4px -6px -4px 0; color: var(--ink-3); }
+.auth-forget .icon { width: 17px; height: 17px; }
+@media (max-width: 560px) {
+  .auth-form { flex-direction: column; align-items: stretch; }
+  .auth-line { font-size: 0.875rem; }
+}
+@media (prefers-reduced-motion: reduce) { .auth-line .auth-value { transition: none; } }
+/* The installed build as a launch board: liftoff photo, the version in the display face. */
+.update-panel { border-radius: var(--r-lg); background: #262626; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.07); overflow: hidden; min-width: 0; }
+.update-hero { position: relative; isolation: isolate; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; min-height: 148px; padding: 20px; background: #000; color: #f0f0fa; }
+.update-hero-media { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; max-width: none; object-fit: cover; object-position: 50% 42%; }
+.update-hero::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(90deg, rgb(0 0 0 / 0.86) 0%, rgb(0 0 0 / 0.55) 55%, rgb(0 0 0 / 0.25) 100%), linear-gradient(0deg, rgb(0 0 0 / 0.5), transparent 60%); }
+.update-hero-body { display: grid; gap: 6px; min-width: 0; }
+.update-version { font-family: var(--font-display); font-size: 2.5rem; line-height: 1; font-weight: 700; letter-spacing: 0.01em; font-variant-numeric: tabular-nums; }
+.update-where { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: rgb(240 240 250 / 0.72); font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.update-where .mono-id { text-transform: none; letter-spacing: 0; color: rgb(240 240 250 / 0.6); padding: 1px 6px; border-radius: 6px; background: rgb(255 255 255 / 0.1); }
+.update-hero-action { flex: none; }
+.update-note { padding: 14px 16px; color: var(--ink-2); font-size: 0.875rem; }
+.channel-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px; }
+.channel-tile { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border: 0; border-radius: var(--r-md); background: #2c2c2c; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06); color: var(--ink); text-align: left; cursor: default; transition: background-color 140ms ease, box-shadow 140ms ease; }
+@media (hover: hover) and (pointer: fine) { .channel-tile:not(.is-on):hover { background: #313131; } }
+.channel-tile.is-on { background: var(--signal-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal) 55%, transparent); }
+.channel-tile:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.channel-dot { flex: none; width: 14px; height: 14px; margin-top: 3px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 0.35); }
+.channel-tile.is-on .channel-dot { box-shadow: inset 0 0 0 4px var(--signal); }
+.channel-text { display: grid; gap: 2px; min-width: 0; }
+.channel-title { display: flex; align-items: center; gap: 8px; font-size: 0.9375rem; font-weight: 600; }
+.channel-current { padding: 1px 7px; border-radius: 999px; background: rgb(255 255 255 / 0.1); color: var(--ink-2); font-size: 0.6875rem; font-weight: 500; }
+.channel-desc { color: var(--ink-3); font-size: 0.8125rem; line-height: 1.125rem; }
+.update-result { border-top: 1px solid rgb(255 255 255 / 0.07); }
+.update-result .set-row { min-height: 52px; }
+@media (max-width: 560px) {
+  .update-hero { flex-direction: column; align-items: stretch; min-height: 0; padding: 16px; }
+  .update-version { font-size: 2rem; }
+  .channel-tiles { grid-template-columns: 1fr; }
+}
 .error-log .fact { grid-template-columns: 5rem minmax(0, 1fr); min-height: 22px; font-size: 0.8125rem; }
 @media (max-width: 560px) {
   .chat-error { width: 100%; }

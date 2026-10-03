@@ -12,7 +12,6 @@ nothing else is changed. NASA's logo or endorsement is not implied.
 | `media-horizon.jpg` | `iss024e006136` (Earth observation, Expedition 24) | NASA | cropped to 1920×1200 (caption removed), JPEG q72 |
 | `logo.png` | `docs/assets/logo.png` (project logo) | FreeDeepseekAPI | cropped to the whale, 128×128 PNG with alpha |
 | `media-milky-way.jpg` | `iss063e054340` (Milky Way over Earth's airglow, Expedition 63) | NASA | 1920 px, JPEG q50 |
-| `media-night-earth.jpg` | `iss066e029018` (southern India and Sri Lanka at night with airglow, Expedition 66) | NASA | resized to 2400×1600, JPEG q72; used for the open chat (replaces `media-milky-way.jpg`) |
 
 ## Icons
 
@@ -20,3 +19,4 @@ nothing else is changed. NASA's logo or endorsement is not implied.
 |---|---|---|
 | `i-files` in `index.html` (Add account drop zone) | Hugeicons `files-02`, https://hugeicons.com (via https://icon-sets.iconify.design/hugeicons/) | MIT |
 | `i-session-reset` in `index.html` (chat menu, Reset server session) | Hugeicons `reload`, https://hugeicons.com (via https://icon-sets.iconify.design/hugeicons/) | MIT |
+| `i-eye`, `i-eye-off` in `index.html` (Settings, show or hide the access key) | Hugeicons `view`, `view-off-slash`, https://hugeicons.com (via https://icon-sets.iconify.design/hugeicons/) | MIT |
