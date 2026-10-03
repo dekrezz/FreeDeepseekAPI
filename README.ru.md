@@ -42,7 +42,7 @@ FreeDeepseekAPI поднимает локальный API-сервер пере�
 
 На сайте сейчас одна модель: **DeepSeek-V4.1-Flash**. Родной Web Search, встроенный в chat.deepseek.com, **включён по умолчанию**, и именно им отвечают на вопросы про живой интернет. `-thinking` включает DeepThink. `-nosearch` или `"web_search": false` выключает поиск.
 
-> Это экспериментальный web-chat proxy. DeepSeek может поменять внутренний Web API без предупреждения. Для production надёжнее официальный платный API DeepSeek.
+> Это экспериментальный web-chat proxy. DeepSeek может в любой момент поменять внутренний Web API. Когда это происходит, проект обновляется вслед за ним, и эта документация тоже может меняться. Поэтому советуем всегда держать свою копию на последней версии: Settings → Updates в дашборде или раздел [Обновления](#обновления).
 
 ---
 
@@ -59,6 +59,7 @@ FreeDeepseekAPI поднимает локальный API-сервер пере�
 - [Session reuse](#session-reuse)
 - [Пул аккаунтов](#пул-аккаунтов)
 - [Панель аккаунтов](#панель-аккаунтов)
+- [Обновления](#обновления)
 - [Вход](#вход)
 - [Агенты](#агенты)
 - [Проверка работы](#проверка-работы)
@@ -114,7 +115,7 @@ FreeDeepseekAPI поднимает локальный API-сервер пере�
 ## Быстрый старт
 
 ```bash
-git clone https://github.com/dekrezz/FreeDeepseekAPI.git
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
 cd FreeDeepseekAPI
 npm run auth
 npm start
@@ -164,7 +165,7 @@ PROXY_CORS_ORIGINS='https://ui.example.com,http://192.168.1.20:3000'
 ## Windows
 
 ```powershell
-git clone https://github.com/dekrezz/FreeDeepseekAPI.git
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
 cd FreeDeepseekAPI
 npm run auth
 npm start
@@ -184,7 +185,7 @@ npm run auth
 ## Linux / Chromium
 
 ```bash
-git clone https://github.com/dekrezz/FreeDeepseekAPI.git
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
 cd FreeDeepseekAPI
 CHROME_PATH=$(which chromium) npm run auth
 npm start
@@ -460,6 +461,31 @@ npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./account
 - В ответах admin API нет токенов, cookie, значений `hif_*` и имён auth-файлов.
 
 Панель входит в образ контейнера. С `--read-only` действия, которые пишут auth-файлы (добавить, переименовать, удалить, восстановить), падают с `500 auth_file_write_failed`; пауза, возобновление и снятие cooldown работают.
+
+---
+
+## Обновления
+
+DeepSeek время от времени меняет свой Web-чат, и FreeDeepseekAPI подстраивается под эти изменения. Держите свою копию свежей.
+
+Два канала, оба — ветки на GitHub:
+
+| Канал | Что приходит |
+|---|---|
+| `stable` | Релиз, после того как его проверили. Канал по умолчанию, его клонирует Quick start. |
+| `latest` | Каждый релиз сразу после выхода. |
+
+**Из дашборда:** Settings → Updates. Выберите канал, **Check for updates** покажет, что нового, **Install** переведёт вашу копию на новую версию, **Restart now** её запустит. Перезапуск автоматический, если прокси запущен через `npm start` или `npm run dashboard`; иначе остановите его и запустите снова.
+
+Дашборд только двигает копию вперёд. Он останавливается и показывает команду для ручного обновления, если в папке есть незакоммиченные правки отслеживаемых файлов или в ветке канала есть свои коммиты. У образа контейнера и скачанного архива нет git-истории: скачайте новый образ или новый релиз.
+
+**Вручную:**
+
+```bash
+git fetch origin && git switch stable && git merge --ff-only origin/stable
+```
+
+Потом перезапустите прокси.
 
 ---
 
@@ -838,11 +864,12 @@ FreeDeepseekAPI — локальный web-chat proxy. Он зависит от 
 
 Если вызов перестал работать:
 
-1. Обновите логин через `npm run auth`.
-2. Запустите `npm run doctor`.
-3. Прочитайте `GET /v1/model-capabilities` и возьмите id DeepSeek-V4.1-Flash.
-4. Если тот же чат продолжает падать, вызовите `POST /reset-session?agent=<id>` и попробуйте ещё раз.
-5. Если и это не помогло, DeepSeek, скорее всего, изменил внутренний Web API.
+1. Обновитесь до последней версии ([Обновления](#обновления)).
+2. Обновите логин через `npm run auth`.
+3. Запустите `npm run doctor`.
+4. Прочитайте `GET /v1/model-capabilities` и возьмите id DeepSeek-V4.1-Flash.
+5. Если тот же чат продолжает падать, вызовите `POST /reset-session?agent=<id>` и попробуйте ещё раз.
+6. Если и это не помогло, DeepSeek, скорее всего, изменил внутренний Web API.
 
 Сообщения об уязвимостях идут в закрытый GitHub advisory, не в публичный issue. См. [SECURITY.md](SECURITY.md). Список мейнтейнеров: [CONTRIBUTORS.md](CONTRIBUTORS.md).
 

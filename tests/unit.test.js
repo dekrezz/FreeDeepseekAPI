@@ -265,7 +265,8 @@ test('Containerfile keeps the rootless Podman runtime minimal and fail-closed', 
 
   assert.deepEqual(copyLines, [
     'COPY --chown=1000:1000 package.json server.js ./',
-    'COPY --chown=1000:1000 lib/pow.js ./lib/pow.js',
+    // server.js requires lib/updater.js; the image still has no .git, so it reports updates as unavailable.
+    'COPY --chown=1000:1000 lib/pow.js lib/updater.js ./lib/',
     'COPY --chown=1000:1000 scripts/lib/tui-menu.js ./scripts/lib/tui-menu.js',
     'COPY --chown=1000:1000 public/dashboard/index.html public/dashboard/*.css public/dashboard/*.js public/dashboard/*.png public/dashboard/*.jpg public/dashboard/*.mp4 ./public/dashboard/',
   ]);

@@ -20,6 +20,7 @@ const dns = require('dns').promises;
 const net = require('net');
 const { spawn, spawnSync } = require('child_process');
 const pow = require('./lib/pow');
+const { createUpdater, RESTART_EXIT_CODE } = require('./lib/updater');
 const { t, loadUiLang, saveUiLang, pick, pause, printWordmark, browserOpenCommand } = require('./scripts/lib/tui-menu');
 
 // Per-DeepSeek-request network timeout. Plain fetch() has NO default timeout, so a
@@ -3474,6 +3475,57 @@ function adminRestoreAccount(body) {
 
 const ADMIN_ACCOUNT_ACTIONS = new Set(['disable', 'enable', 'clear-cooldown']);
 const ADMIN_COLLECTION_ACTIONS = new Set(['reload', 'import', 'restore']);
+// --- Self-update (Settings → Updates) ---
+let updater = createUpdater({ root: __dirname });
+let updateBusy = false;
+// Exit with RESTART_EXIT_CODE so scripts/start.js starts the updated code. Idle
+// keep-alive connections close at once; anything still running gets 5 s.
+let restartProcess = () => {
+    console.log('[DS-API] Restarting to load the update…');
+    if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+    server.close(() => process.exit(RESTART_EXIT_CODE));
+    setTimeout(() => process.exit(RESTART_EXIT_CODE), 5000).unref();
+};
+
+async function handleUpdateRequest(req, res, parts) {
+    const methodNotAllowed = (allow) => adminError(res, 405, 'method_not_allowed', `Use ${allow} for /${parts.join('/')}`, { Allow: allow });
+    try {
+        if (parts[1] === 'restart') {
+            if (req.method !== 'POST') return methodNotAllowed('POST');
+            const status = await updater.status();
+            if (status.restart !== 'auto') {
+                return adminError(res, 409, 'restart_unavailable', 'This proxy was not started with npm start, so it cannot restart itself. Stop it and start it again to load the update.');
+            }
+            adminJson(res, 202, { restarting: true });
+            setTimeout(() => restartProcess(), 250);
+            return;
+        }
+        if (parts.length === 2) {
+            if (req.method !== 'GET') return methodNotAllowed('GET');
+            return adminJson(res, 200, await updater.status());
+        }
+        if (parts.length === 3 && (parts[2] === 'check' || parts[2] === 'install')) {
+            if (req.method !== 'POST') return methodNotAllowed('POST');
+            const body = await readAdminJsonBody(req);
+            const channel = body && typeof body.channel === 'string' ? body.channel : undefined;
+            if (parts[2] === 'check') return adminJson(res, 200, await updater.check(channel));
+            if (updateBusy) return adminError(res, 409, 'update_in_progress', 'An update is already being installed.');
+            updateBusy = true;
+            try {
+                const result = await updater.install(channel);
+                console.log(`[DS-API] Installed ${result.installed.channel} ${result.installed.version || ''} (${result.installed.commit}). Restart to load it.`);
+                return adminJson(res, 200, result);
+            } finally {
+                updateBusy = false;
+            }
+        }
+        return adminError(res, 404, 'not_found', `Unknown admin endpoint: /${parts.join('/')}`);
+    } catch (e) {
+        if (e && e.status && e.type) return adminError(res, e.status, e.type, e.message);
+        throw e;
+    }
+}
+
 async function handleAdminRequest(req, res, url) {
     const pathname = url.pathname;
     const access = adminAccessDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers });
@@ -3483,6 +3535,7 @@ async function handleAdminRequest(req, res, url) {
     }
     const methodNotAllowed = (allow) => adminError(res, 405, 'method_not_allowed', `Use ${allow} for ${pathname}`, { Allow: allow });
     const parts = pathname.split('/').filter(Boolean); // ['admin', 'accounts', ...]
+    if (parts[1] === 'update' || (parts[1] === 'restart' && parts.length === 2)) return handleUpdateRequest(req, res, parts);
     try {
         if ((parts[1] === 'requests' || parts[1] === 'usage') && parts.length === 2) {
             if (req.method !== 'GET') return methodNotAllowed('GET');
@@ -4737,7 +4790,8 @@ async function main() {
         console.log('[DS-API] POST /reset-session?agent=<id> — reset agent session');
         console.log('[DS-API] POST /reset-session?agent=all — reset ALL sessions');
         console.log(`[DS-API] GET  /dashboard — account dashboard (admin API: /admin/accounts${PROXY_API_KEY || PROXY_ADMIN_ALLOW_REMOTE ? '' : ', localhost only'})`);
-        if (startup.openDashboard) {
+        // A restart after an update keeps the tab the user already has open.
+        if (startup.openDashboard && process.env.FDSA_RESTARTED !== '1') {
             const url = dashboardUrl(HOST, PORT);
             console.log(`[DS-API] Opening ${url}`);
             openDashboardInBrowser(url);
@@ -4773,6 +4827,9 @@ module.exports = {
         readAccountFiles,
         buildAccountsList,
         adminAccessDecision,
+        // Tests swap the updater and the restart hook; each returns a function that restores the original.
+        useUpdater(next) { const prev = updater; updater = next; return () => { updater = prev; }; },
+        useRestart(next) { const prev = restartProcess; restartProcess = next; return () => { restartProcess = prev; }; },
         adminAccountView,
         adminPoolSummary,
         recordRequest,

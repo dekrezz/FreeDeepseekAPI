@@ -14,7 +14,7 @@ WORKDIR /app
 # non-interactive proxy and its dashboard; browser auth helpers and credentials
 # stay on the host.
 COPY --chown=1000:1000 package.json server.js ./
-COPY --chown=1000:1000 lib/pow.js ./lib/pow.js
+COPY --chown=1000:1000 lib/pow.js lib/updater.js ./lib/
 COPY --chown=1000:1000 scripts/lib/tui-menu.js ./scripts/lib/tui-menu.js
 COPY --chown=1000:1000 public/dashboard/index.html public/dashboard/*.css public/dashboard/*.js public/dashboard/*.png public/dashboard/*.jpg public/dashboard/*.mp4 ./public/dashboard/
 
