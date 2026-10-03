@@ -946,7 +946,8 @@ body.settings-open .new-pill.new-pill { left: 50%; }
 .edit-input:focus { outline: none; }
 .edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
-.turn-assistant { display: grid; gap: 10px; }
+/* minmax(0, 1fr): a one-line error (nowrap text) must not widen the column past the screen. */
+.turn-assistant { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .working { position: relative; padding-top: 4px; display: grid; gap: 6px; }
 /* Thinking: a 3x3 tile mark whose lit tile runs clockwise round the edge, then the label and a live clock. */
 .working-label { display: inline-flex; align-items: center; gap: 10px; justify-self: start; font-weight: 500; color: var(--ink); }
@@ -1136,9 +1137,13 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 .thumb-remove { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; border: 0; display: grid; place-items: center; background: #fff; color: #000; padding: 0; }
 .thumb-remove .icon { width: 12px; height: 12px; stroke-width: 2.2; }
 .thumbs-note { flex-basis: 100%; }
-.composer-note { width: min(768px, 100%); min-height: 0; font-size: 0.8125rem; color: var(--ink-2); padding: 6px 18px 0; text-align: left; }
+/* Above the composer: one compact line, red-tinted when sending is held back. */
+.composer-note { width: min(768px, 100%); margin: 0 0 8px; text-align: left; }
 .composer-note:empty { display: none; }
-.composer-note.is-crit { color: var(--crit); }
+.composer-note-pill { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 12px 6px 10px; border-radius: 999px; background: rgb(39 39 39 / 0.96); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1); color: var(--ink-2); font-size: 0.8125rem; line-height: 1.125rem; font-variant-numeric: tabular-nums; }
+.composer-note-pill .icon { flex: none; width: 14px; height: 14px; }
+.composer-note.is-crit .composer-note-pill { background: color-mix(in srgb, var(--crit) 14%, #232323); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--crit) 30%, transparent); color: #ffb4ad; }
+.composer-note.is-crit .composer-note-pill .icon { color: var(--crit); }
 .chat-unknown { padding-top: 24px; }
 
 /* ------------------------------------------------------------------ tab bar, scrim */
