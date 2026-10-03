@@ -754,7 +754,9 @@ function sweepIdleSessions(maxIdleMs = SESSION_TTL_MS * 2) {
 
 // DeepSeek Web as of 2026-09-20: Instant/Expert/Pro UI gone. One weight: V4.1-Flash.
 // Official paid ID: deepseek-flash. Web model_type is always `default`.
-// Thinking and search are request flags, encoded here as `-thinking` / `-search` suffixes.
+// Native Web Search is on for every model unless the ID ends in `-nosearch` or the
+// request sends `"web_search": false`. `-thinking` turns DeepThink on.
+// The old `-search` IDs are hidden aliases (see LEGACY_SEARCH_SUFFIX).
 const DEFAULT_MODEL_ID = 'deepseek-v4-flash';
 function webModel({ model_type, thinking_enabled, search_enabled, real_model, capabilities, supported = true }) {
     return { model_type, thinking_enabled, search_enabled, real_model, capabilities, supported };
@@ -762,26 +764,30 @@ function webModel({ model_type, thinking_enabled, search_enabled, real_model, ca
 
 const MODEL_CONFIGS = {
     'deepseek-v4-flash': webModel({
-        model_type: 'default', thinking_enabled: false, search_enabled: false,
-        real_model: 'DeepSeek-V4.1-Flash',
-        capabilities: { reasoning: false, web_search: false, files: true, vision: true },
-    }),
-    'deepseek-v4-flash-thinking': webModel({
-        model_type: 'default', thinking_enabled: true, search_enabled: false,
-        real_model: 'DeepSeek-V4.1-Flash (thinking)',
-        capabilities: { reasoning: true, web_search: false, files: true, vision: true },
-    }),
-    'deepseek-v4-flash-search': webModel({
         model_type: 'default', thinking_enabled: false, search_enabled: true,
         real_model: 'DeepSeek-V4.1-Flash (web search)',
         capabilities: { reasoning: false, web_search: true, files: true, vision: true },
     }),
-    'deepseek-v4-flash-thinking-search': webModel({
+    'deepseek-v4-flash-thinking': webModel({
         model_type: 'default', thinking_enabled: true, search_enabled: true,
         real_model: 'DeepSeek-V4.1-Flash (thinking + web search)',
         capabilities: { reasoning: true, web_search: true, files: true, vision: true },
     }),
+    'deepseek-v4-flash-nosearch': webModel({
+        model_type: 'default', thinking_enabled: false, search_enabled: false,
+        real_model: 'DeepSeek-V4.1-Flash',
+        capabilities: { reasoning: false, web_search: false, files: true, vision: true },
+    }),
+    'deepseek-v4-flash-thinking-nosearch': webModel({
+        model_type: 'default', thinking_enabled: true, search_enabled: false,
+        real_model: 'DeepSeek-V4.1-Flash (thinking)',
+        capabilities: { reasoning: true, web_search: false, files: true, vision: true },
+    }),
 };
+
+// Search used to be opt-in through a `-search` suffix. It is the default now,
+// so those IDs resolve to the same model without the suffix.
+const LEGACY_SEARCH_SUFFIX = /-search$/;
 
 const SUPPORTED_MODEL_IDS = Object.keys(MODEL_CONFIGS).filter(id => MODEL_CONFIGS[id].supported);
 const ALL_MODEL_CAPABILITIES = Object.fromEntries(Object.entries(MODEL_CONFIGS).map(([id, cfg]) => [id, {
@@ -883,6 +889,10 @@ function canonicalizeModelId(model) {
     if (id === 'deepseek-flash' || id.startsWith('deepseek-flash-')) {
         id = id.replace(/^deepseek-flash/, 'deepseek-v4-flash');
     }
+    if (LEGACY_SEARCH_SUFFIX.test(id)) {
+        const current = id.replace(LEGACY_SEARCH_SUFFIX, '');
+        if (Object.prototype.hasOwnProperty.call(MODEL_CONFIGS, current)) return current;
+    }
     if (Object.prototype.hasOwnProperty.call(MODEL_CONFIGS, id)) return id;
     // Claude Code keeps shipping claude-* IDs unless ANTHROPIC_*_MODEL is set.
     if (/claude[-_. ]?opus/.test(id) || /opus-4/.test(id)) return 'deepseek-v4-flash-thinking';
@@ -892,6 +902,21 @@ function canonicalizeModelId(model) {
 function resolveModelConfig(model) {
     const requested = canonicalizeModelId(model);
     return MODEL_CONFIGS[requested] || MODEL_CONFIGS[DEFAULT_MODEL_ID];
+}
+// `web_search` (boolean) in the request body overrides the model's search default.
+function resolveRequestWebFlags(model, rawParams) {
+    const cfg = resolveModelConfig(model);
+    const value = rawParams?.web_search;
+    if (value !== undefined && value !== null && typeof value !== 'boolean') {
+        const error = new Error(`web_search must be true or false, got ${JSON.stringify(value)}`);
+        error.status = 400;
+        error.type = 'invalid_request_error';
+        throw error;
+    }
+    return {
+        thinking_enabled: cfg.thinking_enabled,
+        search_enabled: typeof value === 'boolean' ? value : cfg.search_enabled,
+    };
 }
 function isKnownModel(model) { return Object.prototype.hasOwnProperty.call(MODEL_CONFIGS, canonicalizeModelId(model)); }
 function isSupportedModel(model) { return resolveModelConfig(model).supported === true; }
@@ -1286,8 +1311,16 @@ function isHarnessWebSearchTool(name) {
     return isDeepSeekNativeTool(name) && !/^(execute_code|code_interpreter)$/i.test(String(name || ''));
 }
 
-const EMPTY_RESPONSE_NUDGE = 'Your previous reply was empty. Output the next user-visible answer or exactly one gateway tool request as {"tool_call":{"name":"<function>","arguments":{...}}}. Do not call execute_code. DeepSeek native Web Search is already on; answer with it instead of calling web_search.';
-const NATIVE_TOOL_REPAIR_PROMPT = '[STRICT INSTRUCTION] You called execute_code or web_search as a tool. Do not. DeepSeek native Web Search is already enabled: answer with those findings in plain text. If you need the local filesystem, request exactly one gateway tool as {"tool_call":{"name":"<function>","arguments":{...}}}. Do not say you lack web access.';
+function emptyResponseNudge(searchEnabled) {
+    const base = 'Your previous reply was empty. Output the next user-visible answer or exactly one gateway tool request as {"tool_call":{"name":"<function>","arguments":{...}}}. Do not call execute_code.';
+    return searchEnabled ? `${base} DeepSeek native Web Search is already on; answer with it instead of calling web_search.` : base;
+}
+function nativeToolRepairPrompt(searchEnabled) {
+    const gatewayTool = 'If you need the local filesystem, request exactly one gateway tool as {"tool_call":{"name":"<function>","arguments":{...}}}.';
+    return searchEnabled
+        ? `[STRICT INSTRUCTION] You called execute_code or web_search as a tool. Do not. DeepSeek native Web Search is already enabled: answer with those findings in plain text. ${gatewayTool} Do not say you lack web access.`
+        : `[STRICT INSTRUCTION] You called execute_code or a web tool that this gateway cannot run. Do not. Answer in plain text from what you already know. ${gatewayTool}`;
+}
 
 function stripHarnessWebSearchTools(tools) {
     const kept = [];
@@ -1300,11 +1333,17 @@ function stripHarnessWebSearchTools(tools) {
     return { tools: kept, names };
 }
 
-function agentNativeWebFlags(tools, strippedNames = []) {
-    if ((Array.isArray(tools) && tools.length > 0) || (strippedNames && strippedNames.length > 0)) {
-        return { search_enabled: true };
-    }
-    return null;
+// With native search on, harness web tools are dropped (DeepSeek searches itself) and
+// agents are told so. With search off, the harness keeps its own web tools.
+function prepareAgentWebAccess(tools, searchEnabled) {
+    const list = tools || [];
+    if (!searchEnabled) return { tools: list, strippedNames: [], nativeSearchNotice: false };
+    const stripped = stripHarnessWebSearchTools(list);
+    return {
+        tools: stripped.tools,
+        strippedNames: stripped.names,
+        nativeSearchNotice: stripped.tools.length > 0 || stripped.names.length > 0,
+    };
 }
 
 // A successful completion is always an SSE stream. DeepSeek answers throttling,
@@ -3832,13 +3871,13 @@ const server = http.createServer(async (req, res) => {
             const params = normalizeApiParams(rawParams, apiMode);
             const messages = params.messages || [];
             const imageContext = { inputs: extractImageInputs(messages), refFileIds: [] };
-            const strippedSearch = stripHarnessWebSearchTools(params.tools || []);
-            const tools = strippedSearch.tools;
             const stream = params.stream === true;
             logRow.stream = stream;
             const requestedModel = canonicalizeModelId(params.model || DEFAULT_MODEL_ID);
-            const webFlags = agentNativeWebFlags(tools, strippedSearch.names);
-            const promptOptions = { nativeSearchNotice: Boolean(webFlags) };
+            const webFlags = resolveRequestWebFlags(requestedModel, rawParams);
+            const webAccess = prepareAgentWebAccess(params.tools, webFlags.search_enabled);
+            const tools = webAccess.tools;
+            const promptOptions = { nativeSearchNotice: webAccess.nativeSearchNotice };
             logRow.model = requestedModel;
             const remoteAddr = req.socket.remoteAddress || 'unknown';
             const requestedSession = req.headers['x-agent-session'] || params.session || params.user;
@@ -3852,8 +3891,8 @@ const server = http.createServer(async (req, res) => {
             const pinnedAccount = String(req.headers['x-account-id'] || '').trim();
             if (pinnedAccount) lockHolder.pinnedAccountId = pinnedAccount;
             logRow.agent = agentId;
-            if (strippedSearch.names.length || webFlags) {
-                console.log(`${agentTag} Native DeepSeek Search on${strippedSearch.names.length ? `; stripped harness tools: ${strippedSearch.names.join(', ')}` : ''}`);
+            if (webAccess.nativeSearchNotice) {
+                console.log(`${agentTag} Native DeepSeek Search on${webAccess.strippedNames.length ? `; stripped harness tools: ${webAccess.strippedNames.join(', ')}` : ''}`);
             }
             if (!isKnownModel(requestedModel)) {
                 logError(400, 'invalid_model', `Unknown model: ${requestedModel}`);
@@ -4203,9 +4242,9 @@ const server = http.createServer(async (req, res) => {
                     ? null
                     : buildRetryPrompt(systemPrompt, recoveryHistoryPrefix, prompt, fullPrompt, retryBudget);
                 const retryPrompt = keepSession
-                    ? EMPTY_RESPONSE_NUDGE
+                    ? emptyResponseNudge(webFlags.search_enabled)
                     : pinToolReminder(
-                        appendPromptInstruction(retryBuild.prompt, EMPTY_RESPONSE_NUDGE, retryBudget),
+                        appendPromptInstruction(retryBuild.prompt, emptyResponseNudge(webFlags.search_enabled), retryBudget),
                         tools,
                         retryBudget,
                     );
@@ -4384,7 +4423,7 @@ const server = http.createServer(async (req, res) => {
                             : 'Model stopped after a tool result without a next tool call'));
                 console.log(`${agentTag} ${reason} (${fullContent.length} chars). Retrying with stricter prompt on the same session...`);
                 const strictPrompt = shouldRepairNative
-                    ? NATIVE_TOOL_REPAIR_PROMPT
+                    ? nativeToolRepairPrompt(webFlags.search_enabled)
                     : (shouldRepairMarkup
                         ? '[STRICT INSTRUCTION] Your previous response contained incomplete tool-call markup. Keep arguments short and output ONLY strict JSON: {"tool_call":{"name":"<function>","arguments":{...}}}'
                         : (shouldRepairCodeDump
@@ -4577,8 +4616,8 @@ async function showModels(langRef) {
                 status: [
                     { ok: true, label: t(lang, 'standard'), value: 'deepseek-v4-flash' },
                     { ok: true, label: t(lang, 'think'), value: 'deepseek-v4-flash-thinking' },
-                    { ok: true, label: t(lang, 'search'), value: 'deepseek-v4-flash-search' },
-                    { ok: true, label: t(lang, 'thinkSearch'), value: 'deepseek-v4-flash-thinking-search' },
+                    { ok: true, label: t(lang, 'noSearch'), value: 'deepseek-v4-flash-nosearch' },
+                    { ok: true, label: t(lang, 'thinkNoSearch'), value: 'deepseek-v4-flash-thinking-nosearch' },
                 ],
                 items: [
                     { id: 'back', label: t(lang, 'back'), help: t(lang, 'pressEnter') },
@@ -4742,7 +4781,8 @@ module.exports = {
         looksLikeToolCallMarkup,
         looksLikeCodeDumpInsteadOfTool,
         isDeepSeekNativeTool,
-        EMPTY_RESPONSE_NUDGE,
+        emptyResponseNudge,
+        nativeToolRepairPrompt,
         splitConversationTurns,
         compactConversation,
         truncatePromptMiddle,
@@ -4771,7 +4811,8 @@ module.exports = {
         resolveUpstreamPrompt,
         stripHarnessWebSearchTools,
         isHarnessWebSearchTool,
-        agentNativeWebFlags,
+        prepareAgentWebAccess,
+        resolveRequestWebFlags,
         nativeSearchAndThinkNotice,
         adaptHarnessWebAccess,
         createSession,

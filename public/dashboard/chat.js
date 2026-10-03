@@ -164,7 +164,7 @@
     activeId: null,
     runs: new Map(),           // convId -> { controller, startedAt, msgId }
     models: { loaded: false, error: null, ids: new Set(), base: null, caps: {}, capsError: null, list: [] },
-    think: false, search: false,
+    think: false, search: true,
     attachments: [],
     pendingDeletes: new Map(),
     quota: false,
@@ -180,12 +180,13 @@
 
   // ================================================================ models
   function parseModel(id) {
-    return { think: /-thinking(-|$)/.test(id), search: /-search$/.test(id) };
+    // Search is on unless the id says -nosearch (old -search ids also mean on).
+    return { think: /-thinking(-|$)/.test(id), search: !/-nosearch$/.test(id) };
   }
   function modelFor(think, search) {
     const base = S.models.base;
     if (!base) return null;
-    return `${base}${think ? '-thinking' : ''}${search ? '-search' : ''}`;
+    return `${base}${think ? '-thinking' : ''}${search ? '' : '-nosearch'}`;
   }
   function modelAvailable(id) { return Boolean(id) && S.models.ids.has(id); }
   function unavailableReason(id) {
@@ -205,8 +206,8 @@
       if (!list.length) throw new F.ApiError('GET /v1/models returned no models.', { type: 'no_models' });
       S.models.list = body.data;
       S.models.ids = new Set(list);
-      // base = an id whose -thinking or -search variant exists; else the shortest id
-      S.models.base = list.find(id => !/-thinking|-search/.test(id) && (S.models.ids.has(`${id}-thinking`) || S.models.ids.has(`${id}-search`)))
+      // base = an id whose -thinking or -nosearch variant exists; else the shortest id
+      S.models.base = list.find(id => !/-thinking|-nosearch/.test(id) && (S.models.ids.has(`${id}-thinking`) || S.models.ids.has(`${id}-nosearch`)))
         || list.slice().sort((a, b) => a.length - b.length)[0];
       S.models.error = null;
     } catch (e) {
@@ -227,7 +228,7 @@
     }
     S.models.loaded = true;
     // keep toggles valid
-    if (!modelAvailable(currentModel())) { S.think = false; S.search = false; }
+    if (!modelAvailable(currentModel())) { S.think = false; S.search = true; }
     renderComposer();
     renderEmpty();
   }
@@ -326,14 +327,13 @@
     S.els.note.className = `composer-note${tone ? ` is-${tone}` : ''}`;
   }
 
-  // Modes are model variants on this server: base, -thinking, -search, -thinking-search.
+  // Modes are model variants on this server: base, -thinking, and their -nosearch twins.
+  // Web search is on by default; the menu has a separate switch to turn it off.
   const MODES = [
-    { think: false, search: false, title: 'Instant', desc: 'Direct answers, fastest' },
-    { think: true, search: false, title: 'DeepThink', desc: 'Reasons step by step before answering' },
-    { think: false, search: true, title: 'Search', desc: 'Answers with live results from the web' },
-    { think: true, search: true, title: 'DeepThink + Search', desc: 'Reasons over live web results' },
+    { think: false, title: 'Instant', desc: 'Direct answers, fastest' },
+    { think: true, title: 'DeepThink', desc: 'Reasons step by step before answering' },
   ];
-  const modeOf = (think, search) => MODES.find(m => m.think === think && m.search === search);
+  const modeLabel = (think, search) => `${MODES.find(m => m.think === think).title}${search ? '' : ' · No search'}`;
   // "deepseek-v4-flash" → "V4 Flash": the id, made readable, nothing invented.
   const baseName = () => String(S.models.base || '').replace(/^deepseek-/i, '').split('-').filter(Boolean)
     .map(w => (/^v\d/i.test(w) ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1))).join(' ');
@@ -357,18 +357,29 @@
       list.append(h('p', { class: 'meta model-menu-note', text: blocked || 'Loading models…' }));
     } else {
       for (const mode of MODES) {
-        const id = modelFor(mode.think, mode.search);
+        const id = modelFor(mode.think, S.search);
         const ok = modelAvailable(id);
-        const checked = S.think === mode.think && S.search === mode.search;
+        const checked = S.think === mode.think;
         const b = h('button', {
           type: 'button', role: 'menuitemradio', class: 'menu-item model-item', 'aria-checked': String(checked),
           'aria-disabled': ok ? null : 'true', 'data-tip': ok ? id : unavailableReason(id),
         },
           h('span', { class: 'model-text' }, h('span', { class: 'model-title', text: mode.title }), h('span', { class: 'model-desc', text: mode.desc })),
           checked ? F.icon('check', 'model-check') : null);
-        b.addEventListener('click', () => { if (!ok) return; F.closePopover(); setMode(mode.think, mode.search); });
+        b.addEventListener('click', () => { if (!ok) return; F.closePopover(); setMode(mode.think, S.search); });
         list.append(b);
       }
+      list.append(h('div', { class: 'menu-sep', role: 'separator' }));
+      const searchId = modelFor(S.think, !S.search);
+      const searchOk = modelAvailable(searchId);
+      const sw = h('button', {
+        type: 'button', role: 'menuitemcheckbox', class: 'menu-item model-item', 'aria-checked': String(S.search),
+        'aria-disabled': searchOk ? null : 'true', 'data-tip': searchOk ? searchId : unavailableReason(searchId),
+      },
+        h('span', { class: 'model-text' }, h('span', { class: 'model-title', text: 'Web search' }), h('span', { class: 'model-desc', text: 'Answers with live results from the web' })),
+        S.search ? F.icon('check', 'model-check') : null);
+      sw.addEventListener('click', () => { if (!searchOk) return; F.closePopover(); setMode(S.think, !S.search); });
+      list.append(sw);
     }
     list.append(h('div', { class: 'menu-sep', role: 'separator' }));
     const acct = h('button', { type: 'button', role: 'menuitem', class: 'menu-item model-row' },
@@ -415,7 +426,7 @@
     const id = currentModel();
     if (!S.models.loaded) { modelName.textContent = 'Loading models…'; modelMode.textContent = ''; }
     else if (S.models.error) { modelName.textContent = 'Models unavailable'; modelMode.textContent = ''; }
-    else { modelName.textContent = baseName(); modelMode.textContent = modeOf(S.think, S.search).title; }
+    else { modelName.textContent = baseName(); modelMode.textContent = modeLabel(S.think, S.search); }
     modelBtn.setAttribute('aria-label', `Model: ${modelName.textContent} ${modelMode.textContent}`.trim());
     modelBtn.setAttribute('data-tip', id ? `Requests use ${id}` : (sendBlockReason() || ''));
     const caps = S.models.list.find(m => m.id === id);

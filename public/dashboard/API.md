@@ -284,7 +284,7 @@ Errors: `400 invalid_query`, `405`.
 All of these need the bearer key when one is set.
 
 - **`GET /v1/models`** returns `{data:[{id, real_model, capabilities:{reasoning, web_search, files, vision}}]}`.
-  - The ids are `deepseek-v4-flash`, `-thinking`, `-search` and `-thinking-search`.
+  - The ids are `deepseek-v4-flash`, `-thinking`, `-nosearch` and `-thinking-nosearch`. Search is on unless the id ends in `-nosearch`.
   - Build the Think and Search toggles from this list.
 - **`POST /v1/chat/completions`** with `{model, stream:true, messages}` and the header `x-agent-session: dashboard:<conversationId>`. That session id is unique per conversation and shows up as `agent` in the logs and usage.
   - The client sends the full transcript every time. Send only user and assistant `content`; do not send reasoning back.

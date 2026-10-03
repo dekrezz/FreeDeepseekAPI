@@ -40,7 +40,7 @@ FreeDeepseekAPI runs a local API server in front of **DeepSeek Web Chat** ([chat
 
 The project uses your normal logged-in DeepSeek account. The local server accepts API requests, then continues that saved Web session. There is no paid `api.deepseek.com` key.
 
-One model is on the site today: **DeepSeek-V4.1-Flash**. `-thinking` turns DeepThink on. `-search` turns on the native Web Search built into chat.deepseek.com, and that search is what answers live internet questions.
+One model is on the site today: **DeepSeek-V4.1-Flash**. The native Web Search built into chat.deepseek.com is **on by default**, and that search is what answers live internet questions. `-thinking` turns DeepThink on. `-nosearch` or `"web_search": false` turns search off.
 
 > This is an experimental Web-chat proxy. DeepSeek can change the private Web API without notice. For a production workload, use the official paid DeepSeek API.
 
@@ -101,7 +101,7 @@ One model is on the site today: **DeepSeek-V4.1-Flash**. `-thinking` turns DeepT
 - **OpenAI Responses shim:** `POST /v1/responses`
 - **Streaming:** SSE chunks, and a normal non-stream JSON body
 - **DeepThink:** `reasoning_content` when `-thinking` is on
-- **Native search:** chat.deepseek.com Web Search when `-search` is on, and also whenever a coding agent sends local tools
+- **Native search:** chat.deepseek.com Web Search, on by default. Off with `-nosearch` or `"web_search": false`
 - **Tool calling:** OpenAI tools, Anthropic tools, and Responses function tools, returned as a batch
 - **Model capabilities:** `GET /v1/model-capabilities`
 - **Agent sessions:** one DeepSeek chat per `x-agent-session` or `user`
@@ -500,7 +500,7 @@ Setup adds FreeDeepseekAPI as an opt-in profile. It does not replace Claude, GPT
 | OpenClaw | a `freedeepseek` provider | pick it explicitly |
 | Cursor | a snippet and launcher under `integrations/cursor/` | editor settings stay as they are |
 
-`--model` is always DeepSeek-V4.1-Flash. `-thinking` turns DeepThink on. `-search` turns native chat.deepseek.com search on. A request that includes local tools turns that native search on even when the id has no `-search` suffix. DeepThink still follows the id you picked.
+`--model` is always DeepSeek-V4.1-Flash, with native chat.deepseek.com search on. `-thinking` turns DeepThink on. `-nosearch` turns search off; the agent then keeps its own web tools. An old `-search` id maps to the same id without the suffix.
 
 Codex setup does **not** set `forced_login_method = api`. On Codex CLI that line logs you out of ChatGPT. Normal `codex` stays on ChatGPT. The FreeDeepseek profile talks to this proxy.
 
@@ -575,31 +575,34 @@ A tool-call turn does not attach reasoning to the message. Some agents treat any
 
 ### Native web search
 
-`-search` turns on the native Web Search of chat.deepseek.com. Internet questions go through that search. Do not ask the model to use bash, curl, or a harness `websearch` / `webfetch` tool for the live web.
+The native Web Search of chat.deepseek.com is on by default, for every model id. Internet questions go through that search. Do not ask the model to use bash, curl, or a harness `websearch` / `webfetch` tool for the live web.
 
 ```bash
 curl -X POST http://127.0.0.1:9655/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash-search",
+    "model": "deepseek-v4-flash",
     "messages": [{"role": "user", "content": "Find a current fact about DeepSeek and answer briefly."}],
     "stream": false
   }'
 ```
 
-Both switches together:
+To answer without search, send `"web_search": false`, or use an id ending in `-nosearch`:
 
 ```bash
 curl -X POST http://127.0.0.1:9655/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash-thinking-search",
-    "messages": [{"role": "user", "content": "What changed on the DeepSeek site this week?"}],
+    "model": "deepseek-v4-flash-thinking",
+    "web_search": false,
+    "messages": [{"role": "user", "content": "Explain how a B-tree splits a node."}],
     "stream": false
   }'
 ```
 
-When the request includes local tools, native search is enabled even on plain `deepseek-v4-flash`. DeepThink stays off unless the id says `-thinking`.
+`web_search` must be `true` or `false`; any other value returns `400 invalid_request_error`. It overrides the id: `"web_search": true` on a `-nosearch` id turns search back on. The field works on `/v1/chat/completions`, `/v1/messages`, and `/v1/responses`.
+
+With search off, a coding agent keeps its own `websearch` / `webfetch` tools and is not told that native search is on.
 
 ### Streaming
 
@@ -669,7 +672,7 @@ DeepSeek Web has no native tool-call array. The proxy writes the tool list into 
 
 `execute_code` and `web_search` are DeepSeek's own tools. They are not run on your computer. If they appear next to a real local tool such as `read_file`, they are dropped and the local calls are kept. A half-written tool block is not executed. One repair retry asks for strict JSON. If that is still broken, the turn returns `502 malformed_tool_call` and the chat stays open.
 
-Harness `websearch`, `webfetch`, and `WebFetch` tools are stripped. The live web is the native chat.deepseek.com search.
+While native search is on, harness `websearch`, `webfetch`, and `WebFetch` tools are stripped and the live web is the native chat.deepseek.com search. With search off they reach the agent unchanged.
 
 ### Images
 
@@ -687,12 +690,14 @@ OpenAI Chat Completions uses `image_url`. Responses uses `input_image`. Anthropi
 
 | ID | DeepThink | Native web search | What it does |
 |---|---|---|---|
-| `deepseek-v4-flash` | off | off | DeepSeek-V4.1-Flash. `deepseek-flash` is the same id |
-| `deepseek-v4-flash-thinking` | on | off | DeepThink, then the answer |
-| `deepseek-v4-flash-search` | off | on | Native chat.deepseek.com search for the live web |
-| `deepseek-v4-flash-thinking-search` | on | on | DeepThink and native search |
+| `deepseek-v4-flash` | off | on | DeepSeek-V4.1-Flash. `deepseek-flash` is the same id |
+| `deepseek-v4-flash-thinking` | on | on | DeepThink, then the answer |
+| `deepseek-v4-flash-nosearch` | off | off | No native search |
+| `deepseek-v4-flash-thinking-nosearch` | on | off | DeepThink without native search |
 
-These suffixes are the two switches in the DeepSeek chat composer. They do not select another model.
+These suffixes are the two switches in the DeepSeek chat composer. They do not select another model. `"web_search": true|false` in the request body overrides the search switch of any id.
+
+The old `deepseek-v4-flash-search` and `deepseek-v4-flash-thinking-search` ids still work. They mean `deepseek-v4-flash` and `deepseek-v4-flash-thinking` and are no longer listed in `/v1/models`.
 
 Older ids are not registered and return `400 invalid_model`:
 
@@ -785,7 +790,7 @@ http://127.0.0.1:9655/v1
 
 If `PROXY_API_KEY` is unset, the API key field can be anything. If the key is set, the client must send that exact bearer. The proxy checks it before models, sessions, and completions.
 
-Pick `deepseek-v4-flash` for a normal answer, `deepseek-v4-flash-thinking` for DeepThink, and `deepseek-v4-flash-search` when the question needs the live web through native chat.deepseek.com search.
+Pick `deepseek-v4-flash` for a normal answer with native chat.deepseek.com search, `deepseek-v4-flash-thinking` for DeepThink, and a `-nosearch` id when you want an answer without search.
 
 ---
 

@@ -1,6 +1,6 @@
 # Документация
 
-- [Модели](models.md) — DeepSeek-V4.1-Flash. `-thinking` это DeepThink, `-search` это родной поиск chat.deepseek.com
+- [Модели](models.md) — DeepSeek-V4.1-Flash. Родной поиск chat.deepseek.com включён по умолчанию, `-thinking` это DeepThink, `-nosearch` выключает поиск
 - [Агенты одним нажатием](agents.md)
 - [Авторизация](auth.md) — несколько Web-логинов
 - [HTTP API](../api.md) — пул, очередь, ошибки, env
