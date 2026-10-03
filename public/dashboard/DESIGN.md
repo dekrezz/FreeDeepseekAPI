@@ -734,11 +734,12 @@ Active conversation
 - While a request is running, Send morphs to **Stop**: the same button with a stop icon. The icons cross-fade with a 2px blur bridge over 180ms.
 
 **Model mapping:**
-- Build the mapping from `/v1/models`; never hard-code it. Think × Search map to the four ids:
-  - none = `deepseek-v4-flash`
-  - Think = `…-thinking`
-  - Search = `…-search`
-  - both = `…-thinking-search`
+- Build the mapping from `/v1/models`; never hard-code it. Think × Search map to the four ids. Search is on by default:
+  - Instant (search on) = `deepseek-v4-flash`
+  - DeepThink (search on) = `…-thinking`
+  - Instant, no search = `…-nosearch`
+  - DeepThink, no search = `…-thinking-nosearch`
+- The menu has two modes (Instant, DeepThink) and a separate Web search switch.
 - Any id missing from the server list disables its toggle, with the reason from `/v1/model-capabilities` in a tooltip.
 - The model is remembered per conversation. Switching mid-conversation is allowed.
 

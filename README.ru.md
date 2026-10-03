@@ -40,7 +40,7 @@ FreeDeepseekAPI поднимает локальный API-сервер пере�
 
 Проект работает через ваш обычный залогиненный аккаунт DeepSeek. Локальный сервер принимает API-запросы и продолжает сохранённую Web-сессию. Платный ключ `api.deepseek.com` не нужен.
 
-На сайте сейчас одна модель: **DeepSeek-V4.1-Flash**. `-thinking` включает DeepThink. `-search` включает родной поиск chat.deepseek.com, и именно им отвечают на вопросы про живой интернет.
+На сайте сейчас одна модель: **DeepSeek-V4.1-Flash**. Родной Web Search, встроенный в chat.deepseek.com, **включён по умолчанию**, и именно им отвечают на вопросы про живой интернет. `-thinking` включает DeepThink. `-nosearch` или `"web_search": false` выключает поиск.
 
 > Это экспериментальный web-chat proxy. DeepSeek может поменять внутренний Web API без предупреждения. Для production надёжнее официальный платный API DeepSeek.
 
@@ -101,7 +101,7 @@ FreeDeepseekAPI поднимает локальный API-сервер пере�
 - **OpenAI Responses shim:** `POST /v1/responses`
 - **Streaming:** SSE и обычный JSON без стрима
 - **DeepThink:** `reasoning_content`, когда включён `-thinking`
-- **Родной поиск:** Web Search chat.deepseek.com при `-search`, и ещё всегда, когда кодирующий агент прислал локальные инструменты
+- **Родной поиск:** Web Search chat.deepseek.com, включён по умолчанию. Выключается через `-nosearch` или `"web_search": false`
 - **Tool calling:** инструменты OpenAI, Anthropic и Responses, пачкой
 - **Возможности моделей:** `GET /v1/model-capabilities`
 - **Сессии агентов:** один чат DeepSeek на `x-agent-session` или `user`
@@ -500,7 +500,7 @@ Setup добавляет FreeDeepseekAPI как отдельный профил�
 | OpenClaw | провайдер `freedeepseek` | выбрать явно |
 | Cursor | сниппет и launcher в `integrations/cursor/` | настройки редактора не меняются |
 
-`--model` всегда DeepSeek-V4.1-Flash. `-thinking` включает DeepThink. `-search` включает родной поиск chat.deepseek.com. Если в запросе есть локальные инструменты, этот поиск включается и без суффикса `-search`. DeepThink остаётся таким, какой выбран в id.
+`--model` всегда DeepSeek-V4.1-Flash с включённым родным поиском chat.deepseek.com. `-thinking` включает DeepThink. `-nosearch` выключает поиск; тогда у агента остаются его собственные веб-инструменты. Старый id с `-search` отображается на тот же id без суффикса.
 
 Setup Codex **не** пишет `forced_login_method = api`. На Codex CLI эта строка разлогинивает ChatGPT. Обычный `codex` остаётся на ChatGPT. Профиль FreeDeepseek говорит с этим прокси.
 
@@ -575,31 +575,34 @@ curl -X POST http://127.0.0.1:9655/v1/chat/completions \
 
 ### Родной веб-поиск
 
-`-search` включает родной Web Search chat.deepseek.com. Вопросы про интернет идут через этот поиск. Не просите модель пользоваться bash, curl или инструментом харнесса `websearch` / `webfetch`.
+Родной Web Search chat.deepseek.com включён по умолчанию для любого id модели. Вопросы про интернет идут через этот поиск. Не просите модель пользоваться bash, curl или инструментом харнесса `websearch` / `webfetch`.
 
 ```bash
 curl -X POST http://127.0.0.1:9655/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash-search",
+    "model": "deepseek-v4-flash",
     "messages": [{"role": "user", "content": "Найди свежий факт про DeepSeek и ответь коротко."}],
     "stream": false
   }'
 ```
 
-Оба переключателя вместе:
+Чтобы ответить без поиска, передайте `"web_search": false` или возьмите id с окончанием `-nosearch`:
 
 ```bash
 curl -X POST http://127.0.0.1:9655/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash-thinking-search",
-    "messages": [{"role": "user", "content": "Что изменилось на сайте DeepSeek за эту неделю?"}],
+    "model": "deepseek-v4-flash-thinking",
+    "web_search": false,
+    "messages": [{"role": "user", "content": "Объясни, как B-дерево разделяет узел."}],
     "stream": false
   }'
 ```
 
-Если в запросе есть локальные инструменты, родной поиск включается даже на обычном `deepseek-v4-flash`. DeepThink остаётся выключенным, пока в id нет `-thinking`.
+`web_search` должен быть `true` или `false`; любое другое значение возвращает `400 invalid_request_error`. Поле главнее id: `"web_search": true` на id с `-nosearch` снова включает поиск. Поле работает на `/v1/chat/completions`, `/v1/messages` и `/v1/responses`.
+
+При выключенном поиске кодирующий агент сохраняет свои инструменты `websearch` / `webfetch`, и ему не сообщают, что включён родной поиск.
 
 ### Streaming
 
@@ -669,7 +672,7 @@ codex --profile freedeepseek
 
 `execute_code` и `web_search` — собственные инструменты DeepSeek. На вашем компьютере они не запускаются. Если они стоят рядом с настоящим локальным инструментом вроде `read_file`, они отбрасываются, а локальные вызовы остаются. Недописанный блок инструмента не выполняется. Один повтор просит строгий JSON. Если и он сломан, ход возвращает `502 malformed_tool_call`, а чат остаётся открытым.
 
-Инструменты харнесса `websearch`, `webfetch` и `WebFetch` вырезаются. Живой интернет — это родной поиск chat.deepseek.com.
+Пока родной поиск включён, инструменты харнесса `websearch`, `webfetch` и `WebFetch` вырезаются, а живой интернет — это родной поиск chat.deepseek.com. При выключенном поиске они доходят до агента без изменений.
 
 ### Картинки
 
@@ -687,12 +690,14 @@ OpenAI Chat Completions использует `image_url`. Responses исполь
 
 | ID | DeepThink | Родной веб-поиск | Что делает |
 |---|---|---|---|
-| `deepseek-v4-flash` | выкл | выкл | DeepSeek-V4.1-Flash. `deepseek-flash` — тот же id |
-| `deepseek-v4-flash-thinking` | вкл | выкл | Сначала DeepThink, потом ответ |
-| `deepseek-v4-flash-search` | выкл | вкл | Родной поиск chat.deepseek.com для живого интернета |
-| `deepseek-v4-flash-thinking-search` | вкл | вкл | DeepThink и родной поиск |
+| `deepseek-v4-flash` | выкл | вкл | DeepSeek-V4.1-Flash. `deepseek-flash` — тот же id |
+| `deepseek-v4-flash-thinking` | вкл | вкл | Сначала DeepThink, потом ответ |
+| `deepseek-v4-flash-nosearch` | выкл | выкл | Без родного поиска |
+| `deepseek-v4-flash-thinking-nosearch` | вкл | выкл | DeepThink без родного поиска |
 
-Эти суффиксы — два переключателя в чате DeepSeek. Другую модель они не выбирают.
+Эти суффиксы — два переключателя в чате DeepSeek. Другую модель они не выбирают. `"web_search": true|false` в теле запроса переопределяет переключатель поиска у любого id.
+
+Старые id `deepseek-v4-flash-search` и `deepseek-v4-flash-thinking-search` по-прежнему работают. Они означают `deepseek-v4-flash` и `deepseek-v4-flash-thinking` и больше не перечислены в `/v1/models`.
 
 Старые id не зарегистрированы и отвечают `400 invalid_model`:
 
@@ -785,7 +790,7 @@ http://127.0.0.1:9655/v1
 
 Если `PROXY_API_KEY` не задан, в поле API key можно поставить что угодно. Если ключ задан, клиент должен прислать именно его. Прокси проверяет bearer до моделей, сессий и completions.
 
-Берите `deepseek-v4-flash` для обычного ответа, `deepseek-v4-flash-thinking` для DeepThink и `deepseek-v4-flash-search`, когда вопрос требует живого интернета через родной поиск chat.deepseek.com.
+Берите `deepseek-v4-flash` для обычного ответа с родным поиском chat.deepseek.com, `deepseek-v4-flash-thinking` для DeepThink и id с `-nosearch`, когда нужен ответ без поиска.
 
 ---
 

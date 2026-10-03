@@ -15,12 +15,20 @@ const { t, loadUiLang, saveUiLang, pick, pickMany } = require('./lib/tui-menu');
 const ROOT = path.resolve(__dirname, '..');
 const HOME = process.env.SETUP_HOME || os.homedir();
 const VALID_TARGETS = ['claude-code', 'codex', 'opencode', 'hermes', 'openclaw', 'cursor'];
+// Native Web Search is on by default; -nosearch turns it off.
 const VALID_MODELS = [
   'deepseek-v4-flash',
   'deepseek-v4-flash-thinking',
-  'deepseek-v4-flash-search',
-  'deepseek-v4-flash-thinking-search',
+  'deepseek-v4-flash-nosearch',
+  'deepseek-v4-flash-thinking-nosearch',
 ];
+// Search used to need a -search suffix; those IDs now mean the default model.
+const LEGACY_SEARCH_MODELS = {
+  'deepseek-v4-flash-search': 'deepseek-v4-flash',
+  'deepseek-v4-flash-thinking-search': 'deepseek-v4-flash-thinking',
+};
+const CODEX_BASE_INSTRUCTIONS = 'You are a coding agent. Follow developer instructions and use local tools when needed. Local tools are JSON, and several independent calls may be one tool_calls array.';
+const CODEX_NATIVE_SEARCH_INSTRUCTIONS = 'Do not use the Codex/harness web search tool. DeepSeek native Web Search is enabled — use it for live web data and report the findings.';
 const OPENCODE_MODEL_LABEL = 'DeepSeek 4.1';
 const OPENCODE_PROVIDER_LABEL = 'Flash';
 
@@ -77,7 +85,8 @@ function anthropicBase(baseUrl) { return String(baseUrl).replace(/\/+$/, ''); }
 function parseArgs(argv) {
   const args = argv.slice(2);
   if (hasArg(args, '--help', '-h')) return { help: true };
-  const model = argValue(args, '--model', 'deepseek-v4-flash');
+  const requestedModel = argValue(args, '--model', 'deepseek-v4-flash');
+  const model = LEGACY_SEARCH_MODELS[requestedModel] || requestedModel;
   if (!VALID_MODELS.includes(model)) die(`Unknown --model ${model}. Use: ${VALID_MODELS.join(', ')}`);
   const mode = argValue(args, '--mode', 'add');
   if (!['add', 'replace'].includes(mode)) die('Unknown --mode. Use: add, replace');
@@ -205,7 +214,9 @@ function setupCodex(opts) {
       priority: 1,
       availability_nux: null,
       upgrade: null,
-      base_instructions: 'You are a coding agent. Follow developer instructions and use local tools when needed. Local tools are JSON, and several independent calls may be one tool_calls array. Do not use the Codex/harness web search tool. DeepSeek native Web Search is enabled — use it for live web data and report the findings.',
+      base_instructions: slug.endsWith('-nosearch')
+        ? CODEX_BASE_INSTRUCTIONS
+        : `${CODEX_BASE_INSTRUCTIONS} ${CODEX_NATIVE_SEARCH_INSTRUCTIONS}`,
       supports_reasoning_summary_parameter: false,
       default_reasoning_summary: 'none',
       support_verbosity: false,
@@ -381,7 +392,7 @@ function setupOpenCode(opts) {
   cfg.tools = { ...(cfg.tools && typeof cfg.tools === 'object' ? cfg.tools : {}), websearch: false, webfetch: false };
   cfg.permission = { ...(cfg.permission && typeof cfg.permission === 'object' ? cfg.permission : {}), websearch: 'deny', webfetch: 'deny' };
   if (String(cfg.model || '').startsWith('freedeepseek/')) {
-    cfg.model = 'freedeepseek/deepseek-v4-flash-thinking-search';
+    cfg.model = 'freedeepseek/deepseek-v4-flash-thinking';
   }
   if (opts.mode === 'replace') cfg.model = `freedeepseek/${opts.model}`;
   cfg.attachment = cfg.attachment && typeof cfg.attachment === 'object' ? cfg.attachment : {};

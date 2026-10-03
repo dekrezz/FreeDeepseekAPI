@@ -6,14 +6,18 @@
 
 | ID | DeepThink | Родной веб-поиск |
 |---|---|---|
-| `deepseek-v4-flash` / `deepseek-flash` | выкл | выкл |
-| `deepseek-v4-flash-thinking` | вкл | выкл |
-| `deepseek-v4-flash-search` | выкл | вкл |
-| `deepseek-v4-flash-thinking-search` | вкл | вкл |
+| `deepseek-v4-flash` / `deepseek-flash` | выкл | вкл |
+| `deepseek-v4-flash-thinking` | вкл | вкл |
+| `deepseek-v4-flash-nosearch` | выкл | выкл |
+| `deepseek-v4-flash-thinking-nosearch` | вкл | выкл |
 
 **`-thinking` включает DeepThink.** V4.1-Flash рассуждает перед ответом. Сама модель остаётся DeepSeek-V4.1-Flash.
 
-**`-search` включает родной поиск chat.deepseek.com.** Запросы в интернет идут через этот поиск. Инструменты харнесса `websearch`, `webfetch` и `WebFetch` его не заменяют. Если кодирующий агент прислал локальные инструменты, прокси включает этот родной поиск и на обычном `deepseek-v4-flash`. DeepThink при этом остаётся таким, какой выбран в ID модели.
+**Родной Web Search chat.deepseek.com включён по умолчанию.** Запросы в интернет идут через этот поиск. Инструменты харнесса `websearch`, `webfetch` и `WebFetch` его не заменяют; пока поиск включён, прокси их отбрасывает.
+
+**`-nosearch` выключает поиск.** То же делает `"web_search": false` в теле запроса, на любом ID. `"web_search": true` снова включает его для ID с `-nosearch`. Любое другое значение возвращает `400 invalid_request_error`. При выключенном поиске у кодирующего агента остаются его собственные веб-инструменты.
+
+**Бывшие ID с `-search`.** `deepseek-v4-flash-search` и `deepseek-v4-flash-thinking-search` по-прежнему работают и означают `deepseek-v4-flash` и `deepseek-v4-flash-thinking`. В `/v1/models` они не перечислены.
 
 Старые ID не зарегистрированы: `deepseek-v4-pro`, `deepseek-chat`, `deepseek-reasoner`, `deepseek-r1`, `deepseek-instant`, `deepseek-expert` и vision. Они отвечают `400 invalid_model`.
 
