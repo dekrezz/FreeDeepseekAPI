@@ -12,7 +12,7 @@ npm run setup:agents -- --dry-run --target hermes,openclaw,opencode
 
 Requires the proxy already listening (`npm start`). Default origin: `http://127.0.0.1:9655`. Override with `--base-url` / `PROXY_BASE_URL`. If `PROXY_API_KEY` is set, it is copied into the agent configs.
 
-`--model` is always DeepSeek-V4.1-Flash. `-thinking` turns DeepThink on. `-search` turns on native chat.deepseek.com search for the live web. A request that includes local tools enables that native search even when the ID has no `-search` suffix.
+`--model` is always DeepSeek-V4.1-Flash, with native chat.deepseek.com search on for the live web. `-thinking` turns DeepThink on. `-nosearch` turns search off; the agent then keeps its own web tools. An old `-search` ID maps to the same ID without the suffix.
 
 | Target | Added configuration | Selection |
 |---|---|---|

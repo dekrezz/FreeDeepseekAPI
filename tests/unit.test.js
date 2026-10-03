@@ -394,7 +394,12 @@ test('issue #19 stacked native DSML is listed and never treated as a gateway too
   assert.deepEqual(listed.map(call => call.name), ['execute_code', 'web_search']);
   assert.equal(serverInternals.selectAgentToolCall(dsml, ['write_file', 'read_file']), null);
   assert.equal(serverInternals.selectAgentToolCall(dsml, ['execute_code'])?.name, 'execute_code');
-  assert.match(serverInternals.EMPTY_RESPONSE_NUDGE, /empty/);
+  assert.match(serverInternals.emptyResponseNudge(true), /empty/);
+  assert.match(serverInternals.emptyResponseNudge(true), /native Web Search is already on/);
+  assert.match(serverInternals.emptyResponseNudge(false), /empty/);
+  assert.doesNotMatch(serverInternals.emptyResponseNudge(false), /Web Search/);
+  assert.match(serverInternals.nativeToolRepairPrompt(true), /native Web Search is already enabled/);
+  assert.doesNotMatch(serverInternals.nativeToolRepairPrompt(false), /Web Search is already enabled/);
   assert.match(serverInternals.formatToolReminder([
     { type: 'function', function: { name: 'write_file' } },
   ]), /execute_code/);
@@ -799,27 +804,42 @@ test('sticky continuation omits system even when the client restates new instruc
   assert.doesNotMatch(next.conversation, /\bhello\b/);
 });
 
-test('agent requests drop harness websearch and enable native DeepSeek Search', () => {
-  const stripped = serverInternals.stripHarnessWebSearchTools([
+test('agent requests drop harness websearch while native DeepSeek Search is on', () => {
+  const tools = [
     { type: 'function', function: { name: 'bash', parameters: { type: 'object' } } },
     { type: 'function', function: { name: 'websearch', parameters: { type: 'object' } } },
     { type: 'function', function: { name: 'webfetch', parameters: { type: 'object' } } },
-  ]);
-  assert.deepEqual(stripped.names.sort(), ['webfetch', 'websearch']);
-  assert.equal(stripped.tools.length, 1);
-  assert.equal(stripped.tools[0].function.name, 'bash');
-  assert.deepEqual(serverInternals.agentNativeWebFlags(stripped.tools, stripped.names), {
-    search_enabled: true,
-  });
+  ];
+  const access = serverInternals.prepareAgentWebAccess(tools, true);
+  assert.deepEqual(access.strippedNames.sort(), ['webfetch', 'websearch']);
+  assert.deepEqual(access.tools.map(tool => tool.function.name), ['bash']);
+  assert.equal(access.nativeSearchNotice, true);
   const formatted = serverInternals.formatMessages(
     [{ role: 'system', content: 'You are opencode' }, { role: 'user', content: 'search the docs' }],
-    stripped.tools,
-    { nativeSearchNotice: true },
+    access.tools,
+    { nativeSearchNotice: access.nativeSearchNotice },
   );
   assert.match(formatted.systemPrompt, /DeepSeek native Web Search is enabled/);
   assert.match(formatted.systemPrompt, /\{"tool_call":\{"name":"<function_name>"/);
   assert.doesNotMatch(formatted.systemPrompt, /## websearch/);
   assert.match(formatted.systemPrompt, /## bash/);
+});
+
+test('with search turned off, agents keep their own web tools and get no native-search notice', () => {
+  const tools = [
+    { type: 'function', function: { name: 'bash', parameters: { type: 'object' } } },
+    { type: 'function', function: { name: 'websearch', parameters: { type: 'object' } } },
+  ];
+  const access = serverInternals.prepareAgentWebAccess(tools, false);
+  assert.deepEqual(access.tools.map(tool => tool.function.name), ['bash', 'websearch']);
+  assert.deepEqual(access.strippedNames, []);
+  assert.equal(access.nativeSearchNotice, false);
+});
+
+test('chat without tools gets no agent notice even though search is on', () => {
+  const access = serverInternals.prepareAgentWebAccess([], true);
+  assert.deepEqual(access.tools, []);
+  assert.equal(access.nativeSearchNotice, false);
 });
 
 test('every harness is told to use native DeepSeek search instead of bash or WebFetch', () => {
@@ -1271,7 +1291,7 @@ test('context-compaction header is marked and exposed to browser clients', () =>
   assert.equal(headers.get(serverInternals.CONTEXT_COMPACTED_HEADER), 'true');
 });
 
-test('only V4.1-Flash aliases are registered', () => {
+test('only V4.1-Flash aliases are registered, with web search on by default', () => {
   const { resolveModelConfig, isKnownModel, isSupportedModel, SUPPORTED_MODEL_IDS, DEFAULT_MODEL_ID, MODEL_CONFIGS } = serverInternals;
 
   assert.equal(DEFAULT_MODEL_ID, 'deepseek-v4-flash');
@@ -1279,21 +1299,31 @@ test('only V4.1-Flash aliases are registered', () => {
     Object.keys(MODEL_CONFIGS).sort(),
     [
       'deepseek-v4-flash',
-      'deepseek-v4-flash-search',
+      'deepseek-v4-flash-nosearch',
       'deepseek-v4-flash-thinking',
-      'deepseek-v4-flash-thinking-search',
+      'deepseek-v4-flash-thinking-nosearch',
     ].sort(),
   );
 
   const flash = resolveModelConfig('deepseek-v4-flash');
   assert.equal(flash.model_type, 'default');
   assert.equal(flash.thinking_enabled, false);
-  assert.equal(flash.search_enabled, false);
+  assert.equal(flash.search_enabled, true);
+  assert.equal(flash.capabilities.web_search, true);
   assert.match(flash.real_model, /V4\.1-Flash/);
 
   const flashThink = resolveModelConfig('deepseek-v4-flash-thinking');
   assert.equal(flashThink.model_type, 'default');
   assert.equal(flashThink.thinking_enabled, true);
+  assert.equal(flashThink.search_enabled, true);
+
+  const bare = resolveModelConfig('deepseek-v4-flash-nosearch');
+  assert.equal(bare.thinking_enabled, false);
+  assert.equal(bare.search_enabled, false);
+  assert.equal(bare.capabilities.web_search, false);
+  const bareThink = resolveModelConfig('deepseek-v4-flash-thinking-nosearch');
+  assert.equal(bareThink.thinking_enabled, true);
+  assert.equal(bareThink.search_enabled, false);
 
   for (const id of SUPPORTED_MODEL_IDS) assert.equal(isSupportedModel(id), true, id);
   for (const id of ['deepseek-chat', 'deepseek-reasoner', 'deepseek-r1', 'deepseek-v3', 'deepseek-instant', 'deepseek-expert', 'deepseek-vision', 'deepseek-v4-flash-vision-exp']) {
@@ -1306,7 +1336,43 @@ test('only V4.1-Flash aliases are registered', () => {
   assert.equal(canonicalizeModelId('deepseek-v4-flash-thinking[1m]'), 'deepseek-v4-flash-thinking');
   assert.equal(canonicalizeModelId('deepseek-flash'), 'deepseek-v4-flash');
   assert.equal(canonicalizeModelId('deepseek-flash-thinking'), 'deepseek-v4-flash-thinking');
+  assert.equal(canonicalizeModelId('deepseek-flash-nosearch'), 'deepseek-v4-flash-nosearch');
   assert.equal(isKnownModel('claude-haiku-4-5'), true);
+});
+
+test('old -search model IDs keep working as hidden aliases of the default models', () => {
+  const { canonicalizeModelId, isKnownModel, SUPPORTED_MODEL_IDS, resolveModelConfig } = serverInternals;
+  assert.equal(canonicalizeModelId('deepseek-v4-flash-search'), 'deepseek-v4-flash');
+  assert.equal(canonicalizeModelId('deepseek-v4-flash-thinking-search'), 'deepseek-v4-flash-thinking');
+  assert.equal(canonicalizeModelId('deepseek-flash-search'), 'deepseek-v4-flash');
+  assert.equal(canonicalizeModelId('deepseek-flash-thinking-search'), 'deepseek-v4-flash-thinking');
+  assert.equal(canonicalizeModelId('deepseek-v4-flash-thinking-search[1m]'), 'deepseek-v4-flash-thinking');
+  assert.equal(isKnownModel('deepseek-v4-flash-search'), true);
+  assert.equal(resolveModelConfig('deepseek-v4-flash-thinking-search').search_enabled, true);
+  assert.equal(SUPPORTED_MODEL_IDS.includes('deepseek-v4-flash-search'), false);
+  assert.equal(SUPPORTED_MODEL_IDS.includes('deepseek-v4-flash-thinking-search'), false);
+});
+
+test('web_search request field overrides the model default', () => {
+  const { resolveRequestWebFlags } = serverInternals;
+  assert.deepEqual(resolveRequestWebFlags('deepseek-v4-flash', {}), { thinking_enabled: false, search_enabled: true });
+  assert.deepEqual(resolveRequestWebFlags('deepseek-v4-flash-thinking', {}), { thinking_enabled: true, search_enabled: true });
+  assert.deepEqual(resolveRequestWebFlags('deepseek-v4-flash', { web_search: false }), { thinking_enabled: false, search_enabled: false });
+  assert.deepEqual(resolveRequestWebFlags('deepseek-v4-flash-thinking', { web_search: false }), { thinking_enabled: true, search_enabled: false });
+  assert.deepEqual(resolveRequestWebFlags('deepseek-v4-flash-nosearch', {}), { thinking_enabled: false, search_enabled: false });
+  assert.deepEqual(resolveRequestWebFlags('deepseek-v4-flash-nosearch', { web_search: true }), { thinking_enabled: false, search_enabled: true });
+  assert.deepEqual(resolveRequestWebFlags('deepseek-v4-flash', { web_search: null }), { thinking_enabled: false, search_enabled: true });
+});
+
+test('a non-boolean web_search field is rejected instead of guessed', () => {
+  const { resolveRequestWebFlags } = serverInternals;
+  for (const value of ['false', 0, 1, 'off', {}]) {
+    assert.throws(
+      () => resolveRequestWebFlags('deepseek-v4-flash', { web_search: value }),
+      err => err.status === 400 && err.type === 'invalid_request_error' && /web_search must be true or false/.test(err.message),
+      JSON.stringify(value),
+    );
+  }
 });
 
 test('stream helpers preserve the request-level exact CORS origin', () => {
@@ -1372,7 +1438,7 @@ test('one-click agent setup adds opt-in providers without replacing native defau
   const res = runNode([
     'scripts/setup-agents.js',
     '--target', 'claude-code,hermes,openclaw,codex,opencode',
-    '--model', 'deepseek-v4-flash-thinking-search',
+    '--model', 'deepseek-v4-flash-thinking',
     '--base-url', 'http://127.0.0.1:9655',
     '--api-key', 'local',
     '--scope', 'user',
@@ -1383,13 +1449,13 @@ test('one-click agent setup adds opt-in providers without replacing native defau
   assert.deepEqual(claudeNative, { model: 'claude-opus', env: { KEEP: 'yes' } });
   const claudeProfile = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'freedeepseek.settings.json'), 'utf8'));
   assert.equal(claudeProfile.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:9655');
-  assert.equal(claudeProfile.model, 'deepseek-v4-flash-thinking-search');
+  assert.equal(claudeProfile.model, 'deepseek-v4-flash-thinking');
 
   const hermesNative = fs.readFileSync(path.join(dir, '.hermes', 'config.yaml'), 'utf8');
   assert.match(hermesNative, /claude-opus/);
   const hermesProfile = fs.readFileSync(path.join(dir, '.hermes', 'freedeepseek.yaml'), 'utf8');
   assert.match(hermesProfile, /provider: custom/);
-  assert.match(hermesProfile, /deepseek-v4-flash-thinking-search/);
+  assert.match(hermesProfile, /deepseek-v4-flash-thinking/);
 
   const claw = JSON.parse(fs.readFileSync(path.join(dir, '.openclaw', 'openclaw.json'), 'utf8'));
   assert.equal(claw.agents.defaults.model.primary, 'anthropic/claude-opus');
@@ -1406,6 +1472,10 @@ test('one-click agent setup adds opt-in providers without replacing native defau
   assert.deepEqual(catalog.models[0].supported_reasoning_levels, []);
   assert.equal(catalog.models[0].shell_type, 'shell_command');
   assert.equal(catalog.models[0].supports_reasoning_summary_parameter, false);
+  assert.deepEqual(catalog.models.map(m => m.slug), ['deepseek-v4-flash', 'deepseek-v4-flash-thinking', 'deepseek-v4-flash-nosearch', 'deepseek-v4-flash-thinking-nosearch']);
+  const bySlug = Object.fromEntries(catalog.models.map(m => [m.slug, m]));
+  assert.match(bySlug['deepseek-v4-flash'].base_instructions, /DeepSeek native Web Search is enabled/);
+  assert.doesNotMatch(bySlug['deepseek-v4-flash-nosearch'].base_instructions, /Web Search is enabled|Do not use the Codex\/harness web search tool/);
 
   const opencode = JSON.parse(fs.readFileSync(path.join(dir, '.config', 'opencode', 'opencode.json'), 'utf8'));
   assert.equal(opencode.model, 'openai/gpt-native');
@@ -1414,14 +1484,31 @@ test('one-click agent setup adds opt-in providers without replacing native defau
   assert.equal(opencode.permission.websearch, 'deny');
   assert.equal(opencode.provider.freedeepseek.name, 'Flash');
   assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash'].name, 'DeepSeek 4.1');
-  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking-search'].name, 'DeepSeek 4.1');
-  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking-search'].limit.context, 1048576);
-  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking-search'].attachment, true);
-  assert.deepEqual(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking-search'].modalities.input, ['text', 'image']);
+  assert.deepEqual(Object.keys(opencode.provider.freedeepseek.models), ['deepseek-v4-flash', 'deepseek-v4-flash-thinking', 'deepseek-v4-flash-nosearch', 'deepseek-v4-flash-thinking-nosearch']);
+  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking'].name, 'DeepSeek 4.1');
+  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking'].limit.context, 1048576);
+  assert.equal(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking'].attachment, true);
+  assert.deepEqual(opencode.provider.freedeepseek.models['deepseek-v4-flash-thinking'].modalities.input, ['text', 'image']);
   const agentsMd = fs.readFileSync(path.join(dir, '.config', 'opencode', 'AGENTS.md'), 'utf8');
   assert.match(agentsMd, /<!-- freedeepseek-autonomy -->/);
   assert.match(agentsMd, /Finish the user's task autonomously/);
   assert.match(agentsMd, /Token cost does not matter/);
+});
+
+test('agent setup maps an old -search model to the same model without the suffix', () => {
+  const dir = tmpdir();
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  const res = runNode([
+    'scripts/setup-agents.js',
+    '--target', 'claude-code',
+    '--model', 'deepseek-v4-flash-thinking-search',
+    '--base-url', 'http://127.0.0.1:9655',
+    '--api-key', 'local',
+    '--scope', 'user',
+  ], { env: { SETUP_HOME: dir } });
+  assert.equal(res.status, 0, res.stderr || res.stdout);
+  const claudeProfile = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'freedeepseek.settings.json'), 'utf8'));
+  assert.equal(claudeProfile.model, 'deepseek-v4-flash-thinking');
 });
 
 test('agent setup replace mode makes FreeDeepseekAPI the default without discarding unrelated settings', () => {

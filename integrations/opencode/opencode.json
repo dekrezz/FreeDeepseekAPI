@@ -37,7 +37,7 @@
             "output": 8192
           }
         },
-        "deepseek-v4-flash-search": {
+        "deepseek-v4-flash-nosearch": {
           "name": "DeepSeek 4.1",
           "attachment": true,
           "reasoning": false,
@@ -51,7 +51,7 @@
             "output": 8192
           }
         },
-        "deepseek-v4-flash-thinking-search": {
+        "deepseek-v4-flash-thinking-nosearch": {
           "name": "DeepSeek 4.1",
           "attachment": true,
           "reasoning": true,

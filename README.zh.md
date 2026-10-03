@@ -40,7 +40,7 @@ FreeDeepseekAPI 在本机启动一个 API 服务，后端是 **DeepSeek Web Chat
 
 它使用你已经登录的 DeepSeek 账号。本地服务接收 API 请求，再沿着保存好的 Web 会话继续聊。不需要 `api.deepseek.com` 的付费密钥。
 
-网站上现在只有一个模型：**DeepSeek-V4.1-Flash**。`-thinking` 打开 DeepThink。`-search` 打开 chat.deepseek.com 自带的网页搜索，上网查资料走的就是这个搜索。
+网站上现在只有一个模型：**DeepSeek-V4.1-Flash**。chat.deepseek.com 自带的网页搜索**默认打开**，上网查资料走的就是这个搜索。`-thinking` 打开 DeepThink。`-nosearch` 或 `"web_search": false` 关闭搜索。
 
 > 这是实验性的网页聊天代理。DeepSeek 可能不打招呼就改掉内部 Web API。生产环境更稳妥的是官方付费 API。
 
@@ -101,7 +101,7 @@ FreeDeepseekAPI 在本机启动一个 API 服务，后端是 **DeepSeek Web Chat
 - **OpenAI Responses 垫片：** `POST /v1/responses`
 - **流式输出：** SSE，以及非流式 JSON
 - **DeepThink：** 选了 `-thinking` 时返回 `reasoning_content`
-- **自带搜索：** `-search` 打开 chat.deepseek.com 的 Web Search；编程代理带了本地工具时也会打开
+- **自带搜索：** chat.deepseek.com 的 Web Search，默认打开。用 `-nosearch` 或 `"web_search": false` 关闭
 - **工具调用：** OpenAI、Anthropic 和 Responses 的工具，可以一批一起返回
 - **模型能力：** `GET /v1/model-capabilities`
 - **代理会话：** 一个 `x-agent-session` 或 `user` 对应一个 DeepSeek 聊天
@@ -500,7 +500,7 @@ npm run setup:agents -- --target codex --model deepseek-v4-flash
 | OpenClaw | `freedeepseek` 提供方 | 显式选择 |
 | Cursor | `integrations/cursor/` 里的片段和启动脚本 | 不改编辑器设置 |
 
-`--model` 始终是 DeepSeek-V4.1-Flash。`-thinking` 打开 DeepThink。`-search` 打开 chat.deepseek.com 的自带搜索。请求里带了本地工具时，即使没有 `-search` 后缀也会打开这个搜索。DeepThink 仍按模型 id 决定。
+`--model` 始终是 DeepSeek-V4.1-Flash，并打开 chat.deepseek.com 的自带搜索。`-thinking` 打开 DeepThink。`-nosearch` 关闭搜索，这时编程代理会保留自己的联网工具。旧的 `-search` id 等同于去掉这个后缀的 id。
 
 Codex 的安装 **不会** 写入 `forced_login_method = api`。在 Codex CLI 里，这一行会把你登出 ChatGPT。普通的 `codex` 仍然走 ChatGPT。FreeDeepseek 这个配置才跟本代理说话。
 
@@ -575,31 +575,34 @@ curl -X POST http://127.0.0.1:9655/v1/chat/completions \
 
 ### 自带网页搜索
 
-`-search` 打开 chat.deepseek.com 的原生 Web Search。网上的问题走这个搜索。不要让模型去用 bash、curl，或者 harness 的 `websearch` / `webfetch`。
+chat.deepseek.com 的原生 Web Search 默认打开，所有模型 id 都一样。网上的问题走这个搜索。不要让模型去用 bash、curl，或者 harness 的 `websearch` / `webfetch`。
 
 ```bash
 curl -X POST http://127.0.0.1:9655/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash-search",
+    "model": "deepseek-v4-flash",
     "messages": [{"role": "user", "content": "找一条关于 DeepSeek 的最新事实，简短回答。"}],
     "stream": false
   }'
 ```
 
-两个开关一起开：
+不想用搜索回答时，发送 `"web_search": false`，或者用以 `-nosearch` 结尾的 id：
 
 ```bash
 curl -X POST http://127.0.0.1:9655/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash-thinking-search",
-    "messages": [{"role": "user", "content": "这周 DeepSeek 网站上有什么变化？"}],
+    "model": "deepseek-v4-flash-thinking",
+    "web_search": false,
+    "messages": [{"role": "user", "content": "解释一下 B 树是怎样分裂节点的。"}],
     "stream": false
   }'
 ```
 
-请求里有本地工具时，即使模型是普通的 `deepseek-v4-flash`，原生搜索也会打开。id 里没有 `-thinking` 时，DeepThink 仍然是关的。
+`web_search` 必须是 `true` 或 `false`，其他值都会返回 `400 invalid_request_error`。它优先于 id：在 `-nosearch` id 上发送 `"web_search": true` 会重新打开搜索。这个字段适用于 `/v1/chat/completions`、`/v1/messages` 和 `/v1/responses`。
+
+搜索关闭时，编程代理保留自己的 `websearch` / `webfetch` 工具，也不会被告知原生搜索已打开。
 
 ### Streaming
 
@@ -669,7 +672,7 @@ DeepSeek Web 没有真正的 tool call 数组。代理把工具列表写进提�
 
 `execute_code` 和 `web_search` 是 DeepSeek 自己的工具。它们不会在你的电脑上执行。如果它们和真正的本地工具（比如 `read_file`）写在一起，它们会被丢掉，本地调用会留下来。没写完的工具块不会执行。代理会再要一次严格 JSON。还是坏的话，这一回合返回 `502 malformed_tool_call`，聊天保持打开。
 
-harness 的 `websearch`、`webfetch` 和 `WebFetch` 会被拿掉。要查网上的事，用 chat.deepseek.com 自带的搜索。
+自带搜索打开时，harness 的 `websearch`、`webfetch` 和 `WebFetch` 会被拿掉，要查网上的事，用 chat.deepseek.com 自带的搜索。搜索关闭时，这些工具会原样交给编程代理。
 
 ### 图片
 
@@ -687,12 +690,14 @@ OpenAI Chat Completions 用 `image_url`。Responses 用 `input_image`。Anthropi
 
 | ID | DeepThink | 自带网页搜索 | 作用 |
 |---|---|---|---|
-| `deepseek-v4-flash` | 关 | 关 | DeepSeek-V4.1-Flash。`deepseek-flash` 是同一个 id |
-| `deepseek-v4-flash-thinking` | 开 | 关 | 先 DeepThink，再回答 |
-| `deepseek-v4-flash-search` | 关 | 开 | 用 chat.deepseek.com 的自带搜索查实时网络 |
-| `deepseek-v4-flash-thinking-search` | 开 | 开 | DeepThink 加上自带搜索 |
+| `deepseek-v4-flash` | 关 | 开 | DeepSeek-V4.1-Flash。`deepseek-flash` 是同一个 id |
+| `deepseek-v4-flash-thinking` | 开 | 开 | 先 DeepThink，再回答 |
+| `deepseek-v4-flash-nosearch` | 关 | 关 | 不用自带搜索 |
+| `deepseek-v4-flash-thinking-nosearch` | 开 | 关 | DeepThink，不用自带搜索 |
 
-这两个后缀是 DeepSeek 聊天里的两个开关。它们不会换成另一个模型。
+这两个后缀是 DeepSeek 聊天里的两个开关。它们不会换成另一个模型。请求体里的 `"web_search": true|false` 会覆盖任何 id 的搜索开关。
+
+旧的 `deepseek-v4-flash-search` 和 `deepseek-v4-flash-thinking-search` 仍然可用。它们等同于 `deepseek-v4-flash` 和 `deepseek-v4-flash-thinking`，不再列在 `/v1/models` 里。
 
 旧 id 没有注册，会返回 `400 invalid_model`：
 
@@ -785,7 +790,7 @@ http://127.0.0.1:9655/v1
 
 没设 `PROXY_API_KEY` 时，API key 随便填。设了的话，客户端必须发这个密钥。代理会在模型、会话和补全之前检查 bearer。
 
-普通回答用 `deepseek-v4-flash`，要 DeepThink 用 `deepseek-v4-flash-thinking`，问题需要实时网络时用 `deepseek-v4-flash-search`，走的是 chat.deepseek.com 的自带搜索。
+普通回答用 `deepseek-v4-flash`，它带 chat.deepseek.com 的自带搜索；要 DeepThink 用 `deepseek-v4-flash-thinking`；想要不带搜索的回答时用 `-nosearch` id。
 
 ---
 

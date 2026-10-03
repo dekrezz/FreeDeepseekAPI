@@ -27,7 +27,7 @@ A multi-account pool with failover: a rate-limited request moves to another acco
 ## Capabilities and Constraints
 
 - Views: Chat, Status, Accounts, Usage, Requests, Settings; ⌘K command palette; inspector panel; mobile tab bar.
-- Model today: DeepSeek-V4.1-Flash, with `-thinking` (DeepThink) and `-search` (native Web Search) variants.
+- Model today: DeepSeek-V4.1-Flash, with native Web Search on by default, a `-thinking` (DeepThink) variant, and `-nosearch` variants without search.
 - Zero npm dependencies, no build step, vanilla HTML/CSS/JS.
 - Strict CSP: no CDNs, no web fonts, no inline styles or scripts; system fonts only (confirmed by the user).
 - Request stats are metadata only, never prompt or answer text.

@@ -55,7 +55,7 @@
       "apply_patch_tool_type": "freeform"
     },
     {
-      "slug": "deepseek-v4-flash-search",
+      "slug": "deepseek-v4-flash-nosearch",
       "display_name": "DeepSeek-V4.1-Flash (FreeDeepseekAPI)",
       "description": "Routed through local FreeDeepseekAPI (DeepSeek Web V4.1-Flash).",
       "supported_reasoning_levels": [],
@@ -65,7 +65,7 @@
       "priority": 1,
       "availability_nux": null,
       "upgrade": null,
-      "base_instructions": "You are a coding agent. Follow developer instructions and use local tools when needed. Local tools are JSON, and several independent calls may be one tool_calls array. Do not use the Codex/harness web search tool. DeepSeek native Web Search is enabled — use it for live web data and report the findings.",
+      "base_instructions": "You are a coding agent. Follow developer instructions and use local tools when needed. Local tools are JSON, and several independent calls may be one tool_calls array.",
       "supports_reasoning_summary_parameter": false,
       "default_reasoning_summary": "none",
       "support_verbosity": false,
@@ -82,7 +82,7 @@
       "apply_patch_tool_type": "freeform"
     },
     {
-      "slug": "deepseek-v4-flash-thinking-search",
+      "slug": "deepseek-v4-flash-thinking-nosearch",
       "display_name": "DeepSeek-V4.1-Flash (FreeDeepseekAPI)",
       "description": "Routed through local FreeDeepseekAPI (DeepSeek Web V4.1-Flash).",
       "supported_reasoning_levels": [],
@@ -92,7 +92,7 @@
       "priority": 1,
       "availability_nux": null,
       "upgrade": null,
-      "base_instructions": "You are a coding agent. Follow developer instructions and use local tools when needed. Local tools are JSON, and several independent calls may be one tool_calls array. Do not use the Codex/harness web search tool. DeepSeek native Web Search is enabled — use it for live web data and report the findings.",
+      "base_instructions": "You are a coding agent. Follow developer instructions and use local tools when needed. Local tools are JSON, and several independent calls may be one tool_calls array.",
       "supports_reasoning_summary_parameter": false,
       "default_reasoning_summary": "none",
       "support_verbosity": false,
