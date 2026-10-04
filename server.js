@@ -3526,6 +3526,313 @@ async function handleUpdateRequest(req, res, parts) {
     }
 }
 
+// --- Agents: per-agent config files (scripts/setup-agents.js) ---
+// The setup module is required lazily: the container image ships without it, and
+// the server must still load there. Every /admin/agents route answers only a
+// browser on this machine, even with PROXY_API_KEY set, because it shows the
+// user's own config files.
+const AGENT_SALT = crypto.randomBytes(16);
+let agentCtxOverride = null;
+let agentModuleLoader = () => require('./scripts/setup-agents');
+let agentApply = (mod, plan, ctx, opts) => mod.applyPlan(plan, ctx, opts);
+let agentsBusy = false;
+const AGENT_ERROR_STATUS = {
+    invalid_option: 422, invalid_request: 422, invalid_existing_file: 422, file_too_large: 422, file_not_text: 422, invalid_backup: 422,
+    file_outside_home: 403, agents_local_only: 403,
+    file_changed: 409, restore_conflict: 409, agent_read_only: 409, backup_not_restorable: 409, agents_busy: 409, agents_unavailable: 409,
+    agent_not_found: 404, unknown_file: 404, file_missing: 404, backup_not_found: 404,
+    write_failed: 500, file_unreadable: 500,
+};
+
+function agentContext() {
+    return {
+        home: agentCtxOverride?.home ?? (process.env.SETUP_HOME || os.homedir()),
+        pathEnv: agentCtxOverride?.path ?? process.env.PATH,
+        platform: agentCtxOverride?.platform ?? process.platform,
+        root: __dirname,
+        cwd: __dirname,
+    };
+}
+
+function loadAgentModule() {
+    try {
+        return agentModuleLoader();
+    } catch (e) {
+        const first = String(e && e.message || '').split('\n')[0];
+        if (e && e.code === 'MODULE_NOT_FOUND' && first.includes('setup-agents')) {
+            throw new AdminHttpError(409, 'agents_unavailable', 'Agent setup is not included in this build (scripts/setup-agents.js is missing). The container image ships without it. Run npm run setup:agents on the machine where your agents are installed.');
+        }
+        throw e;
+    }
+}
+
+function agentsLocalDecision({ remoteAddress, headers = {} } = {}, { port = PORT } = {}) {
+    const proxied = headers['x-forwarded-for'] !== undefined || headers.forwarded !== undefined || headers['x-real-ip'] !== undefined;
+    if (isLoopbackHost(remoteAddress) && !proxied) return { allowed: true };
+    return {
+        allowed: false,
+        status: 403,
+        error: { type: 'agents_local_only', message: `Agent config files are only shown to a browser on the machine running the proxy. Open the dashboard at http://127.0.0.1:${port}/dashboard on that machine.` },
+    };
+}
+
+function agentListenPort() { return server.address()?.port || PORT; }
+
+// Facts about this proxy that go into agent configs. The browser never sends them.
+// PROXY_BASE_URL is checked here once: agents need an origin (a /v1 suffix is
+// dropped). One with a path or a query is reported as a config problem and the
+// listen address is used, instead of handing the page a default it would reject.
+function agentProxyFacts(mod) {
+    const envBase = String(process.env.PROXY_BASE_URL || '').trim();
+    const listen = () => {
+        let host = String(HOST || '').trim().replace(/^\[|\]$/g, '');
+        if (!host || host === '0.0.0.0' || host === '::') host = '127.0.0.1';
+        if (net.isIPv6(host)) host = `[${host}]`;
+        return `http://${host}:${agentListenPort()}`;
+    };
+    let baseUrl;
+    let baseSource;
+    let baseError = null;
+    if (envBase) {
+        try {
+            baseUrl = mod.normalizeBaseUrl(envBase);
+            baseSource = 'PROXY_BASE_URL';
+        } catch (e) {
+            if (!(e instanceof mod.SetupError)) throw e;
+            baseUrl = listen();
+            baseSource = 'listen';
+            baseError = {
+                type: 'invalid_proxy_base_url',
+                message: `PROXY_BASE_URL is ${envBase.slice(0, 200)}, but agents need an http(s) origin with no path, like https://proxy.example.com. Agent configs use this proxy's listen address ${baseUrl} until PROXY_BASE_URL is fixed and the proxy restarts.`,
+            };
+        }
+    } else {
+        baseUrl = listen();
+        baseSource = 'listen';
+    }
+    return {
+        apiKey: PROXY_API_KEY || 'local',
+        keySource: process.env.PROXY_API_KEY ? 'env' : (PROXY_API_KEY ? 'file' : 'none'),
+        baseUrl,
+        baseSource,
+        baseError,
+    };
+}
+
+// Each served model with the older IDs that still reach it (configs may hold them).
+function agentModels(mod) {
+    const legacy = Object.entries(mod.LEGACY_SEARCH_MODELS || {});
+    return SUPPORTED_MODEL_IDS.map(id => ({
+        id,
+        label: MODEL_CONFIGS[id].real_model,
+        thinking: Boolean(MODEL_CONFIGS[id].capabilities.reasoning),
+        web_search: Boolean(MODEL_CONFIGS[id].capabilities.web_search),
+        aliases: legacy.filter(([, current]) => current === id).map(([old]) => old),
+    }));
+}
+
+function decodeAgentSegment(segment) {
+    try { return decodeURIComponent(segment); } catch (e) { return null; }
+}
+
+function agentSummaries(mod, ctx, facts) {
+    return mod.VALID_TARGETS.map(id => mod.inspectTarget(id, ctx, { baseUrl: facts.baseUrl, apiKey: facts.apiKey, salt: AGENT_SALT }));
+}
+
+function agentOptionsFromBody(mod, body, allowed, facts) {
+    const unknown = Object.keys(body).filter(k => !allowed.includes(k));
+    if (unknown.length) {
+        throw new AdminHttpError(422, 'invalid_request', `Unknown field${unknown.length > 1 ? 's' : ''} ${unknown.map(k => k.slice(0, 40)).join(', ')}. Allowed: ${allowed.join(', ')}`);
+    }
+    return mod.validateOptions({ model: body.model, mode: body.mode, baseUrl: body.base_url === undefined ? facts.baseUrl : body.base_url });
+}
+
+function agentPlan(mod, id, options, ctx, facts) {
+    return mod.planTarget(id, { ...options, apiKey: facts.apiKey, apiKeyRef: true }, ctx, { read: mod.fileReader(ctx, { salt: AGENT_SALT }) });
+}
+
+// The browser only ever sees masked text; the diff is computed on masked text too.
+function agentPlanView(mod, id, plan, facts) {
+    const mask = (text, format) => (text === null ? null : mod.maskSecrets(text, format, { proxyKey: facts.apiKey, salt: AGENT_SALT }).text);
+    const files = plan.files.map((f) => {
+        const before = mask(f.before, f.format);
+        const after = mask(f.after, f.format);
+        return {
+            id: f.id,
+            display_path: f.display_path,
+            format: f.format,
+            action: f.action,
+            revision: f.revision,
+            before,
+            after,
+            diff: mod.lineDiff(before, after, { labelA: f.display_path, labelB: `${f.display_path} (after apply)` }),
+        };
+    });
+    return {
+        agent_id: id,
+        options: { model: plan.options.model, mode: plan.options.mode, base_url: plan.options.baseUrl },
+        changes: files.filter(f => f.action !== 'unchanged').length,
+        files,
+        effects: plan.effects,
+        usage: plan.usage,
+        writable: id !== 'cursor',
+    };
+}
+
+// Restore takes an optional body; an empty one means {}.
+async function readOptionalAdminJsonBody(req) {
+    const length = req.headers['content-length'];
+    if ((length === undefined && req.headers['transfer-encoding'] === undefined) || length === '0') {
+        req.resume();
+        return {};
+    }
+    return readAdminJsonBody(req);
+}
+
+async function handleAgentsRequest(req, res, url, parts) {
+    const pathname = url.pathname;
+    const methodNotAllowed = (allow) => adminError(res, 405, 'method_not_allowed', `Use ${allow} for ${pathname}`, { Allow: allow });
+    const notFound = () => adminError(res, 404, 'not_found', `Unknown admin endpoint: ${pathname}`);
+    let mod = null;
+    try {
+        mod = loadAgentModule();
+        const local = agentsLocalDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers }, { port: agentListenPort() });
+        if (!local.allowed) return adminJson(res, local.status, { error: local.error });
+        const ctx = agentContext();
+        const facts = agentProxyFacts(mod);
+        const rest = parts.slice(2);
+
+        if (rest.length === 0) {
+            if (req.method !== 'GET') return methodNotAllowed('GET');
+            let backups;
+            try {
+                const list = mod.listBackups(ctx);
+                backups = { count: list.length, latest_at: list.length ? list[0].created_at : null };
+            } catch (e) {
+                if (!(e instanceof mod.SetupError)) throw e;
+                backups = { count: null, latest_at: null, error: { type: e.code, message: e.message } };
+            }
+            return adminJson(res, 200, {
+                now: Date.now(),
+                home: ctx.home,
+                proxy: {
+                    base_url_default: facts.baseUrl,
+                    base_url_source: facts.baseSource,
+                    key_source: facts.keySource,
+                    ...(facts.baseError ? { base_url_error: facts.baseError } : {}),
+                },
+                models: agentModels(mod),
+                agents: agentSummaries(mod, ctx, facts),
+                backups,
+            });
+        }
+
+        if (rest[0] === 'backups') {
+            if (rest.length === 1) {
+                if (req.method !== 'GET') return methodNotAllowed('GET');
+                // Every restore point: the page filters them per agent, so a cut list
+                // would hide an agent's older backups.
+                return adminJson(res, 200, { backups: mod.listBackups(ctx) });
+            }
+            if (rest.length !== 3 || rest[2] !== 'restore') return notFound();
+            if (req.method !== 'POST') return methodNotAllowed('POST');
+            const body = await readOptionalAdminJsonBody(req);
+            const unknown = Object.keys(body).filter(k => k !== 'force');
+            if (unknown.length) throw new AdminHttpError(422, 'invalid_request', `Unknown field${unknown.length > 1 ? 's' : ''} ${unknown.map(k => k.slice(0, 40)).join(', ')}. Allowed: force`);
+            if (body.force !== undefined && typeof body.force !== 'boolean') throw new AdminHttpError(422, 'invalid_request', 'force must be true or false');
+            const backupId = decodeAgentSegment(rest[1]);
+            if (agentsBusy) throw new AdminHttpError(409, 'agents_busy', 'Another agent change is being written. Try again in a moment.');
+            agentsBusy = true;
+            let restored;
+            try {
+                restored = mod.restoreBackup(ctx, backupId, { force: body.force === true, now: Date.now() });
+            } finally {
+                agentsBusy = false;
+            }
+            console.log(`[admin] agents: restored ${restored.backup_id}`);
+            return adminJson(res, 200, {
+                restored: {
+                    backup_id: restored.backup_id,
+                    files: restored.files.map(f => ({ display_path: mod.displayPath(ctx, f.path), action: f.action })),
+                    safety_backup: { id: restored.safety_backup.id },
+                },
+                agents: agentSummaries(mod, ctx, facts),
+            });
+        }
+
+        let route = null;
+        if (rest.length === 1) route = 'agent';
+        else if (rest.length === 2 && (rest[1] === 'plan' || rest[1] === 'apply')) route = rest[1];
+        else if (rest.length === 3 && rest[1] === 'files') route = 'file';
+        if (!route) return notFound();
+        const allow = route === 'plan' || route === 'apply' ? 'POST' : 'GET';
+        if (req.method !== allow) return methodNotAllowed(allow);
+        const id = decodeAgentSegment(rest[0]);
+        if (!mod.VALID_TARGETS.includes(id)) {
+            throw new AdminHttpError(404, 'agent_not_found', `No agent named ${String(id ?? rest[0]).slice(0, 64)}. Known: ${mod.VALID_TARGETS.join(', ')}`);
+        }
+
+        if (route === 'agent') {
+            return adminJson(res, 200, { agent: mod.inspectTarget(id, ctx, { baseUrl: facts.baseUrl, apiKey: facts.apiKey, salt: AGENT_SALT }) });
+        }
+        if (route === 'file') {
+            const fileId = decodeAgentSegment(rest[2]);
+            const { meta, text } = mod.readAgentFile(ctx, id, fileId, { salt: AGENT_SALT, baseUrl: facts.baseUrl });
+            const masked = mod.maskSecrets(text, meta.format, { proxyKey: facts.apiKey, salt: AGENT_SALT });
+            return adminJson(res, 200, { file: meta, content: masked.text, masked: masked.masked, masks: masked.masks });
+        }
+        const body = await readAdminJsonBody(req);
+        if (route === 'plan') {
+            const options = agentOptionsFromBody(mod, body, ['model', 'mode', 'base_url'], facts);
+            return adminJson(res, 200, { plan: agentPlanView(mod, id, agentPlan(mod, id, options, ctx, facts), facts) });
+        }
+
+        // apply
+        if (id === 'cursor') {
+            throw new AdminHttpError(409, 'agent_read_only', 'Cursor keeps its settings inside the app. Copy the generated settings or download the launcher instead.');
+        }
+        const options = agentOptionsFromBody(mod, body, ['model', 'mode', 'base_url', 'expect'], facts);
+        const expect = body.expect;
+        if (!expect || typeof expect !== 'object' || Array.isArray(expect)) {
+            throw new AdminHttpError(422, 'invalid_request', 'expect is required: an object of file id → revision (or null) taken from the preview.');
+        }
+        if (agentsBusy) throw new AdminHttpError(409, 'agents_busy', 'Another agent change is being written. Try again in a moment.');
+        agentsBusy = true;
+        try {
+            const plan = agentPlan(mod, id, options, ctx, facts);
+            const ids = plan.files.map(f => f.id);
+            const missing = ids.filter(f => !Object.hasOwn(expect, f));
+            const extra = Object.keys(expect).filter(f => !ids.includes(f));
+            const badValue = ids.filter(f => Object.hasOwn(expect, f) && expect[f] !== null && typeof expect[f] !== 'string');
+            if (missing.length || extra.length || badValue.length) {
+                const why = [missing.length ? `missing ${missing.join(', ')}` : '', extra.length ? `extra ${extra.map(k => k.slice(0, 40)).join(', ')}` : '', badValue.length ? `not a revision or null: ${badValue.join(', ')}` : ''].filter(Boolean).join('; ');
+                throw new AdminHttpError(422, 'invalid_request', `expect must list exactly the files this change writes: ${ids.join(', ')} (${why}).`);
+            }
+            const changed = plan.files.filter(f => (f.revision ?? null) !== expect[f.id]);
+            if (changed.length) {
+                const list = changed.map(f => f.display_path).join(', ');
+                throw new AdminHttpError(409, 'file_changed', `${list} changed on disk after the preview. Review the new preview, then apply again.`, { files: changed.map(f => ({ id: f.id, display_path: f.display_path })) });
+            }
+            const result = await agentApply(mod, plan, ctx, { source: 'dashboard', now: Date.now() });
+            console.log(`[admin] agents: applied ${id} (${options.mode}, ${options.model}) backup ${result.backup ? result.backup.id : 'none (nothing changed)'}`);
+            return adminJson(res, 200, {
+                applied: {
+                    agent_id: id,
+                    files: result.written.map(w => ({ id: w.id, display_path: mod.displayPath(ctx, w.path), action: w.action })),
+                    backup: result.backup ? { id: result.backup.id, display_dir: mod.displayPath(ctx, result.backup.dir), files: result.backup.files } : null,
+                },
+                agent: mod.inspectTarget(id, ctx, { baseUrl: facts.baseUrl, apiKey: facts.apiKey, salt: AGENT_SALT }),
+            });
+        } finally {
+            agentsBusy = false;
+        }
+    } catch (e) {
+        if (e instanceof AdminHttpError) return adminError(res, e.status, e.type, e.message, {}, e.extra);
+        if (mod && e instanceof mod.SetupError && AGENT_ERROR_STATUS[e.code]) return adminError(res, AGENT_ERROR_STATUS[e.code], e.code, e.message, {}, e.extra);
+        throw e;
+    }
+}
+
 async function handleAdminRequest(req, res, url) {
     const pathname = url.pathname;
     const access = adminAccessDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers });
@@ -3536,6 +3843,7 @@ async function handleAdminRequest(req, res, url) {
     const methodNotAllowed = (allow) => adminError(res, 405, 'method_not_allowed', `Use ${allow} for ${pathname}`, { Allow: allow });
     const parts = pathname.split('/').filter(Boolean); // ['admin', 'accounts', ...]
     if (parts[1] === 'update' || (parts[1] === 'restart' && parts.length === 2)) return handleUpdateRequest(req, res, parts);
+    if (parts[1] === 'agents') return handleAgentsRequest(req, res, url, parts);
     try {
         if ((parts[1] === 'requests' || parts[1] === 'usage') && parts.length === 2) {
             if (req.method !== 'GET') return methodNotAllowed('GET');
@@ -4830,6 +5138,11 @@ module.exports = {
         // Tests swap the updater and the restart hook; each returns a function that restores the original.
         useUpdater(next) { const prev = updater; updater = next; return () => { updater = prev; }; },
         useRestart(next) { const prev = restartProcess; restartProcess = next; return () => { restartProcess = prev; }; },
+        // Agents page: point HOME/PATH at a temp dir, simulate a build without the setup module, or slow the writer.
+        useAgentContext(next) { const prev = agentCtxOverride; agentCtxOverride = next; return () => { agentCtxOverride = prev; }; },
+        useAgentModule(next) { const prev = agentModuleLoader; agentModuleLoader = next; return () => { agentModuleLoader = prev; }; },
+        useAgentApply(next) { const prev = agentApply; agentApply = next; return () => { agentApply = prev; }; },
+        agentsLocalDecision,
         adminAccountView,
         adminPoolSummary,
         recordRequest,

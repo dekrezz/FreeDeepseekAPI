@@ -125,37 +125,7 @@
       h('div', { class: 'auth-body' }, form)));
   }
 
-  // ---------------------------------------------------------------- code colouring
-  // A small VS Code Dark+ style tokenizer for the Connection examples (Python and shell).
-  // Each line becomes a .vs-line so CSS can draw line numbers that copy never picks up.
-  const TOKENS = {
-    Python: /(#.*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(from|import|as|return|if|elif|else|for|while|in|with|try|except)\b|\b(def|class|None|True|False|lambda)\b|\b(\d+(?:\.\d+)?)\b|\b([A-Z][A-Za-z0-9_]*)\b|\b([A-Za-z_]\w*)(?=\()|\b([A-Za-z_]\w*)\b/g,
-    Shell: /(#.*)|('[^']*'|"(?:\\.|[^"\\])*")|(^\s*[a-z][\w-]*)|((?:^|\s)-{1,2}[A-Za-z][\w-]*)|(\\$)|(\$[A-Z_][A-Z0-9_]*)/g,
-  };
-  const KINDS = {
-    Python: ['com', 'str', 'ctrl', 'kw', 'num', 'cls', 'fn', 'var'],
-    Shell: ['com', 'str', 'fn', 'kw', 'esc', 'var'],
-  };
-  function colorize(code, lang) {
-    const re = TOKENS[lang];
-    return code.split('\n').map((line) => {
-      const el = h('span', { class: 'vs-line' });
-      if (!re) { el.append(line); return el; }
-      re.lastIndex = 0;
-      let at = 0;
-      for (let m = re.exec(line); m; m = re.exec(line)) {
-        if (m[0] === '') { re.lastIndex++; continue; }
-        const g = m.findIndex((v, i) => i > 0 && v !== undefined);
-        if (m.index > at) el.append(line.slice(at, m.index));
-        el.append(h('span', { class: `tk-${KINDS[lang][g - 1]}`, text: m[0] }));
-        at = m.index + m[0].length;
-      }
-      if (at < line.length) el.append(line.slice(at));
-      if (!line) el.append('\u200b');
-      return el;
-    });
-  }
-
+  // Code colouring (F.colorize) lives in core.js, shared with the Agents file viewer.
   function renderConn() {
     const base = location.origin;
     const keyRef = '$PROXY_API_KEY';
@@ -171,7 +141,7 @@
     const show = (name) => {
       st.snippet = name;
       lang.textContent = snippets[name].lang;
-      code.replaceChildren(...colorize(snippets[name].code, snippets[name].lang));
+      code.replaceChildren(...F.colorize(snippets[name].code, snippets[name].lang));
       copy.setAttribute('aria-label', `Copy the ${snippets[name].label} example`);
     };
     const tabs = F.segmented('Client example', Object.entries(snippets).map(([value, s]) => ({ value, label: s.label })), st.snippet, show);

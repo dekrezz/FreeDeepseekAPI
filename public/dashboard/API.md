@@ -305,3 +305,122 @@ All of these need the bearer key when one is set.
 Images: send `content:[{type:'text',text},{type:'image_url',image_url:{url:'data:image/png;base64,…'}}]`.
 - Allowed types: png, jpeg, webp and gif.
 - Limits: at most 10 images per request, 20 MB per image, and a 30 MB body.
+
+---
+
+## Agents
+
+The Agents page reads and writes each coding agent's own config files. Server side: `handleAgentsRequest` in `server.js`, logic in `scripts/setup-agents.js`. Field-level reference for the routes summarized in [`docs/api.md` → Agents API](../../docs/api.md#agents-api).
+
+### Gates (in this order)
+
+1. **`409 agents_unavailable`** – the build has no `scripts/setup-agents.js` (the container image). Show the message plus `npm run setup:agents -- --all --base-url <origin>`; hide the roster.
+2. **`403 agents_local_only`** – not a direct loopback client, or a forwarding header is present. Applies **even with `PROXY_API_KEY`**. The type differs from `admin_forbidden` on purpose, so `F.handleGate` does not take over; show it inline.
+3. A server without these routes answers `404 not_found` for `/admin/agents` → `F.endpointMissing('/admin/agents')`.
+
+### GET /admin/agents
+
+```
+{ now, home,
+  proxy:{ base_url_default, base_url_source:'PROXY_BASE_URL'|'listen', key_source:'env'|'file'|'none',
+          base_url_error?:{ type:'invalid_proxy_base_url', message } },   // PROXY_BASE_URL is not an origin; listen address used
+  models:[{ id, label, thinking, web_search, aliases:[id] }], // the 4 supported ids, label = real model name; aliases = older ids that reach it
+  agents:[AgentSummary],                                      // claude-code, codex, opencode, hermes, openclaw, cursor — always this order
+  backups:{ count, latest_at }                                // latest_at epoch ms | null
+}
+```
+
+If listing restore points fails, `backups` is `{count:null, latest_at:null, error:{type, message}}` and the rest still renders.
+
+**AgentSummary**
+
+```
+{ id, name, kind:'cli'|'editor', writable,                    // writable=false only for cursor
+  tool:{ found, how:'path'|'app'|'config_dir'|null, detail },  // detail: binary path, app path, or ~/ config dir
+  setup:{ state:'default'|'alongside'|'none'|'outdated'|'unreadable'|'manual',
+          mode:'replace'|'add'|null, model, base_url, points_here:true|false|null,
+          model_written?,                                      // the older id in the file when model is its current name
+                                                               // model and base_url are masked like file text (a URL can carry a token)
+          key:'matches'|'differs'|'missing'|null,              // the stored key itself is never returned
+          issues:[{ code, file_id, message, line?, column? }] },
+  entry_file,                                                  // file id the agent reads in its current state
+  defaults:{ model, mode, base_url },                          // preselect these
+  modes:[{ value:'add'|'replace', title, description, writes:[fileId], usage }],   // [] for cursor
+  fixed_models:[{ slot, model }],                              // claude-code only
+  effects:[string],                                            // opencode only: plain sentences, show them before Apply
+  usage:{ label, command|null, note|null } | null,             // for the current mode; null when not set up / cursor
+  files:[FileMeta] }
+```
+
+- State precedence: `unreadable` > `outdated` > `default` > `alongside` > `none`. `manual` is Cursor.
+- Issue codes: `file_unreadable` (with `line`/`column` for JSON), `base_url_mismatch`, `key_differs`, `model_unknown`, `catalog_missing`. `message` is ready to show.
+- `usage.command` is `null` when there is nothing to run (pick-in-the-model-picker agents, replace mode, Hermes add). Never invent a command; show `label`, `command` when present, and `note`.
+- **Hermes add mode:** Hermes does not load `~/.hermes/freedeepseek.yaml` by itself. The mode description and `usage` say so; show them.
+
+**FileMeta**
+
+```
+{ id, label, role:'native'|'profile'|'catalog'|'guidance'|'snippet', format:'json'|'toml'|'yaml'|'markdown'|'shell',
+  path, display_path,               // path null and display_path 'Generated (not written)' for virtual files
+  virtual, modes:[mode],
+  exists, size, mtime, file_mode,   // mtime epoch ms; file_mode like '0600'; all null when missing or virtual
+  symlink_target,                   // display path when the file, or a folder above it, is a link
+  revision,                         // 16 hex; changes when the bytes change; resets on server restart
+  error:{ type, message }|null }    // file_outside_home | file_too_large | file_not_text | file_unreadable
+```
+
+### GET /admin/agents/:id/files/:fileId
+
+`{ file: FileMeta, content, masked, masks:[{ line, key, kind:'proxy_key'|'secret' }] }`
+
+- Secret values are replaced in place by `‹proxy-key›` or `‹secret:abc123›` (U+2039 / U+203A). Split lines on `/‹(proxy-key|secret:[0-9a-f]{6})›/` to render chips. Everything else is byte-for-byte the file.
+- Errors: `404 unknown_file`, `404 file_missing` (`path`), `422 file_too_large` (`size`, `limit`), `422 file_not_text`, `403 file_outside_home`, `500 file_unreadable`.
+- Cursor's `settings_snippet` and `launcher` are generated; the launcher reads `${PROXY_API_KEY:-local}` from the shell.
+
+### POST /admin/agents/:id/plan
+
+Body `{ model, mode:'add'|'replace', base_url? }`. Nothing else is accepted (`422 invalid_request`), so the browser can never choose a path, scope or key.
+
+```
+{ plan:{ agent_id, options:{ model, mode, base_url }, changes,
+         files:[{ id, display_path, format, action:'create'|'update'|'unchanged', revision,
+                  before|null, after,                                  // masked
+                  diff:{ added, removed, hunks:[{ old_start, old_lines, new_start, new_lines,
+                         lines:[{ op:' '|'+'|'-', text, old, new }] }], unified } }],
+         effects, usage, writable } }
+```
+
+- `files` lists every file the chosen mode writes, including `unchanged` ones. Diffs have 3 lines of context and are computed on the masked texts.
+- Errors: `422 invalid_option` (`field`: `model`|`mode`|`base_url`), `422 invalid_existing_file` (`file_id`, `path`, `line`, `column`), `400 invalid_json`, plus the file errors above.
+- Cursor plans work (`writable:false`, every file `create`).
+- Pass an `AbortController` signal; a later option change should cancel the earlier preview.
+
+### POST /admin/agents/:id/apply
+
+Body `{ model, mode, base_url?, expect:{ <fileId>: revision|null } }`. `expect` must have exactly the plan's file ids, each with the `revision` from the plan.
+
+```
+{ applied:{ agent_id, files:[{ id, display_path, action:'create'|'update' }],
+            backup:{ id, display_dir, files } | null },   // null when nothing changed
+  agent: AgentSummary }
+```
+
+- `409 file_changed` (`files:[{id, display_path}]`): a file changed after the preview. Nothing was written; re-plan.
+- `409 agents_busy`, `409 agent_read_only` (cursor), `500 write_failed` (`file_id`, `path`, `rolled_back`).
+- Undo = restore `applied.backup.id`.
+
+### GET /admin/agents/backups
+
+`{ backups:[{ id, created_at, source:'dashboard'|'cli'|'restore', agents:[id], options:{model, mode}|null, files:[{ agent_id, file_id, display_path, existed }], restorable, reason|null }] }`, newest first, every one on disk. A missing backups folder is `[]`. When `restorable` is false, show `reason` (it contains the terminal command).
+
+### POST /admin/agents/backups/:backupId/restore
+
+Body `{}` or `{ force:true }` (an empty body is fine).
+
+```
+{ restored:{ backup_id, files:[{ display_path, action:'restored'|'deleted' }], safety_backup:{ id } },
+  agents:[AgentSummary] }
+```
+
+- `409 restore_conflict` (`files:[{display_path, reason:'changed_since'|'missing'}]`): ask, then retry with `force:true`.
+- `404 backup_not_found`, `409 backup_not_restorable`, `422 invalid_backup`, `409 agents_busy`.
