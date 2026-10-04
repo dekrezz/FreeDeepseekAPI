@@ -5,7 +5,7 @@
 
   const F = window.FDSA;
   const { h, fmt } = F;
-  const VIEWS = ['chat', 'status', 'accounts', 'usage', 'requests', 'settings'];
+  const VIEWS = ['chat', 'status', 'accounts', 'usage', 'requests', 'agents', 'settings'];
   const $ = (id) => document.getElementById(id);
 
   const app = { view: null, route: null };
@@ -359,6 +359,7 @@
       { label: 'Go to Accounts', icon: 'accounts', run: () => F.navigate('accounts') },
       { label: 'Go to Usage', icon: 'usage', run: () => F.navigate('usage') },
       { label: 'Go to Requests', icon: 'requests', run: () => F.navigate('requests') },
+      { label: 'Go to Agents', icon: 'agent', run: () => F.navigate('agents') },
       { label: 'Go to Settings', icon: 'settings', run: () => F.navigate('settings') },
       { label: 'Show errors in Requests', icon: 'error-x', run: () => F.navigate('requests', '', { status: 'error' }) },
       { label: 'Reload accounts from disk', icon: 'reload', run: () => { F.navigate('accounts'); setTimeout(() => { const b = Array.from(document.querySelectorAll('#toolbar-actions .btn')).find(x => x.textContent.includes('Reload')); F.views.accounts.reload(b); }, 0); } },
@@ -371,6 +372,11 @@
       if (a.status === 'disabled' && a.disabled_by === 'admin') items.push({ label: `Resume account: ${name}`, icon: 'play', run: () => F.views.accounts.action(a, 'enable') });
       if (a.status === 'cooldown') items.push({ label: `Clear cooldown: ${name}`, icon: 'clear-cooldown', run: () => F.views.accounts.action(a, 'clear-cooldown') });
     }
+    for (const a of F.views.agents.catalog()) {
+      items.push({ label: `Agent: ${a.name}`, detail: a.state, icon: 'agent', run: () => F.navigate('agents', a.id) });
+      items.push({ label: `Files: ${a.name}`, icon: 'files', run: () => F.navigate('agents', a.id, { show: 'disk' }) });
+    }
+    items.push({ label: 'Agent restore points', icon: 'undo', run: () => F.navigate('agents', '', { section: 'backups' }) });
     for (const c of F.views.chat.conversations().slice(0, 50)) {
       items.push({ label: `Chat: ${c.title}`, detail: fmt.ago(c.updatedAt, Date.now()), icon: 'chat', run: () => F.navigate('chat', c.id) });
     }
@@ -429,6 +435,9 @@
   // ---------------------------------------------------------------- keyboard
   let gPending = 0;
   const isTyping = (el) => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+  // A focused control owns Enter and Space: a view's list cursor must never take them over.
+  const ACTIVATES = 'a[href], button, summary, [role="button"], [role="link"], [role="tab"], [role="switch"], [role="radio"], [role="checkbox"], [role="menuitem"], [role="option"]';
+  const isControl = (el) => el instanceof Element && Boolean(el.closest(ACTIVATES));
   document.addEventListener('keydown', (e) => {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
@@ -443,13 +452,16 @@
       if (F.closePopover()) { e.preventDefault(); return; }
       if (closeChatsSheet()) { e.preventDefault(); $('toggle-chats').focus(); return; }
       if (F.inspector.isOpen) { e.preventDefault(); F.inspector.close(); return; }
+      // A view with its own depth (an agent's page) steps back before the window closes.
+      const cur = F.views[app.view];
+      if (cur.onEscape && app.view !== 'chat' && cur.onEscape()) { e.preventDefault(); return; }
       if (closeSettings()) { e.preventDefault(); return; }
       if (app.view === 'chat' && F.views.chat.onEscape()) { e.preventDefault(); return; }
       return;
     }
     if (mod || e.altKey || isTyping(e.target) || F.gate.mode || document.querySelector('dialog[open]')) return;
     if (gPending && Date.now() - gPending < 800) {
-      const map = { c: 'chat', s: 'status', a: 'accounts', u: 'usage', r: 'requests' };
+      const map = { c: 'chat', s: 'status', a: 'accounts', u: 'usage', r: 'requests', e: 'agents' };
       gPending = 0;
       if (map[e.key]) { e.preventDefault(); F.navigate(map[e.key]); }
       return;
@@ -462,6 +474,7 @@
       return;
     }
     const v = F.views[app.view];
+    if ((e.key === 'Enter' || e.key === ' ') && isControl(e.target)) return;
     if (v.onKey && v.onKey(e)) e.preventDefault();
   });
   function openChatsSheetIfNeeded() {

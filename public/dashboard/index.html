@@ -18,6 +18,7 @@
   <script src="/dashboard/requests.js" defer></script>
   <script src="/dashboard/settings.js" defer></script>
   <script src="/dashboard/chat.js" defer></script>
+  <script src="/dashboard/agents.js" defer></script>
   <script src="/dashboard/app.js" defer></script>
 </head>
 <body>
@@ -44,6 +45,8 @@
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
     <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
     <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
+    <symbol id="i-agent" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m7.5 10 2.5 2.5-2.5 2.5M12.5 15.5h4"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.25" class="fill"/><circle cx="12" cy="12" r="1.25" class="fill"/><circle cx="18" cy="12" r="1.25" class="fill"/></symbol>
     <symbol id="i-route" viewBox="0 0 24 24"><path d="M3 12h4.5M16.5 12H21M18 9l3 3-3 3"/><circle cx="12" cy="12" r="4.5"/></symbol>
     <symbol id="i-model" viewBox="0 0 24 24"><path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/></symbol>
@@ -171,6 +174,10 @@
             <li><a class="nav-item" href="#/usage" data-nav="usage"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-usage"/></svg><span>Usage</span></a></li>
             <li><a class="nav-item" href="#/requests" data-nav="requests"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-requests"/></svg><span>Requests</span></a></li>
           </ul>
+          <p class="settings-nav-title">Connect</p>
+          <ul class="nav-list" role="list">
+            <li><a class="nav-item" href="#/agents" data-nav="agents"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-agent"/></svg><span>Agents</span></a></li>
+          </ul>
           <p class="settings-nav-empty" id="settings-nav-empty" hidden>Nothing matches.</p>
         </nav>
         <div class="settings-pane" id="settings-pane">
@@ -180,6 +187,7 @@
             <section class="view" id="view-accounts" data-view="accounts" hidden></section>
             <section class="view" id="view-usage" data-view="usage" hidden></section>
             <section class="view" id="view-requests" data-view="requests" hidden></section>
+            <section class="view" id="view-agents" data-view="agents" hidden></section>
             <section class="view" id="view-settings" data-view="settings" hidden></section>
           </main>
           <aside class="inspector glass glass-thick" id="inspector" aria-labelledby="inspector-title" hidden>

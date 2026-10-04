@@ -16,6 +16,13 @@ This is a **Web-session** API, not `api.deepseek.com`. One DeepSeek login can se
 | POST | `/admin/accounts/<id>/enable` | admin | `{ account, pool }`; `409 disabled_in_file` if the file says `"enabled": false` |
 | POST | `/admin/accounts/<id>/clear-cooldown` | admin | `{ account, pool }`; counters and `last_error` are kept |
 | POST | `/admin/accounts/reload` | admin | Re-read auth files. `{ added, removed, kept, errors, accounts, pool }`; `422 no_accounts_found` leaves the pool unchanged |
+| GET | `/admin/agents` | admin, local browser only | Coding-agent setup: each agent's state, files and options. See [Agents API](#agents-api) |
+| GET | `/admin/agents/<id>` | admin, local only | `{ agent }` |
+| GET | `/admin/agents/<id>/files/<fileId>` | admin, local only | One config file, secrets masked |
+| POST | `/admin/agents/<id>/plan` | admin, local only | Preview: masked before/after and a diff. Writes nothing |
+| POST | `/admin/agents/<id>/apply` | admin, local only | Write the previewed files, with a backup |
+| GET | `/admin/agents/backups` | admin, local only | Restore points, newest first |
+| POST | `/admin/agents/backups/<id>/restore` | admin, local only | Put a restore point back |
 | GET | `/v1/models` | proxy key if set | OpenAI model list |
 | GET | `/v1/model-capabilities` | proxy key if set | DeepSeek-V4.1-Flash IDs. Native chat.deepseek.com search is on by default. `-thinking` is DeepThink. `-nosearch` turns search off |
 | GET | `/v1/sessions` | proxy key if set | Sticky agent sessions |
@@ -174,6 +181,54 @@ Access: with `PROXY_API_KEY`, the same bearer as `/v1/*`. Without a key, only di
 
 Reload matches logins by auth-file path. A kept login keeps its id, cooldown, pause, and counters. A login whose token or cookie changed starts fresh, and chats pinned to it start over with local recovery history. `errors[]` lists unreadable files as `{ file: <basename>, message }`.
 
+### Agents API
+
+Backs the dashboard's **Agents** page. The same code runs `npm run setup:agents` (`scripts/setup-agents.js`), required lazily, so the container image (which leaves that script out) still starts and answers `409 agents_unavailable`.
+
+Access: the normal admin rules, **plus** the client must be a direct loopback connection with no `X-Forwarded-For`, `Forwarded` or `X-Real-IP` header, even when `PROXY_API_KEY` is set. Otherwise `403 agents_local_only`. These routes show your own config files, so they never answer another machine.
+
+Paths are never taken from the request. Agent ids are `claude-code`, `codex`, `opencode`, `hermes`, `openclaw`, `cursor`; file ids come from a fixed table:
+
+| Agent | File id | Path | Written in mode |
+|---|---|---|---|
+| claude-code | `profile` / `settings` | `~/.claude/freedeepseek.settings.json` / `~/.claude/settings.json` | add / replace |
+| codex | `profile` / `config` / `catalog` | `~/.codex/freedeepseek.config.toml` / `~/.codex/config.toml` / `~/.codex/freedeepseek-models.json` | add / replace / both |
+| opencode | `config`, `agents_md` | `~/.config/opencode/opencode.json`, `~/.config/opencode/AGENTS.md` | both |
+| hermes | `profile` / `config` | `~/.hermes/freedeepseek.yaml` / `~/.hermes/config.yaml` | add / replace |
+| openclaw | `config` | `~/.openclaw/openclaw.json` | both |
+| cursor | `settings_snippet`, `launcher` | generated, never written | — |
+
+HOME is `SETUP_HOME` if set, else the OS home. A symlinked file, or a file under a symlinked folder, is followed only if its real path stays inside HOME (`403 file_outside_home`). Files over 1 MiB (`422 file_too_large`), non-UTF-8 files and non-regular files (`422 file_not_text`) are not read.
+
+**Secrets never reach the browser.** Every text the API returns is masked: a value under a key like `apiKey`, `key`, `token`, `secret`, `password`, `authorization`, or a name ending in `_KEY`, `_PAT`, `-Auth` (JSON keys, TOML `key = "…"` including inline tables, YAML `key: …` including `|` blocks, shell `export KEY=…`), every item of a list under such a key, the value after a flag like `--api-key` in an argument list or command line, and any `sk-…`, `ghp_…`, `github_pat_…`, `xox?-…`, `AIza…` or JWT-shaped value, becomes `‹proxy-key›` (it equals this proxy's key) or `‹secret:abc123›` (an HMAC fingerprint that changes when the value changes and resets on restart). Only the value's characters change. `${VAR}` references are left as they are. There is no endpoint that writes browser-supplied text.
+
+| Request | Response |
+|---|---|
+| `GET /admin/agents` | `{ now, home, proxy:{ base_url_default, base_url_source:"PROXY_BASE_URL"\|"listen", key_source:"env"\|"file"\|"none", base_url_error? }, models:[{id,label,thinking,web_search,aliases}], agents:[AgentSummary ×6], backups:{count, latest_at} }` |
+| `GET /admin/agents/<id>` | `{ agent: AgentSummary }`, or `404 agent_not_found` |
+| `GET /admin/agents/<id>/files/<fileId>` | `{ file: FileMeta, content, masked, masks:[{line,key,kind:"proxy_key"\|"secret"}] }`; `404 unknown_file`, `404 file_missing` |
+| `POST /admin/agents/<id>/plan` `{model, mode:"add"\|"replace", base_url?}` | `{ plan:{ agent_id, options, changes, files:[{id, display_path, format, action:"create"\|"update"\|"unchanged", revision, before, after, diff:{added, removed, hunks, unified}}], effects, usage, writable } }` |
+| `POST /admin/agents/<id>/apply` `{model, mode, base_url?, expect:{<fileId>: revision\|null}}` | `{ applied:{ agent_id, files:[{id, display_path, action}], backup:{id, display_dir, files}\|null }, agent }` |
+| `GET /admin/agents/backups` | `{ backups:[{ id, created_at, source:"dashboard"\|"cli"\|"restore", agents, options, files:[{agent_id, file_id, display_path, existed}], restorable, reason }] }` (newest first, all of them) |
+| `POST /admin/agents/backups/<id>/restore` `{force?}` | `{ restored:{ backup_id, files:[{display_path, action:"restored"\|"deleted"}], safety_backup:{id} }, agents }` |
+
+- `base_url` must be an http(s) origin (optionally ending in `/v1`, which is dropped); it defaults to `PROXY_BASE_URL` or the address the proxy listens on. A `PROXY_BASE_URL` that is not an origin is not used: `GET /admin/agents` reports it as `proxy.base_url_error` and defaults to the listen address. Any other body field is `422 invalid_request`; a bad value is `422 invalid_option` with `field`.
+- The API key written into configs is always this proxy's own (`PROXY_API_KEY`, or `"local"` without one). The browser cannot send one.
+- `apply` re-plans, then compares each file's current `revision` with `expect` (copy them from the plan; `null` means "must not exist"). Any difference is `409 file_changed` and nothing is written. Unchanged files are skipped; when nothing changes, `backup` is `null`.
+- Each write goes to a temp file in the same folder, is fsynced and renamed into place, and keeps the old file mode (`0600` for new files). If a later file fails, the earlier ones are put back and the answer is `500 write_failed` with `rolled_back`.
+- Restore points live in `~/.freedeepseek-api/backups/<time>/` with a `manifest.json` listing every file the run wrote, including the ones it created. Restoring copies the saved files back and deletes the created ones, after saving the current versions as a new restore point (`source: "restore"`). A file edited since the backup makes it `409 restore_conflict` unless `force: true`. Folders made by older versions without a manifest are listed with `restorable: false` and the terminal command to restore them.
+- Only one apply or restore runs at a time (`409 agents_busy`). Cursor is read only (`409 agent_read_only`).
+
+| Status | `error.type` |
+|---|---|
+| 403 | `agents_local_only`, `file_outside_home` |
+| 404 | `agent_not_found`, `unknown_file`, `file_missing`, `backup_not_found`, `not_found` |
+| 409 | `agents_unavailable`, `agents_busy`, `file_changed`, `restore_conflict`, `agent_read_only`, `backup_not_restorable` |
+| 422 | `invalid_request`, `invalid_option`, `invalid_existing_file` (with `file_id`, `path`, `line`, `column`), `file_too_large`, `file_not_text`, `invalid_backup` |
+| 500 | `write_failed`, `file_unreadable` |
+
+The full field list (`AgentSummary`, `FileMeta`) is in [`public/dashboard/API.md`](../public/dashboard/API.md#agents).
+
 ## Errors
 
 | Status | `error.type` | What to do |
@@ -200,6 +255,8 @@ Reload matches logins by auth-file path. A kept login keeps its id, cooldown, pa
 | `DEEPSEEK_ACCOUNT_LOCK_WAIT_MS` | `120000` | How long a second chat waits for a busy login |
 | `DEEPSEEK_ACCOUNT_COOLDOWN_MS` | `600000` | After 401/403, or a rate limit without `Retry-After` |
 | `TRUST_PROXY` | off | If `1`, client IP uses `X-Forwarded-For` |
+| `PROXY_BASE_URL` | listen address | Address written into agent configs by the Agents page and `setup:agents` |
+| `SETUP_HOME` | OS home | Home folder whose agent configs the Agents page and `setup:agents` read and write |
 | `MAX_REQUEST_BODY_BYTES` | `31457280` | Maximum JSON body size, including base64 images |
 
 Docker: [`Containerfile`](../Containerfile). Auth: [`auth.md`](auth.md). Models: [`models.md`](models.md).

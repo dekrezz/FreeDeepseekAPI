@@ -822,6 +822,71 @@
 
   F.errorText = (err) => `${err.message}${err.type ? ` (${err.type})` : ''}`;
 
+  // ---------------------------------------------------------------- code colouring
+  // A small VS Code Dark+ style tokenizer for code the dashboard shows: the Settings examples
+  // (Python, shell) and agent config files (JSON, TOML, YAML, Markdown, shell). Each line becomes
+  // a .vs-line so CSS can draw line numbers that selection and copy never pick up.
+  const TOKENS = {
+    Python: /(#.*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(from|import|as|return|if|elif|else|for|while|in|with|try|except)\b|\b(def|class|None|True|False|lambda)\b|\b(\d+(?:\.\d+)?)\b|\b([A-Z][A-Za-z0-9_]*)\b|\b([A-Za-z_]\w*)(?=\()|\b([A-Za-z_]\w*)\b/g,
+    Shell: /(#.*)|('[^']*'|"(?:\\.|[^"\\])*")|(^\s*[a-z][\w-]*)|((?:^|\s)-{1,2}[A-Za-z][\w-]*)|(\\$)|(\$[A-Z_][A-Z0-9_]*)/g,
+    JSON: /("(?:\\.|[^"\\])*")(?=\s*:)|("(?:\\.|[^"\\])*")|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    TOML: /(#.*)|^(\s*\[\[?[^\]]+\]\]?)|^(\s*[A-Za-z0-9_."-]+)(?=\s*=)|("(?:\\.|[^"\\])*"|'[^']*')|\b(true|false)\b|(-?\b\d+(?:\.\d+)?\b)/g,
+    YAML: /(#.*)|^(\s*-?\s*[A-Za-z0-9_."'-]+)(?=\s*:)|("(?:\\.|[^"\\])*"|'[^']*')|\b(true|false|null|yes|no)\b|(-?\b\d+(?:\.\d+)?\b)/g,
+    Markdown: /(<!--.*?-->)|^(#{1,6} .*)|(`[^`]+`)/g,
+  };
+  const KINDS = {
+    Python: ['com', 'str', 'ctrl', 'kw', 'num', 'cls', 'fn', 'var'],
+    Shell: ['com', 'str', 'fn', 'kw', 'esc', 'var'],
+    JSON: ['var', 'str', 'kw', 'num'],
+    TOML: ['com', 'cls', 'var', 'str', 'kw', 'num'],
+    YAML: ['com', 'var', 'str', 'kw', 'num'],
+    Markdown: ['com', 'kw', 'str'],
+  };
+  // Server formats (lowercase) and the Settings names both resolve here.
+  const LANGS = { python: 'Python', shell: 'Shell', json: 'JSON', toml: 'TOML', yaml: 'YAML', markdown: 'Markdown' };
+  // The server replaces secret values with ‹proxy-key› or ‹secret:abc123› before text leaves it.
+  const SECRET_TOKEN = /‹(proxy-key|secret:([0-9a-f]{6}))›/g;
+  F.SECRET_TOKEN = SECRET_TOKEN;
+  F.secretChip = (kind, fp) => F.h('span', { class: 'secret-chip', title: 'Hidden. Secrets never leave this machine.' },
+    F.icon('lock'), F.h('span', { text: kind === 'proxy-key' ? 'proxy key' : `secret ${fp}` }));
+  function withSecrets(text) {
+    if (text.indexOf('‹') < 0) return [text];
+    const out = [];
+    let at = 0;
+    SECRET_TOKEN.lastIndex = 0;
+    for (let m = SECRET_TOKEN.exec(text); m; m = SECRET_TOKEN.exec(text)) {
+      if (m.index > at) out.push(text.slice(at, m.index));
+      out.push(F.secretChip(m[1], m[2]));
+      at = m.index + m[0].length;
+    }
+    if (at < text.length) out.push(text.slice(at));
+    return out;
+  }
+  // Returns one span.vs-line per line. {secrets: true} turns mask tokens into labelled chips;
+  // the tokenizer sees them as same-length private-use runs, so a token never splits a mask.
+  F.colorize = (code, lang, { secrets = false } = {}) => {
+    const name = LANGS[String(lang).toLowerCase()];
+    const re = name ? TOKENS[name] : null;
+    return String(code).split('\n').map((line) => {
+      const el = F.h('span', { class: 'vs-line' });
+      const piece = (text) => (secrets ? withSecrets(text) : [text]);
+      if (!re) { el.append(...piece(line)); if (!line) el.append('\u200b'); return el; }
+      const scan = secrets ? line.replace(SECRET_TOKEN, (m) => '\uE000'.repeat(m.length)) : line;
+      re.lastIndex = 0;
+      let at = 0;
+      for (let m = re.exec(scan); m; m = re.exec(scan)) {
+        if (m[0] === '') { re.lastIndex++; continue; }
+        const g = m.findIndex((v, i) => i > 0 && v !== undefined);
+        if (m.index > at) el.append(...piece(line.slice(at, m.index)));
+        el.append(F.h('span', { class: `tk-${KINDS[name][g - 1]}` }, ...piece(line.slice(m.index, m.index + m[0].length))));
+        at = m.index + m[0].length;
+      }
+      if (at < line.length) el.append(...piece(line.slice(at)));
+      if (!line) el.append('\u200b');
+      return el;
+    });
+  };
+
   F.codeLine = (text) => {
     const code = F.h('code', { class: 'mono-id', text });
     // The scrollbar is hidden, so mark clipped sides and let a plain mouse wheel scroll sideways.
