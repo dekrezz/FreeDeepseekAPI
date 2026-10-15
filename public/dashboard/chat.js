@@ -269,8 +269,11 @@
         h('div', { class: 'composer-right' }, sendBtn)));
     const note = h('p', { class: 'composer-note', role: 'status' });
     // The note sits above the composer, where the eye already is when a send is refused.
-    const dock = h('div', { class: 'composer-dock' }, empty, note, form, meta, fileInput);
-    root.append(scroll, dock);
+    const dock = h('div', { class: 'composer-dock' }, note, form, meta, fileInput);
+    // Empty chat: greeting in the middle, composer at the bottom, the glyph field behind both.
+    root.append(scroll, empty, dock);
+    S.field = F.glyphField.create(root);
+    F.glyphField.bindPress(root, (e) => S.field.press(e.clientX, e.clientY));
     Object.assign(S.els, { banners, empty, emptyTitle, emptyLine, unknown, transcript, scroll, textarea, thumbs, fileInput, attachBtn, modelBtn, modelName, modelMode, sendBtn, form, note, dock });
 
     // composer behaviour
@@ -316,14 +319,11 @@
     S.ro.observe(dock);
   }
 
-  // Bottom padding of the transcript follows the composer height.
+  // Bottom padding of the transcript, and the floor of the empty greeting, follow the composer height.
   function syncDockSpace() {
     if (!S.els.dock) return;
     const hgt = S.els.form.getBoundingClientRect().height + 48;
-    // The open-chat backdrop (.view-chat::before) keeps the Earth limb above the composer.
-    // Layout offsets, not rects: the composer may be mid-FLIP (transformed) when this runs.
-    S.els.dock.parentElement.style.setProperty('--dock-top', `${S.els.dock.offsetHeight - S.els.form.offsetTop}px`);
-    S.els.scroll.style.setProperty('--dock-h', `${Math.round(hgt)}px`);
+    S.root.style.setProperty('--dock-h', `${Math.round(hgt)}px`);
   }
 
   function setNote(text, tone, fromReason = false) {
@@ -930,28 +930,13 @@
     requestAnimationFrame(() => scrollToBottom(true));
   }
 
-  // Signature motion: the composer docks from the centre once per conversation.
+  // The first message fades the greeting and the glyph field; the composer is already in place.
   function dock() {
     const root = S.root;
     if (!root.classList.contains('is-empty')) return;
-    const { form } = S.els;
     if (F.reducedMotion()) { root.classList.remove('is-empty'); return; }
-    const first = form.getBoundingClientRect();
     root.classList.add('is-leaving');
-    setTimeout(() => {
-      const before = form.getBoundingClientRect();
-      root.classList.remove('is-empty', 'is-leaving');
-      const last = form.getBoundingClientRect();
-      // measured twice: the heading fade does not move the form, but be exact
-      const from = before.top ? before : first;
-      form.style.setProperty('transform', `translate(${from.left - last.left}px, ${from.top - last.top}px)`);
-      form.getBoundingClientRect();
-      form.classList.add('is-docking');
-      form.style.removeProperty('transform');
-      const end = () => { form.classList.remove('is-docking'); form.removeEventListener('transitionend', end); };
-      form.addEventListener('transitionend', end);
-      setTimeout(end, 700);
-    }, 150);
+    setTimeout(() => root.classList.remove('is-empty', 'is-leaving'), 150);
   }
 
   function buildMessages(conv, a) {

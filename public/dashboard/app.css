@@ -915,14 +915,12 @@ body.settings-open .new-pill.new-pill { left: 50%; }
 
 /* ------------------------------------------------------------------ chat */
 .view-chat { position: absolute; inset: 0; }
-/* empty chat: the Earth horizon from orbit behind the greeting and composer */
-.view-chat.is-empty { background: #000 url("/dashboard/media-horizon.jpg") 50% 62% / cover no-repeat; }
-.view-chat.is-empty::before { content: ""; position: absolute; inset: 0; pointer-events: none;
-  background:
-    radial-gradient(ellipse 34% 26% at 74% 58%, rgb(0 0 0 / 0.5) 0%, rgb(0 0 0 / 0.28) 45%, rgb(0 0 0 / 0) 100%),
-    linear-gradient(to bottom, rgb(0 0 0 / 0.55) 0%, rgb(0 0 0 / 0.1) 45%, rgb(0 0 0 / 0.1) 65%, rgb(0 0 0 / 0.6) 100%); }
-/* An open chat sits on the plain dark ground so the conversation is all there is to read. */
-.view-chat:not(.is-empty) { background: var(--bg); }
+/* The chat sits on the plain dark ground. Empty, the project mark rises behind it in
+   letters and digits (glyphfield.js); a click on the ground sends a ripple through it. */
+.view-chat { background: var(--bg); }
+.glyph-field { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; opacity: 0; transition: opacity 200ms var(--ease-out); }
+.view-chat.is-empty .glyph-field { opacity: 1; transition-duration: 400ms; }
+.view-chat.is-leaving .glyph-field { opacity: 0; transition-duration: 150ms; }
 .app[data-view=chat]:has(.view-chat:not(.is-empty)) .toolbar { background: var(--bg); }
 .chat-scroll { position: absolute; inset: 0; overflow-y: auto; padding-top: var(--toolbar-h); outline: none;
   mask-image: linear-gradient(to top, transparent 0, #000 calc(var(--dock-h, 140px) - 40px), #000 100%); }
@@ -1077,19 +1075,16 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 
 .composer-dock { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; padding: 0 24px calc(16px + env(safe-area-inset-bottom)); display: grid; justify-items: center; pointer-events: none; }
 .composer-dock > * { pointer-events: auto; }
-.chat-empty { display: none; text-align: center; margin-bottom: 28px; transition: opacity 150ms var(--ease-out); }
+.chat-empty { position: absolute; left: 0; right: 0; top: var(--toolbar-h); bottom: var(--dock-h, 140px); z-index: 1; display: none; place-content: center; padding: 0 24px; text-align: center; pointer-events: none; transition: opacity 150ms var(--ease-out); }
 .chat-empty-title { display: inline-flex; align-items: center; justify-content: center; gap: 14px; font-family: ui-serif, "New York", "Iowan Old Style", Georgia, "Times New Roman", serif; font-size: clamp(1.75rem, 1.35rem + 1.3vw, 2.25rem); line-height: 1.2; font-weight: 400; letter-spacing: -0.01em; text-wrap: balance; color: #fff; text-shadow: 0 1px 24px rgb(0 0 0 / 0.35); }
 .chat-empty-mark { width: 40px; height: 40px; flex: none; display: block; }
 .chat-empty-line { margin-top: 14px; font-size: 0.875rem; color: rgb(240 240 250 / 0.82); font-variant-numeric: tabular-nums; }
-.chat-empty-line a { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+.chat-empty-line a { color: #fff; text-decoration: underline; text-underline-offset: 3px; pointer-events: auto; }
 .chat-empty-line.is-warn { color: #ffd27a; }
 .chat-empty-line.is-crit { color: #ff9a92; }
-.view-chat.is-empty .composer-dock { top: 0; align-content: center; padding-top: var(--toolbar-h); padding-bottom: 14vh; }
-.view-chat.is-empty .chat-empty { display: block; }
+.view-chat.is-empty .chat-empty { display: grid; }
 .view-chat.is-leaving .chat-empty { opacity: 0; }
 .composer.composer { width: min(768px, 100%); border-radius: 16px; padding: 14px 12px 10px 16px; display: grid; gap: 6px; background: #272727; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14), 0 6px 20px rgb(0 0 0 / 0.18); -webkit-backdrop-filter: none; backdrop-filter: none; transition: box-shadow 150ms ease; }
-.view-chat.is-empty .composer.composer { background: rgb(30 30 30 / 0.92); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16), 0 16px 48px rgb(0 0 0 / 0.45); }
-.composer.is-docking { transition: transform 500ms var(--spring-settle); }
 .composer.composer:focus-within { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.26), 0 6px 20px rgb(0 0 0 / 0.22); }
 .composer.composer.is-over { box-shadow: inset 0 0 0 1px var(--signal), 0 0 0 1px var(--signal); }
 .composer-input { width: 100%; border: 0; background: transparent; resize: none; outline: none; font-size: 1rem; line-height: 1.5rem; padding: 2px 0 10px; max-height: 40vh; min-height: 44px; }
@@ -1484,7 +1479,7 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 
   .chat-inner { padding: 16px 16px calc(var(--dock-h, 140px) + 72px); }
   .composer-dock { padding: 0 10px calc(66px + env(safe-area-inset-bottom)); }
-  .view-chat.is-empty .composer-dock { padding-bottom: calc(66px + 8vh); }
+  .chat-empty { bottom: calc(var(--dock-h, 140px) + 66px + env(safe-area-inset-bottom)); }
   .bubble { max-width: 85%; }
   .composer-model { display: none; }
   .toasts { bottom: calc(70px + env(safe-area-inset-bottom)); right: 12px; left: 12px; align-items: stretch; }
@@ -1540,7 +1535,6 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
   .spinner { animation: spin 700ms linear infinite !important; animation-iteration-count: infinite !important; animation-duration: 700ms !important; }
   .inspector, .inspector.is-in, .toast, .toast.is-in, .toast.is-out, .popover, .popover.is-in { transform: none !important; transition: opacity 150ms ease !important; }
   .reveal { opacity: 1; transition: none; }
-  .composer.is-docking { transition: none; }
   .send-icon { transition: opacity 150ms ease; transform: none !important; }
   .reasoning-body { transition: opacity 150ms ease; }
   .btn:active, .icon-btn:active, .pill:active, .send-btn:active { transform: none !important; }
@@ -1556,7 +1550,7 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
   .btn-primary, .send-btn { background: ButtonText; color: ButtonFace; forced-color-adjust: none; }
   .mark-data-2 { fill: url(#texture-45); forced-color-adjust: none; color: CanvasText; }
   .lamp, .icon { forced-color-adjust: auto; }
-  .hero::before, .view-chat.is-empty::before, .gate::before { display: none; }
+  .hero::before, .gate::before, .glyph-field { display: none; }
   .sig-link.is-live::after { background: CanvasText; }
   .sig-link:is(.is-live, .is-warn)::before { border-left-color: CanvasText; }
   .secret-chip, .agent-state, .sigpath-lg, .filebox, .apply-bar { border: 1px solid CanvasText; }
