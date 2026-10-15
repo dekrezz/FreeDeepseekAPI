@@ -1678,6 +1678,33 @@ test('dashboardEntry serves photos and video but never docs or paths outside the
   assert.equal(dashboardEntry('/dashboard/x.jpeg'), null);
 });
 
+test('dashboard ships Geist: the woff2 fonts are served and the CSP lets only this proxy supply fonts', async () => {
+  const { dashboardEntry, serveDashboard } = serverInternals;
+  for (const name of ['geist', 'geist-mono']) {
+    assert.deepEqual(dashboardEntry(`/dashboard/${name}.woff2`), { file: `${name}.woff2`, type: 'font/woff2', optional: true, media: true });
+    const bytes = fs.readFileSync(path.join(__dirname, '..', 'public', 'dashboard', `${name}.woff2`));
+    assert.equal(bytes.subarray(0, 4).toString('latin1'), 'wOF2', `${name}.woff2 must be a WOFF2 file`);
+  }
+  const res = { status: 0, headers: {}, body: null, writeHead(status, headers) { this.status = status; this.headers = headers || {}; }, end(body) { this.body = body; } };
+  await serveDashboard({ headers: { 'sec-fetch-dest': 'document' } }, res, '/dashboard');
+  assert.equal(res.status, 200);
+  const csp = String(res.headers['Content-Security-Policy']);
+  assert.match(csp, /(^|;\s*)font-src 'self'(;|$)/);
+  assert.match(csp, /default-src 'none'/);
+});
+
+test('dashboard type: the interface is set in Geist, the two headline faces stay', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'dashboard', 'app.css'), 'utf8');
+  const token = (name) => (css.match(new RegExp(`--${name}:\\s*([^;]+);`)) || [])[1] || '';
+  assert.match(token('font-ui'), /^"Geist",/);
+  assert.match(token('font-mono'), /^"Geist Mono",/);
+  assert.match(token('font-display'), /^"Mission",/, 'the big settings headlines keep the DIN face');
+  assert.match(css, /\.chat-empty-title \{[^}]*font-family: ui-serif/, 'the empty-chat greeting keeps its serif');
+  for (const [family, file] of [['Geist', 'geist.woff2'], ['Geist Mono', 'geist-mono.woff2']]) {
+    assert.match(css, new RegExp(`@font-face \\{[^}]*font-family: "${family}";[^}]*url\\("/dashboard/${file}"\\) format\\("woff2"\\)`), `${family} comes from /dashboard/${file}`);
+  }
+});
+
 test('dashboard photos and video are not served when opened directly as a page', async () => {
   const { serveDashboard } = serverInternals;
   const call = async (pathname, dest) => {
