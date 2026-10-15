@@ -29,7 +29,7 @@ test('auth import copies valid deepseek-auth.json and chmods it to 0600', () => 
     cookie: 'ds_session_id=abc; other=def',
     hif_dliq: 'dliq',
     hif_leim: 'leim',
-    wasmUrl: 'https://example.com/sha3.wasm',
+    wasmUrl: 'https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm',
   }));
 
   const res = runNode(['scripts/auth_import.js', '--input', src, '--output', dst]);
