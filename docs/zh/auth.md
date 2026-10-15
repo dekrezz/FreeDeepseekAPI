@@ -11,7 +11,7 @@
 
 Chrome 扩展：在已打开的 `chat.deepseek.com` 标签页加载 `chrome-extension/`。等到 **Token: Ready** 再 Save File。不要把 JSON 贴进聊天。
 
-字段：`token`、`cookie`、`wasmUrl`。可选 `hif_dliq`、`hif_leim`。文件里写 `enabled: false` 会暂停该登录。示例：[`auth.example.json`](../../auth.example.json)。
+字段：`token`、`cookie`、`wasmUrl`（`https://*.deepseek.com` 地址）。可选 `hif_dliq`、`hif_leim`。文件里写 `enabled: false` 会暂停该登录。示例：[`auth.example.json`](../../auth.example.json)。
 
 ## 多个账号
 

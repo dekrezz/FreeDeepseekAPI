@@ -500,7 +500,7 @@ git fetch origin && git switch stable && git merge --ff-only origin/stable
 
 Расширение Chrome: загрузите `chrome-extension/` на открытую вкладку chat.deepseek.com. Собирайте, пока **Token** не станет Ready, потом сохраните файл. Этот JSON в чат не вставляйте.
 
-Поля: `token`, `cookie`, `wasmUrl`. Необязательные: `hif_dliq`, `hif_leim`, `name` и `enabled` (`false` ставит логин на паузу). Пример: [`auth.example.json`](auth.example.json).
+Поля: `token`, `cookie`, `wasmUrl` (адрес `https://*.deepseek.com`). Необязательные: `hif_dliq`, `hif_leim`, `name` и `enabled` (`false` ставит логин на паузу). Пример: [`auth.example.json`](auth.example.json).
 
 Пароль аккаунта DeepSeek сюда не входит. Команды `auth:console` нет, и пароль на диск писать не нужно.
 

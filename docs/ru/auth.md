@@ -11,7 +11,7 @@
 
 Расширение: `chrome-extension/` на открытой вкладке `chat.deepseek.com`. Ждите **Token: Ready**, затем Save File. JSON в чат не вставляйте.
 
-Поля: `token`, `cookie`, `wasmUrl`. По желанию `hif_dliq`, `hif_leim`. `enabled: false` в файле временно выключает этот логин. Пример: [`auth.example.json`](../../auth.example.json).
+Поля: `token`, `cookie`, `wasmUrl` (адрес `https://*.deepseek.com`). По желанию `hif_dliq`, `hif_leim`. `enabled: false` в файле временно выключает этот логин. Пример: [`auth.example.json`](../../auth.example.json).
 
 ## Несколько аккаунтов
 

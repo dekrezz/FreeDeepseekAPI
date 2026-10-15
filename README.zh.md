@@ -500,7 +500,7 @@ git fetch origin && git switch stable && git merge --ff-only origin/stable
 
 Chrome 扩展：把 `chrome-extension/` 加载到已经打开的 chat.deepseek.com 标签页。等到 **Token** 变成 Ready 再保存。不要把这份 JSON 贴进聊天。
 
-字段：`token`、`cookie`、`wasmUrl`。可选：`hif_dliq`、`hif_leim`、`name`，以及 `enabled`（`false` 会暂停这个登录）。示例见 [`auth.example.json`](auth.example.json)。
+字段：`token`、`cookie`、`wasmUrl`（`https://*.deepseek.com` 地址）。可选：`hif_dliq`、`hif_leim`、`name`，以及 `enabled`（`false` 会暂停这个登录）。示例见 [`auth.example.json`](auth.example.json)。
 
 这里没有 DeepSeek 账号密码。没有 `auth:console`，也不需要把密码写到磁盘。
 

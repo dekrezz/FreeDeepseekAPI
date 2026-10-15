@@ -500,7 +500,7 @@ Then restart the proxy.
 
 Chrome extension: load `chrome-extension/` on an open chat.deepseek.com tab. Collect until **Token** is Ready, then save the file. Do not paste that JSON into a chat.
 
-Fields: `token`, `cookie`, `wasmUrl`. Optional: `hif_dliq`, `hif_leim`, `name`, and `enabled` (`false` pauses that login). See [`auth.example.json`](auth.example.json).
+Fields: `token`, `cookie`, `wasmUrl` (an `https://*.deepseek.com` address). Optional: `hif_dliq`, `hif_leim`, `name`, and `enabled` (`false` pauses that login). See [`auth.example.json`](auth.example.json).
 
 The password of the DeepSeek account is not an input. There is no `auth:console` command, and none should store a password on disk.
 

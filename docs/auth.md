@@ -11,7 +11,7 @@
 
 Chrome extension: `chrome-extension/` on an open `chat.deepseek.com` tab. Collect until **Token** is Ready, then Save File. Do not paste the JSON into chat.
 
-Fields: `token`, `cookie`, `wasmUrl`. Optional: `hif_dliq`, `hif_leim`, `name` (label), `enabled` (`false` pauses the login). See [`auth.example.json`](../auth.example.json).
+Fields: `token`, `cookie`, `wasmUrl` (an `https://*.deepseek.com` address). Optional: `hif_dliq`, `hif_leim`, `name` (label), `enabled` (`false` pauses the login). See [`auth.example.json`](../auth.example.json).
 
 ## Pool (2–3 accounts)
 
