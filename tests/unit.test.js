@@ -268,7 +268,7 @@ test('Containerfile keeps the rootless Podman runtime minimal and fail-closed', 
     // server.js requires lib/updater.js; the image still has no .git, so it reports updates as unavailable.
     'COPY --chown=1000:1000 lib/pow.js lib/updater.js ./lib/',
     'COPY --chown=1000:1000 scripts/lib/tui-menu.js ./scripts/lib/tui-menu.js',
-    'COPY --chown=1000:1000 public/dashboard/index.html public/dashboard/*.css public/dashboard/*.js public/dashboard/*.png public/dashboard/*.jpg public/dashboard/*.mp4 ./public/dashboard/',
+    'COPY --chown=1000:1000 public/dashboard/index.html public/dashboard/*.css public/dashboard/*.js public/dashboard/*.png public/dashboard/*.jpg public/dashboard/*.woff2 public/dashboard/GEIST-LICENSE.txt ./public/dashboard/',
   ]);
   assert.doesNotMatch(containerfile, /^\s*(?:COPY|ADD)\s+\.\s/m);
   assert.match(containerfile, /^USER 1000:1000$/m);
@@ -322,7 +322,8 @@ test('the files the Containerfile copies are enough to load the server and the d
   const assets = [...index.matchAll(/(?:src|href)="\/dashboard\/([^"]+)"/g)].map(m => m[1]);
   assert.ok(assets.length > 1);
   for (const asset of assets) assert.ok(fs.existsSync(path.join(image, 'public/dashboard', asset)), `image lacks /dashboard/${asset}`);
-  assert.deepEqual(fs.readdirSync(path.join(image, 'public/dashboard')).filter(f => !/\.(?:js|css|html|png|jpg|mp4)$/.test(f)), [], 'only static assets ship');
+  // The fonts ship with their license, as SIL OFL 1.1 requires; nothing else that is not a static asset.
+  assert.deepEqual(fs.readdirSync(path.join(image, 'public/dashboard')).filter(f => !/\.(?:js|css|html|png|jpg|woff2)$/.test(f) && f !== 'GEIST-LICENSE.txt'), [], 'only static assets ship');
 });
 
 test('loopback host detection covers supported local bind addresses', () => {
