@@ -12,7 +12,7 @@
   const MAX_RIPPLES = 8;
   const FONT_PX = 11;
   const LINE_PX = 14;
-  const MONO = 'ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace';
+  const MONO = '"Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace';
   const INK = '#a9b6c6';     // cool grey of the field
   const CREST = '#5aa9ff';   // --signal: the lit crest of a ripple
   const INTERACTIVE = 'button, a, input, textarea, select, label, form, [role="menu"], [role="dialog"], .composer-meta, .composer-note, .chat-banners';
@@ -127,6 +127,10 @@
     let visible = false;
     let raf = 0;
     let idleTimer = 0;
+
+    // The atlas is drawn in Geist Mono: lay out again once the font is in.
+    document.fonts.load(`${FONT_PX}px "Geist Mono"`).then(() => { dirty = true; if (running) relayout(); },
+      (err) => console.error(`glyph field: Geist Mono did not load (${err && err.message}); glyphs use the system monospace.`));
 
     const mark = new Image();
     let markReady = false;

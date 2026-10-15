@@ -4157,7 +4157,7 @@ const DASHBOARD_FILES = new Map([
     ['/dashboard/app.css', { file: 'app.css', type: 'text/css; charset=utf-8' }],
 ]);
 const DASHBOARD_HEADERS = {
-    'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+    'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'",
     'X-Frame-Options': 'DENY',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
@@ -4167,7 +4167,7 @@ function isDashboardPath(pathname) {
     return pathname === '/dashboard' || pathname.startsWith('/dashboard/');
 }
 // Flat dashboard assets: lowercase name without dots or slashes, so the path cannot
-// leave public/dashboard and only .js/.css/.svg/.png/.jpg/.mp4 are served (never .md or dotfiles).
+// leave public/dashboard and only .js/.css/.svg/.png/.jpg/.mp4/.woff2 are served (never .md, .txt or dotfiles).
 const DASHBOARD_ASSET_TYPES = {
     js: 'text/javascript; charset=utf-8',
     css: 'text/css; charset=utf-8',
@@ -4175,12 +4175,13 @@ const DASHBOARD_ASSET_TYPES = {
     png: 'image/png',
     jpg: 'image/jpeg',
     mp4: 'video/mp4',
+    woff2: 'font/woff2',
 };
-// Photos and video never change between releases of a file name; let the browser keep them.
-const DASHBOARD_MEDIA = new Set(['png', 'jpg', 'mp4']);
+// Photos, video and fonts never change between releases of a file name; let the browser keep them.
+const DASHBOARD_MEDIA = new Set(['png', 'jpg', 'mp4', 'woff2']);
 function dashboardEntry(pathname) {
     if (DASHBOARD_FILES.has(pathname)) return DASHBOARD_FILES.get(pathname);
-    const match = /^\/dashboard\/([a-z0-9][a-z0-9-]*)\.(js|css|svg|png|jpg|mp4)$/.exec(pathname);
+    const match = /^\/dashboard\/([a-z0-9][a-z0-9-]*)\.(js|css|svg|png|jpg|mp4|woff2)$/.exec(pathname);
     return match ? { file: `${match[1]}.${match[2]}`, type: DASHBOARD_ASSET_TYPES[match[2]], optional: true, media: DASHBOARD_MEDIA.has(match[2]) } : null;
 }
 // One "bytes=a-b" range (RFC 7233), clamped to the file; null when unsatisfiable or multi-range.

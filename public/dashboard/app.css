@@ -4,7 +4,23 @@
    through the CSSOM. */
 
 /* ------------------------------------------------------------------ fonts */
-/* DIN for headlines over imagery and for numerals, from the local system only:
+/* Geist and Geist Mono (Vercel, SIL OFL 1.1, GEIST-LICENSE.txt) set the whole interface.
+   Variable fonts, one file each, served by the proxy itself (CSP font-src 'self'). */
+@font-face {
+  font-family: "Geist";
+  src: url("/dashboard/geist.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/dashboard/geist-mono.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+/* DIN only for the big headline of a settings page, from the local system only:
    DIN Alternate on macOS, Bahnschrift on Windows. Latin only; other scripts fall through. */
 @font-face {
   font-family: "Mission";
@@ -16,10 +32,10 @@
 /* ------------------------------------------------------------------ tokens */
 :root {
   color-scheme: dark;
-  --font-ui: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-ui: "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
   --font-display: "Mission", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
   --font-read: var(--font-ui);
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   --bg: #212121;
   --rail: #181818;
@@ -399,7 +415,7 @@ textarea.input { height: auto; padding: 10px 14px; resize: vertical; }
 /* ------------------------------------------------------------------ readouts */
 .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .readout { padding: 16px 18px; border-radius: var(--r-lg); background: var(--surface); min-width: 0; }
-.readout-value { font-family: var(--font-display); font-size: 2rem; line-height: 2.25rem; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+.readout-value { font-family: var(--font-ui); font-size: 2rem; line-height: 2.25rem; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
 .readout-value.is-crit { color: var(--crit); }
 .readout-label { font-size: 0.8125rem; line-height: 1.125rem; color: var(--ink-2); margin-top: 4px; }
 .readouts-note { grid-column: 1 / -1; }
@@ -695,7 +711,7 @@ dialog::backdrop { background: var(--scrim); }
 .add-title { max-width: 11ch; font-family: var(--font-display); font-size: 2rem; line-height: 1.02; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; text-wrap: balance; }
 .add-steps { list-style: none; display: grid; gap: 16px; margin: 26px 0 0; padding: 0; }
 .add-step { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; align-items: start; }
-.add-step-n { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; border: 1px solid rgb(240 240 250 / 0.45); font-family: var(--font-display); font-size: 0.8125rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.add-step-n { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; border: 1px solid rgb(240 240 250 / 0.45); font-family: var(--font-ui); font-size: 0.8125rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .add-step-body { display: grid; gap: 2px; padding-top: 2px; }
 .add-step-title { font-size: 0.875rem; line-height: 1.25rem; font-weight: 600; }
 .add-step-detail { color: rgb(240 240 250 / 0.74); font-size: 0.8125rem; line-height: 1.25rem; overflow-wrap: anywhere; }
