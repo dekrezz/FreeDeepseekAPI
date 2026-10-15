@@ -113,8 +113,8 @@
         <button type="button" class="icon-btn rail-toggle" id="rail-toggle" aria-label="Toggle sidebar" data-tip="Toggle sidebar"><svg class="icon" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
       </div>
       <ul class="rail-actions" role="list">
-        <li><button type="button" class="nav-item" id="new-chat" data-tip="New chat"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-new-chat"/></svg><span class="rail-label">New chat</span></button></li>
-        <li><button type="button" class="nav-item" id="open-search" data-tip="Search"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-search"/></svg><span class="rail-label">Search</span></button></li>
+        <li><button type="button" class="nav-item rail-search" id="open-search" data-tip="Search"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-search"/></svg><span class="rail-label">Search</span></button></li>
+        <li><button type="button" class="nav-item" id="new-chat" data-tip="New chat"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-plus"/></svg><span class="rail-label">New chat</span></button></li>
       </ul>
       <section class="chats" id="chats" aria-labelledby="chats-heading">
         <div class="chats-head">
@@ -137,7 +137,7 @@
           </span>
           <svg class="icon icon-sm account-chev rail-label" aria-hidden="true"><use href="#i-chevron-down"/></svg>
         </button>
-        <a class="nav-item" href="#/settings" id="open-settings" data-tip="Settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span class="rail-label">Settings</span></a>
+        <a class="nav-item" href="#/settings" id="open-settings" aria-label="Settings" data-tip="Settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span class="rail-label">Settings</span></a>
       </div>
     </nav>
 

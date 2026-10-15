@@ -1167,9 +1167,18 @@
   }
 
   // ================================================================ sidebar list
+  // New chat reads as the current place while the empty chat is open, like a selected chat row.
+  function syncNewChatCurrent() {
+    const btn = document.getElementById('new-chat');
+    if (!btn) return;
+    if (S.visible && !S.activeId && !S.unknownId) btn.setAttribute('aria-current', 'page');
+    else btn.removeAttribute('aria-current');
+  }
+
   function renderList() {
     const host = document.getElementById('chat-list');
     if (!host) return;
+    syncNewChatCurrent();
     const q = S.search_q;
     const convs = Array.from(S.convs.values())
       .filter(c => !S.pendingDeletes.has(c.id))
@@ -1194,7 +1203,8 @@
     };
     host.replaceChildren(h('ul', { class: 'chat-items', role: 'list' }, convs.map(c => h('li', null,
       h('a', { class: 'chat-item', href: `#/chat/${encodeURIComponent(c.id)}`, 'aria-current': c.id === S.activeId && S.visible ? 'page' : null, title: c.title },
-        S.runs.has(c.id) ? F.lamp('busy', 'chat-busy') : null,
+        // A running answer: one glyph re-rolling, the same letters and digits as the empty-chat field.
+        S.runs.has(c.id) ? h('span', { class: 'chat-busy', role: 'img', 'aria-label': 'Answering' }) : null,
         h('span', { class: 'chat-item-title', text: c.title || 'Untitled' }),
         h('time', { class: 'chat-item-date', datetime: new Date(c.updatedAt).toISOString(), text: when(c.updatedAt) }))))));
   }
