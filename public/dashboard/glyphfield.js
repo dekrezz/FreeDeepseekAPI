@@ -286,7 +286,9 @@
     let resizeFrame = 0;
     new ResizeObserver(() => {
       dirty = true;
-      if (!running || resizeFrame) return;
+      // A field that could not lay out at zero size starts once the view has a size.
+      if (!running) { update(); return; }
+      if (resizeFrame) return;
       resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; if (running) relayout(); });
     }).observe(host);
     motion.addEventListener('change', () => {

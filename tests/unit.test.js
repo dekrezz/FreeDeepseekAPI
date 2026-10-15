@@ -1667,7 +1667,7 @@ test('dashboardUrl points a browser at a reachable loopback address', () => {
 test('dashboardEntry serves photos and video but never docs or paths outside the folder', () => {
   const { dashboardEntry } = serverInternals;
   assert.deepEqual(dashboardEntry('/dashboard/media-liftoff.mp4'), { file: 'media-liftoff.mp4', type: 'video/mp4', optional: true, media: true });
-  assert.equal(dashboardEntry('/dashboard/media-horizon.jpg').type, 'image/jpeg');
+  assert.equal(dashboardEntry('/dashboard/media-night-launch.jpg').type, 'image/jpeg');
   assert.equal(dashboardEntry('/dashboard/logo.png').type, 'image/png');
   assert.ok(!dashboardEntry('/dashboard/app.css').media);
   assert.ok(!dashboardEntry('/dashboard/core.js').media);
