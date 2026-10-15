@@ -16,8 +16,9 @@
     2. Send one short prompt (for example: ok) so the frontend initializes state.
     3. Return to terminal and press Enter.
 */
-const { spawn, execFileSync } = require('child_process');
+const { spawn } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { t, loadUiLang, saveUiLang, pick, runProgress, browserOpenCommand, visibleWidth, C } = require('./lib/tui-menu');
 const {
@@ -25,7 +26,9 @@ const {
     locateChrome,
     findBrew,
     brewInstallCommand,
+    writeCapturedAuth,
 } = require('./lib/chrome-setup');
+const { resolveAuthOutPath } = require('./auth_import');
 
 const repoRoot = path.resolve(__dirname, '..');
 const qwenRepoRoot = path.resolve(repoRoot, '..', 'FreeQwenApi');
@@ -34,8 +37,7 @@ const profileDir =
     path.join(repoRoot, '.chrome-for-testing-profile-deepseek');
 // Use a dedicated default port so an older normal-Chrome auth window on 9333 is not reused.
 const port = Number(process.env.DEEPSEEK_CHROME_PORT || 9334);
-const outPath =
-    process.env.DEEPSEEK_AUTH_PATH || path.join(repoRoot, 'deepseek-auth.json');
+const outPath = resolveAuthOutPath(process.env);
 const url = 'https://chat.deepseek.com/';
 const reuseChrome = /^(1|true|yes|on)$/i.test(
     process.env.DEEPSEEK_REUSE_CHROME || '',
@@ -44,29 +46,10 @@ const keepProfile = /^(1|true|yes|on)$/i.test(
     process.env.DEEPSEEK_KEEP_CHROME_PROFILE || '',
 );
 
-function shellPatternSafe(s) {
-    return String(s).replace(/[\\"']/g, '.');
-}
-
 function sleepSync(ms) {
     try {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
     } catch {}
-}
-
-function killExistingTestingChrome() {
-    if (process.platform !== 'darwin') return;
-    const patterns = [`--remote-debugging-port=${port}`, profileDir].map(
-        shellPatternSafe,
-    );
-    for (const pattern of patterns) {
-        try {
-            execFileSync('/usr/bin/pkill', ['-f', pattern], {
-                stdio: 'ignore',
-            });
-        } catch {}
-    }
-    sleepSync(800);
 }
 
 function removeProfileSafely(dir) {
@@ -82,8 +65,15 @@ function removeProfileSafely(dir) {
             if (!fs.existsSync(dir)) return;
         } catch (e) {
             if (i === 4) {
-                const staleDir = `${dir}.stale-${Date.now()}`;
-                fs.renameSync(dir, staleDir);
+                // Outside the repo, so a leftover copy of the logged-in cookies can never be committed.
+                const staleDir = path.join(os.tmpdir(), `${path.basename(dir)}.stale-${Date.now()}`);
+                try {
+                    fs.renameSync(dir, staleDir);
+                } catch (renameErr) {
+                    throw new Error(
+                        `Cannot remove the old auth Chrome profile ${dir} (${e.code || e.message}) or move it to ${staleDir} (${renameErr.code || renameErr.message}). Close the DeepSeek auth Chrome window and retry.`,
+                    );
+                }
                 try {
                     fs.rmSync(staleDir, {
                         recursive: true,
@@ -145,6 +135,32 @@ async function waitDevtools() {
     }
     throw new Error('Chrome DevTools endpoint did not start');
 }
+// Closes the Chrome serving DevTools on `port` (Browser.close works on every platform)
+// and waits until the port is free. A Chrome left running keeps an unauthenticated
+// DevTools port open, and the next login would read its session instead of the new window.
+async function closeChromeOnPort() {
+    const version = await devtoolsReady();
+    if (!version) return;
+    if (!version.webSocketDebuggerUrl)
+        throw new Error(
+            `Chrome DevTools on port ${port} has no browser endpoint. Close the DeepSeek auth Chrome window and retry.`,
+        );
+    const browser = new CDP(version.webSocketDebuggerUrl);
+    await browser.ready();
+    // Chrome may drop the socket before it answers; the port check below decides.
+    browser.send('Browser.close').catch(() => {});
+    for (let i = 0; i < 40; i++) {
+        await sleep(250);
+        if (!(await devtoolsReady())) {
+            browser.close();
+            return;
+        }
+    }
+    browser.close();
+    throw new Error(
+        `Chrome on DevTools port ${port} did not close. Close the DeepSeek auth Chrome window and retry.`,
+    );
+}
 async function getPageTarget() {
     for (let i = 0; i < 40; i++) {
         const targets = await fetchJson(`http://127.0.0.1:${port}/json`);
@@ -196,6 +212,11 @@ class CDP {
         });
     }
     close() {
+        for (const { reject, timer } of this.pending.values()) {
+            clearTimeout(timer);
+            reject(new Error('Chrome DevTools connection closed'));
+        }
+        this.pending.clear();
         try {
             this.ws.close();
         } catch {}
@@ -266,7 +287,7 @@ async function readPageAuth(cdp) {
 
     const cookieRes = await cdp.send('Network.getAllCookies');
     const cookies = (cookieRes.cookies || []).filter((c) =>
-        /deepseek\.com$/.test(c.domain),
+        /(^|\.)deepseek\.com$/.test(c.domain),
     );
     const cookie = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
 
@@ -504,7 +525,7 @@ async function main() {
         }),
         async () => {
             if (!reuseChrome) {
-                killExistingTestingChrome();
+                await closeChromeOnPort();
                 if (!keepProfile && fs.existsSync(profileDir)) {
                     removeProfileSafely(profileDir);
                 }
@@ -560,6 +581,7 @@ async function main() {
     );
     if (ready.id !== 'continue') {
         cdp.close();
+        if (!reuseChrome) await closeChromeOnPort();
         return;
     }
 
@@ -585,10 +607,9 @@ async function main() {
         },
     );
     const { href, cookiesCount, ...persisted } = auth;
-    fs.writeFileSync(outPath, JSON.stringify(persisted, null, 2), { mode: 0o600 });
-    if (process.platform !== 'win32') fs.chmodSync(outPath, 0o600);
+    const success = writeCapturedAuth(outPath, persisted);
     cdp.close();
-    const success = Boolean(persisted.token && persisted.cookie);
+    if (!reuseChrome) await closeChromeOnPort();
     const result = await pick(
         () => ({
             lang: langRef.current,

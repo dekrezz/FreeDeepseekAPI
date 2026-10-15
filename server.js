@@ -23,11 +23,55 @@ const pow = require('./lib/pow');
 const { createUpdater, RESTART_EXIT_CODE } = require('./lib/updater');
 const { t, loadUiLang, saveUiLang, pick, pause, printWordmark, browserOpenCommand } = require('./scripts/lib/tui-menu');
 
+// Numeric env setting: unset or empty means the default; anything that is not a
+// finite non-negative number fails loudly instead of silently becoming NaN.
+function envNumber(name, fallback, env = process.env) {
+    const raw = env[name];
+    if (raw === undefined || String(raw).trim() === '') return fallback;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) {
+        throw new Error(`${name} must be a non-negative number (milliseconds or a count), got ${JSON.stringify(String(raw))}.`);
+    }
+    return value;
+}
+
 // Per-DeepSeek-request network timeout. Plain fetch() has NO default timeout, so a
 // stalled upstream would hang the inbound request (and pin the account) forever.
-const DS_FETCH_TIMEOUT_MS = Number(process.env.DEEPSEEK_FETCH_TIMEOUT_MS || 60000);
+const DS_FETCH_TIMEOUT_MS = envNumber('DEEPSEEK_FETCH_TIMEOUT_MS', 60000);
 function dsFetch(url, options = {}, timeoutMs = DS_FETCH_TIMEOUT_MS) {
     return fetch(url, { ...options, signal: options.signal || AbortSignal.timeout(timeoutMs) });
+}
+// A completion streams for as long as the model thinks or writes, so its body gets
+// an idle limit instead of a total one: abort only when no chunk arrives for timeoutMs.
+async function dsStreamFetch(url, options = {}, timeoutMs = DS_FETCH_TIMEOUT_MS) {
+    const controller = new AbortController();
+    let timer = null;
+    const arm = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => controller.abort(new DOMException(`DeepSeek stream sent nothing for ${timeoutMs} ms (idle timeout)`, 'TimeoutError')), timeoutMs);
+        timer.unref?.();
+    };
+    arm();
+    let resp;
+    try {
+        resp = await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+        clearTimeout(timer);
+        throw error;
+    }
+    if (!resp.body) {
+        clearTimeout(timer);
+        return resp;
+    }
+    arm();
+    const body = resp.body.pipeThrough(new TransformStream({
+        transform(chunk, streamController) {
+            arm();
+            streamController.enqueue(chunk);
+        },
+        flush() { clearTimeout(timer); },
+    }));
+    return new Response(body, { status: resp.status, statusText: resp.statusText, headers: resp.headers });
 }
 
 const SERVER_HOST = os.hostname();  // Dynamic hostname detection
@@ -43,7 +87,7 @@ const SERVER_PUBLIC_IP = (() => {
     return 'localhost';
 })();
 
-const PORT = Number(process.env.PORT || 9655);
+const PORT = envNumber('PORT', 9655);
 const HOST = process.env.HOST || '127.0.0.1';
 
 function loadProxyApiKey(env = process.env) {
@@ -154,7 +198,7 @@ const SESSION_TTL_MS = 2 * 60 * 60 * 1000;  // 2 hours
 // === DeepSeek Web API Config — loaded from external config file ===
 const DS_CONFIG_PATH = process.env.DEEPSEEK_AUTH_PATH || path.join(__dirname, 'deepseek-auth.json');
 const ACCOUNTS_DIR = process.env.DEEPSEEK_AUTH_DIR || path.join(__dirname, 'accounts');
-const DEFAULT_ACCOUNT_COOLDOWN_MS = Number(process.env.DEEPSEEK_ACCOUNT_COOLDOWN_MS || 10 * 60 * 1000);
+const DEFAULT_ACCOUNT_COOLDOWN_MS = envNumber('DEEPSEEK_ACCOUNT_COOLDOWN_MS', 10 * 60 * 1000);
 let DS_CONFIG = {};
 let dsHeaders = {};
 const accounts = [];
@@ -162,9 +206,9 @@ let accountRoundRobin = 0;
 let inFlight = 0;  // concurrent in-flight completions (backpressure cap)
 // Overall wall-clock budget for one inbound request (caps the retry/continuation
 // loops), max concurrent completions, and the empty-response retry cap.
-const REQUEST_DEADLINE_MS = Number(process.env.DEEPSEEK_REQUEST_DEADLINE_MS || 120000);
-const ACCOUNT_LOCK_WAIT_MS = Number(process.env.DEEPSEEK_ACCOUNT_LOCK_WAIT_MS || REQUEST_DEADLINE_MS);
-const MAX_CONCURRENT = Number(process.env.DEEPSEEK_MAX_CONCURRENT || 24);
+const REQUEST_DEADLINE_MS = envNumber('DEEPSEEK_REQUEST_DEADLINE_MS', 120000);
+const ACCOUNT_LOCK_WAIT_MS = envNumber('DEEPSEEK_ACCOUNT_LOCK_WAIT_MS', REQUEST_DEADLINE_MS);
+const MAX_CONCURRENT = envNumber('DEEPSEEK_MAX_CONCURRENT', 24);
 const configuredEmptyRetries = Number(process.env.DEEPSEEK_MAX_RETRIES);
 const MAX_EMPTY_RETRIES = Number.isFinite(configuredEmptyRetries)
     ? Math.max(0, Math.min(10, Math.floor(configuredEmptyRetries)))
@@ -679,6 +723,16 @@ function accountRateLimitError(account, detail, retryAfterRaw, label, status = 4
 function isAccountRateLimitError(error) {
     return error?.accountRateLimited === true;
 }
+// DeepSeek answers an expired or revoked login with business codes 40001-40003,
+// often on HTTP 200. Cool the login down and return a typed 401.
+function isDeepSeekAuthCode(payload) {
+    const code = Number(payload?.code);
+    return code >= 40001 && code <= 40003;
+}
+function accountAuthError(account, detail, label) {
+    markAccountFailure(account, 401, label, null, detail);
+    return createUpstreamHttpError(401, `${label}: ${detail}`);
+}
 function deepSeekJsonMessage(json) {
     if (!json || typeof json !== 'object') return '';
     return [json.data?.biz_msg, json.msg, json.message].filter(v => typeof v === 'string' && v.trim()).join(' ');
@@ -701,6 +755,7 @@ async function readDeepSeekJsonResponse(resp, label, account) {
     if (resp.status === 429 || isRateLimitSignal(message)) {
         throw accountRateLimitError(account, message || text, retryAfter, label, resp.status);
     }
+    if (isDeepSeekAuthCode(json)) throw accountAuthError(account, message || text, label);
     if (!resp.ok) markAccountFailure(account, resp.status, label, retryAfter, message || text);
     return { json, text };
 }
@@ -1167,8 +1222,12 @@ async function createDeepSeekPowHeader(account, targetPath) {
     if (!challenge && isRateLimitSignal(deepSeekJsonMessage(payload))) {
         throw accountRateLimitError(account, deepSeekJsonMessage(payload), retryAfter, label, response.status);
     }
+    if (!challenge && isDeepSeekAuthCode(payload)) {
+        throw accountAuthError(account, deepSeekJsonMessage(payload) || text, label);
+    }
     if (!challenge) {
-        throw new Error(`DeepSeek PoW response has no challenge for ${targetPath}. Run npm run doctor, then npm run auth.`);
+        markAccountFailure(account, 502, label, null, text);
+        throw createUpstreamHttpError(502, `DeepSeek PoW response has no challenge for ${targetPath}. Run npm run doctor, then npm run auth. First chars: ${text.substring(0, 120)}`);
     }
     const answer = await pow.solvePOW(challenge, account.config.wasmUrl);
     return Buffer.from(JSON.stringify({
@@ -1202,6 +1261,7 @@ async function waitForDeepSeekFile(account, uploadedFile) {
         catch (error) {
             throw new Error(`DeepSeek returned non-JSON file status response. First chars: ${text.substring(0, 120)}`);
         }
+        if (isDeepSeekAuthCode(payload)) throw accountAuthError(account, deepSeekJsonMessage(payload) || text, 'image status');
         const files = payload?.data?.biz_data?.files;
         if (!response.ok || payload?.data?.biz_code !== 0 || !Array.isArray(files)) {
             const detail = deepSeekJsonMessage(payload) || text;
@@ -1243,6 +1303,7 @@ async function uploadDeepSeekImage(account, modelCfg, input, index) {
         }
         throw new Error(`DeepSeek returned non-JSON image upload response. First chars: ${text.substring(0, 120)}`);
     }
+    if (isDeepSeekAuthCode(payload)) throw accountAuthError(account, deepSeekJsonMessage(payload) || text, 'image upload');
     const file = payload?.data?.biz_data;
     if (!response.ok || payload?.data?.biz_code !== 0 || !file?.id) {
         const detail = deepSeekJsonMessage(payload) || text;
@@ -1412,8 +1473,7 @@ async function readJsonCompletionError(resp, account, label) {
     try { payload = JSON.parse(text); } catch (e) { payload = null; }
     const detail = deepSeekJsonMessage(payload) || text;
     if (isRateLimitSignal(detail)) throw accountRateLimitError(account, detail, retryAfter, label, resp.status);
-    const code = Number(payload?.code);
-    if (code >= 40001 && code <= 40003) {
+    if (isDeepSeekAuthCode(payload)) {
         markAccountFailure(account, 401, label, null, detail);
         throw createUpstreamHttpError(401, detail);
     }
@@ -1439,8 +1499,21 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
     const search_enabled = webFlags?.search_enabled ?? modelCfg.search_enabled;
     const session = getOrCreateAgentSession(agentId);
     const hadRemoteSession = Boolean(session.id);
-    const account = selectAccountForSession(session, lockHolder);
-    await acquireAccountChatLock(account, lockHolder);
+    let account = null;
+    for (let attempt = 0; ; attempt++) {
+        account = selectAccountForSession(session, lockHolder);
+        const waited = await acquireAccountChatLock(account, lockHolder);
+        // While this request waited, the lock holder may have rate-limited this login
+        // or moved the agent session to another one: choose again before using it.
+        if (!waited || (accountCanServe(account) && session.accountId === account.id)) break;
+        releaseAccountChatLock(lockHolder);
+        if (attempt >= accounts.length) {
+            throw concurrentChatBlocked(
+                `Agent session ${agentId} kept moving between logins while this request waited for one. Retry shortly.`,
+                { retryAfter: 1 },
+            );
+        }
+    }
     const dsHeaders = account.headers;
     account.lastUsedAt = Date.now();
     const agentTag = `[${agentId}/acct:${account.id}]`;
@@ -1468,6 +1541,8 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
     const refFileIds = imageContext?.refFileIds || [];
     const powB64 = await createDeepSeekPowHeader(account, DEEPSEEK_COMPLETION_PATH);
 
+    // A chat created by this call holds no message until a completion succeeds.
+    let createdChatId = null;
     if (!session.id) {
         const sr = await dsFetch('https://chat.deepseek.com/api/v0/chat_session/create', {
             method: 'POST', headers: dsHeaders, body: '{}'
@@ -1475,9 +1550,10 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
         const { json: sessionData, text: sessionText } = await readDeepSeekJsonResponse(sr, 'session create', account);
         const createdSessionId = sessionData?.data?.biz_data?.chat_session?.id || sessionData?.data?.biz_data?.id;
         if (!sr.ok || !createdSessionId) {
-            throw new Error(`Could not create DeepSeek chat session (HTTP ${sr.status}). Auth may be expired/captcha-blocked. Run npm run doctor, then npm run auth. First chars: ${String(sessionText || '').substring(0, 120)}`);
+            throw createUpstreamHttpError(sr.ok ? 502 : sr.status, `Could not create DeepSeek chat session (HTTP ${sr.status}). Auth may be expired/captcha-blocked. Run npm run doctor, then npm run auth. First chars: ${String(sessionText || '').substring(0, 120)}`);
         }
         session.id = createdSessionId;
+        createdChatId = createdSessionId;
         session.accountId = account.id;
         session.parentMessageId = null;
         session.createdAt = Date.now();
@@ -1487,87 +1563,95 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
         console.log(`${agentTag} Reusing session: ${session.id} (parent: ${session.parentMessageId}, msg#${session.messageCount})`);
     }
 
-    const resp = await dsFetch('https://chat.deepseek.com/api/v0/chat/completion', {
-        method: 'POST',
-        headers: { ...dsHeaders, 'X-DS-PoW-Response': powB64 },
-        body: JSON.stringify({
-            chat_session_id: session.id,
-            parent_message_id: session.parentMessageId,
-            model_type: modelCfg.model_type,
-            prompt: effectivePrompt, ref_file_ids: refFileIds,
-            thinking_enabled, search_enabled,
-            action: null, preempt: false,
-        })
-    });
+    // Any failure before DeepSeek accepts a message leaves a chat created here
+    // empty: drop it, so the next turn resends the full context instead of a delta.
+    try {
+        const resp = await dsStreamFetch('https://chat.deepseek.com/api/v0/chat/completion', {
+            method: 'POST',
+            headers: { ...dsHeaders, 'X-DS-PoW-Response': powB64 },
+            body: JSON.stringify({
+                chat_session_id: session.id,
+                parent_message_id: session.parentMessageId,
+                model_type: modelCfg.model_type,
+                prompt: effectivePrompt, ref_file_ids: refFileIds,
+                thinking_enabled, search_enabled,
+                action: null, preempt: false,
+            })
+        });
 
-    // Rate limits (HTTP 429 or a "too frequent" body on any status, including a
-    // JSON body on HTTP 200) throw a failover error here, before any same-account
-    // session recreate (#6, #16). Other failures are returned for recovery below.
-    const failure = resp.status !== 200
-        ? await readCompletionFailure(resp, account, 'completion')
-        : await readJsonCompletionError(resp, account, 'completion');
+        // Rate limits (HTTP 429 or a "too frequent" body on any status, including a
+        // JSON body on HTTP 200) throw a failover error here, before any same-account
+        // session recreate (#6, #16). Other failures are returned for recovery below.
+        const failure = resp.status !== 200
+            ? await readCompletionFailure(resp, account, 'completion')
+            : await readJsonCompletionError(resp, account, 'completion');
 
-    // If session expired or DeepSeek rejected it with a business error, reset and retry once
-    if (failure) {
-        const { errText, retryAfter } = failure;
-        // A JSON business error on HTTP 200 surfaces as 502 if it is not recovered.
-        const failureStatus = resp.status === 200 ? 502 : resp.status;
-        console.log(`${agentTag} Session error (${resp.status}): ${errText.substring(0, 100)}`);
-        if (isContextTooLongError(errText)) {
+        // If session expired or DeepSeek rejected it with a business error, reset and retry once
+        if (failure) {
+            const { errText, retryAfter } = failure;
+            // A JSON business error on HTTP 200 surfaces as 502 if it is not recovered.
+            const failureStatus = resp.status === 200 ? 502 : resp.status;
+            console.log(`${agentTag} Session error (${resp.status}): ${errText.substring(0, 100)}`);
+            if (isContextTooLongError(errText)) {
+                throw createUpstreamHttpError(failureStatus, errText, retryAfter);
+            }
+            if (resp.status === 200 || resp.status === 400 || resp.status === 404 || resp.status === 500) {
+                console.log(`${agentTag} Session ${session.id} expired. Creating new session...`);
+                resetRemoteSession(session);
+
+                const sr2 = await dsFetch('https://chat.deepseek.com/api/v0/chat_session/create', {
+                    method: 'POST', headers: dsHeaders, body: '{}'
+                });
+                const { json: sessionData2, text: sessionText2 } = await readDeepSeekJsonResponse(sr2, 'session recreate', account);
+                const createdSessionId2 = sessionData2?.data?.biz_data?.chat_session?.id || sessionData2?.data?.biz_data?.id;
+                if (!sr2.ok || !createdSessionId2) {
+                    throw createUpstreamHttpError(sr2.ok ? 502 : sr2.status, `Could not recreate DeepSeek chat session (HTTP ${sr2.status}). Run npm run doctor, then npm run auth. First chars: ${String(sessionText2 || '').substring(0, 120)}`);
+                }
+                session.id = createdSessionId2;
+                createdChatId = createdSessionId2;
+                session.accountId = account.id;
+                session.parentMessageId = null;
+                session.createdAt = Date.now();
+                console.log(`${agentTag} Created new session: ${session.id}`);
+
+                const newPowB64 = await createDeepSeekPowHeader(account, DEEPSEEK_COMPLETION_PATH);
+                const resp2 = await dsStreamFetch('https://chat.deepseek.com/api/v0/chat/completion', {
+                    method: 'POST',
+                    headers: { ...dsHeaders, 'X-DS-PoW-Response': newPowB64 },
+                    body: JSON.stringify({
+                        chat_session_id: session.id,
+                        parent_message_id: null,
+                        model_type: modelCfg.model_type,
+                        prompt: freshSessionPrompt, ref_file_ids: refFileIds,
+                        thinking_enabled, search_enabled,
+                        action: null, preempt: false,
+                    })
+                });
+                if (!resp2.ok) {
+                    const { errText: errText2, retryAfter: retryAfter2 } = await readCompletionFailure(resp2, account, 'completion after session recreate');
+                    throw createUpstreamHttpError(resp2.status, errText2, retryAfter2);
+                }
+                const jsonFailure2 = await readJsonCompletionError(resp2, account, 'completion after session recreate');
+                if (jsonFailure2) {
+                    // The brand-new chat was rejected too: fail loudly, and do not let
+                    // the next turn continue a chat DeepSeek never accepted a message in.
+                    resetRemoteSession(session);
+                    throw createUpstreamHttpError(502, jsonFailure2.errText, jsonFailure2.retryAfter);
+                }
+                effectivePrompt = freshSessionPrompt;
+                return { resp: resp2, agentId, account, promptUsed: effectivePrompt, freshSessionReset: true };
+            }
+            // The body was consumed for diagnostics, so returning this Response
+            // would hand a locked stream to readDeepSeekResponse. Surface a typed
+            // error instead and retain the real upstream status/Retry-After.
             throw createUpstreamHttpError(failureStatus, errText, retryAfter);
         }
-        if (resp.status === 200 || resp.status === 400 || resp.status === 404 || resp.status === 500) {
-            console.log(`${agentTag} Session ${session.id} expired. Creating new session...`);
-            resetRemoteSession(session);
 
-            const sr2 = await dsFetch('https://chat.deepseek.com/api/v0/chat_session/create', {
-                method: 'POST', headers: dsHeaders, body: '{}'
-            });
-            const { json: sessionData2, text: sessionText2 } = await readDeepSeekJsonResponse(sr2, 'session recreate', account);
-            const createdSessionId2 = sessionData2?.data?.biz_data?.chat_session?.id || sessionData2?.data?.biz_data?.id;
-            if (!sr2.ok || !createdSessionId2) {
-                throw new Error(`Could not recreate DeepSeek chat session (HTTP ${sr2.status}). Run npm run doctor, then npm run auth. First chars: ${String(sessionText2 || '').substring(0, 120)}`);
-            }
-            session.id = createdSessionId2;
-            session.accountId = account.id;
-            session.parentMessageId = null;
-            session.createdAt = Date.now();
-            console.log(`${agentTag} Created new session: ${session.id}`);
-
-            const newPowB64 = await createDeepSeekPowHeader(account, DEEPSEEK_COMPLETION_PATH);
-            const resp2 = await dsFetch('https://chat.deepseek.com/api/v0/chat/completion', {
-                method: 'POST',
-                headers: { ...dsHeaders, 'X-DS-PoW-Response': newPowB64 },
-                body: JSON.stringify({
-                    chat_session_id: session.id,
-                    parent_message_id: null,
-                    model_type: modelCfg.model_type,
-                    prompt: freshSessionPrompt, ref_file_ids: refFileIds,
-                    thinking_enabled, search_enabled,
-                    action: null, preempt: false,
-                })
-            });
-            if (!resp2.ok) {
-                const { errText: errText2, retryAfter: retryAfter2 } = await readCompletionFailure(resp2, account, 'completion after session recreate');
-                throw createUpstreamHttpError(resp2.status, errText2, retryAfter2);
-            }
-            const jsonFailure2 = await readJsonCompletionError(resp2, account, 'completion after session recreate');
-            if (jsonFailure2) {
-                // The brand-new chat was rejected too: fail loudly, and do not let
-                // the next turn continue a chat DeepSeek never accepted a message in.
-                resetRemoteSession(session);
-                throw createUpstreamHttpError(502, jsonFailure2.errText, jsonFailure2.retryAfter);
-            }
-            effectivePrompt = freshSessionPrompt;
-            return { resp: resp2, agentId, account, promptUsed: effectivePrompt, freshSessionReset: true };
-        }
-        // The body was consumed for diagnostics, so returning this Response
-        // would hand a locked stream to readDeepSeekResponse. Surface a typed
-        // error instead and retain the real upstream status/Retry-After.
-        throw createUpstreamHttpError(failureStatus, errText, retryAfter);
+        return { resp, agentId, account, promptUsed: effectivePrompt, freshSessionReset: recoveredFreshSession };
+    } catch (error) {
+        if (createdChatId && session.id === createdChatId) resetRemoteSession(session);
+        throw error;
     }
-
-    return { resp, agentId, account, promptUsed: effectivePrompt, freshSessionReset: recoveredFreshSession };
 }
 
 // === Tool Calling Support ===
@@ -2312,11 +2396,11 @@ function parseToolCall(text) {
 }
 
 /**
- * Strip surrogate characters and other problematic Unicode from text
- * to prevent httpx/urlencode crashes when the gateway sends to Telegram.
+ * Strip lone (unpaired) surrogates from text to prevent httpx/urlencode crashes
+ * when the gateway sends to Telegram. Valid pairs (emoji, astral CJK) are kept.
  */
 function sanitizeContent(text) {
-    return text.replace(/[\ud800-\udfff]/g, '');
+    return text.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '');
 }
 
 function estimateTokens(text) {
@@ -2536,6 +2620,10 @@ function normalizeResponsesInput(input) {
             messages.push({ role: item.role || 'user', content: normalizeContentParts(item.content) });
         } else if (item.role) {
             messages.push({ role: item.role, content: normalizeContentParts(item.content) });
+        } else if (item.type === 'function_call') {
+            // The model's own earlier tool call: keep it so tool results have their call.
+            const args = typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {});
+            messages.push({ role: 'assistant', content: null, tool_calls: [{ id: item.call_id, type: 'function', function: { name: item.name, arguments: args } }] });
         } else if (item.type === 'function_call_output') {
             messages.push({ role: 'tool', tool_call_id: item.call_id, content: item.output || '' });
         } else if (item.type === 'input_text') {
@@ -2809,42 +2897,41 @@ function storeHistory(agentId, prompt, content, toolCall) {
     }
 }
 
-// Extract MEDIA: paths from tool results that contain screenshot paths
+// Extract MEDIA: paths from the current turn's tool results (the tool messages after
+// the last user message). Earlier turns and user/assistant prose are not scanned, so
+// a path from an earlier turn is not appended to every later reply.
+function currentTurnToolMessages(messages) {
+    const list = Array.isArray(messages) ? messages : [];
+    let lastUser = -1;
+    for (let i = 0; i < list.length; i++) {
+        const msg = list[i];
+        if (msg?.role === 'user' && !isReplayedAgentSystem(normalizeMessageContent(msg.content))) lastUser = i;
+    }
+    return list.slice(lastUser + 1).filter(msg => msg?.role === 'tool');
+}
 function extractScreenshotPaths(messages) {
     const paths = [];
     const fs = require('fs');
-    for (const msg of messages) {
-        if (msg.role === 'tool' && msg.content) {
+    for (const msg of currentTurnToolMessages(messages)) {
+        const text = normalizeMessageContent(msg.content);
+        if (text) {
             // Look for screenshot_path or path fields in JSON tool results
             // These come DIRECTLY from browser_vision — always the real path
-            const pngMatch = msg.content.match(/["'](screenshot_path|path)["']\s*:\s*["']([^"']+\.(?:png|jpg|jpeg|webp|gif))["']/i);
+            const pngMatch = text.match(/["'](screenshot_path|path)["']\s*:\s*["']([^"']+\.(?:png|jpg|jpeg|webp|gif))["']/i);
             if (pngMatch) {
                 const filePath = pngMatch[2];
-                if (filePath.startsWith('/') && fs.existsSync(filePath)) {
+                if (filePath.startsWith('/') && fs.existsSync(filePath) && !paths.includes(`MEDIA:${filePath}`)) {
                     paths.push(`MEDIA:${filePath}`);
                 }
             }
             // Also catch plain MEDIA: tags
-            const mediaMatch = msg.content.match(/MEDIA:(\S+)/g);
+            const mediaMatch = text.match(/MEDIA:(\S+)/g);
             if (mediaMatch) {
                 for (const tag of mediaMatch) {
                     const extractedPath = tag.replace(/^MEDIA:/, '');
                     if (fs.existsSync(extractedPath) && !paths.includes(tag)) {
                         paths.push(tag);
                     }
-                }
-            }
-        }
-        // Check user/assistant messages for paths mentioned in conversation text
-        // Only include if the file ACTUALLY EXISTS (DeepSeek hallucinates paths)
-        if ((msg.role === 'user' || msg.role === 'assistant') && msg.content) {
-            const content = typeof msg.content === 'string' ? msg.content : '';
-            const pathRegex = /(\/[^\s<>"']+\.(?:png|jpg|jpeg|webp|gif))/gi;
-            let match;
-            while ((match = pathRegex.exec(content)) !== null) {
-                const filePath = match[1];
-                if (filePath.startsWith('/') && fs.existsSync(filePath) && !paths.includes(`MEDIA:${filePath}`)) {
-                    paths.push(`MEDIA:${filePath}`);
                 }
             }
         }
@@ -4298,24 +4385,57 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404); res.end('Not found'); return;
     }
 
+    let MAX_BODY_BYTES;
+    try {
+        MAX_BODY_BYTES = envNumber('MAX_REQUEST_BODY_BYTES', 30 * 1024 * 1024);
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: error.message, type: 'server_misconfigured' } }));
+        return;
+    }
+
     // Backpressure: reject rather than fan out unbounded concurrent upstream work.
     if (inFlight >= MAX_CONCURRENT) {
         res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '2' });
         res.end(JSON.stringify({ error: { message: `Server busy (${inFlight}/${MAX_CONCURRENT} requests in flight). Retry shortly.`, type: 'overloaded' } }));
         return;
     }
+    // Take the slot before the body arrives, so a burst of requests that arrive
+    // together cannot all pass the check above.
+    inFlight++;
+    let slotHeld = true;
+    const releaseSlot = () => {
+        if (!slotHeld) return;
+        slotHeld = false;
+        inFlight--;
+    };
 
-    let body = '';
+    // Collect raw bytes and decode once: a multi-byte UTF-8 character can straddle
+    // two chunks. An oversized body is drained, not kept, so the client still gets a 413.
+    const bodyChunks = [];
+    let bodyBytes = 0;
     let bodyTooLarge = false;
-    const MAX_BODY_BYTES = Number(process.env.MAX_REQUEST_BODY_BYTES || 30 * 1024 * 1024);
-    req.on('data', chunk => { body += chunk; if (body.length > MAX_BODY_BYTES) { bodyTooLarge = true; req.destroy(); } });
-    req.on('end', async () => {
-        if (bodyTooLarge) {
-            res.writeHead(413, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: { message: 'Request body too large', type: 'payload_too_large' } }));
+    let bodyComplete = false;
+    req.on('data', chunk => {
+        if (bodyTooLarge) return;
+        bodyBytes += chunk.length;
+        if (bodyBytes > MAX_BODY_BYTES) {
+            bodyTooLarge = true;
+            bodyChunks.length = 0;
             return;
         }
-        inFlight++;
+        bodyChunks.push(chunk);
+    });
+    req.on('close', () => { if (!bodyComplete) releaseSlot(); });
+    req.on('end', async () => {
+        bodyComplete = true;
+        if (bodyTooLarge) {
+            releaseSlot();
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: `Request body is larger than ${MAX_BODY_BYTES} bytes (MAX_REQUEST_BODY_BYTES)`, type: 'payload_too_large' } }));
+            return;
+        }
+        const body = Buffer.concat(bodyChunks).toString('utf8');
         let clientGone = false;
         res.on('close', () => { clientGone = true; });
         const requestStartedAt = Date.now();
@@ -4588,8 +4708,10 @@ const server = http.createServer(async (req, res) => {
                                 if (lastPath === 'response/finish_reason' && d.v !== undefined) {
                                     finishReason = d.v;
                                 }
-                                if (lastPath === 'response/status' && d.v !== undefined && d.v !== 'FINISHED') {
-                                    finishReason = d.v;
+                                if (lastPath === 'response/status' && d.v !== undefined) {
+                                    // FINISHED marks a complete answer; it must not hide an explicit finish_reason.
+                                    if (d.v !== 'FINISHED') finishReason = d.v;
+                                    else if (!finishReason) finishReason = 'FINISHED';
                                 }
                             } catch (e) { }
                         }
@@ -4815,11 +4937,21 @@ const server = http.createServer(async (req, res) => {
                 return;
             }
 
-            // Auto-continuation: if finish_reason is 'length' or content is very long (>25000 chars),
-            // send a continuation request to get the rest of the response
+            const allowedToolNames = new Set(tools
+                .filter(tool => tool?.type === 'function' && tool.function?.name)
+                .map(tool => tool.function.name));
+
+            // Auto-continuation runs only on a real truncation signal. DeepSeek Web marks a
+            // complete answer FINISHED, so the 25000-char check is a safety net for a stream
+            // that ended without any status. A complete tool call is never continued.
+            const answerLooksTruncated = () => {
+                if (collectAgentToolCalls(fullContent, allowedToolNames).length > 0) return false;
+                if (finishReason === 'length' || finishReason === 'INCOMPLETE') return true;
+                return !finishReason && fullContent.length > 25000;
+            };
             let continuationRounds = 0;
             const MAX_CONTINUATION = 2;
-            while ((finishReason === 'length' || fullContent.length > 25000) && continuationRounds < MAX_CONTINUATION) {
+            while (answerLooksTruncated() && continuationRounds < MAX_CONTINUATION) {
                 if (clientGone || deadlineHit()) break;
                 continuationRounds++;
                 console.log(`${agentTag} Response ${fullContent.length} chars (finish=${finishReason}). Auto-continuing (${continuationRounds}/${MAX_CONTINUATION})...`);
@@ -4873,9 +5005,6 @@ const server = http.createServer(async (req, res) => {
                 }
             }
 
-            const allowedToolNames = new Set(tools
-                .filter(tool => tool?.type === 'function' && tool.function?.name)
-                .map(tool => tool.function.name));
             const noToolsMode = allowedToolNames.size === 0;
             let toolCalls = collectAgentToolCalls(fullContent, allowedToolNames);
             let toolCall = toolCalls[0] || selectAgentToolCall(fullContent, allowedToolNames);
@@ -4933,12 +5062,13 @@ const server = http.createServer(async (req, res) => {
                 // malformed first repair before Hermes retries the entire request and
                 // falls back to a different provider. No-tools recovery remains unchanged.
                 const repairMaxHops = Math.max(1, accounts.length + (shouldRepairNoTools ? 0 : 1));
-                const secondStrictPrompt = appendPromptInstruction(
-                    repairRecoveryPrompt,
-                    shouldRepairNoTools
-                        ? '[STRICT INSTRUCTION] The previous retry still contained tool markup. Return only a plain-text answer; do not produce any tool call or markup.'
-                        : '[STRICT INSTRUCTION] Your last repair was still not a valid advertised tool request. Return exactly one JSON object with the exact tool name and arguments schema. Preserve every argument value; do not omit, shorten, or rewrite user data.'
-                );
+                const secondStrictInstruction = shouldRepairNoTools
+                    ? '[STRICT INSTRUCTION] The previous retry still contained tool markup. Return only a plain-text answer; do not produce any tool call or markup.'
+                    : '[STRICT INSTRUCTION] Your last repair was still not a valid advertised tool request. Return exactly one JSON object with the exact tool name and arguments schema. Preserve every argument value; do not omit, shorten, or rewrite user data.';
+                // The live chat already holds the full context: a retry inside it gets only
+                // the instructions. The full context goes only into a fresh chat after rotation.
+                const secondStrictLivePrompt = appendPromptInstruction(strictPrompt, secondStrictInstruction);
+                const secondStrictPrompt = appendPromptInstruction(repairRecoveryPrompt, secondStrictInstruction);
                 const repairCandidateIsUsable = (result) => {
                     const candidateText = result?.content ? sanitizeContent(result.content) : '';
                     if (!candidateText.trim()) return false;
@@ -4956,8 +5086,10 @@ const server = http.createServer(async (req, res) => {
                     repairAttempts++;
                     try {
                         const repairCall = await askDeepSeekStream(
-                            hop === 0 ? strictPrompt : (shouldRepairNoTools ? repairRecoveryPrompt : secondStrictPrompt),
-                            agentId, requestedModel, repairRecoveryPrompt, lockHolder, imageContext, webFlags
+                            hop === 0 ? strictPrompt : (shouldRepairNoTools ? repairRecoveryPrompt : secondStrictLivePrompt),
+                            agentId, requestedModel,
+                            hop === 0 || shouldRepairNoTools ? repairRecoveryPrompt : secondStrictPrompt,
+                            lockHolder, imageContext, webFlags
                         );
                         const repairRead = await readDeepSeekResponse(repairCall.resp.body, repairCall.account);
                         if (!repairRead.rateLimited) {
@@ -5199,7 +5331,7 @@ const server = http.createServer(async (req, res) => {
             if (!logRow.account) logRow.account = activeSession?.accountId || null;
             recordRequest(logRow);
             releaseAccountChatLock(lockHolder);
-            inFlight--;
+            releaseSlot();
         }
     });
 });

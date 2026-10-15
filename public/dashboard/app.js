@@ -20,7 +20,15 @@
   // ---------------------------------------------------------------- router
   function route() {
     if (F._suppressRoute) return;
-    const r = F.parseHash();
+    let r;
+    try {
+      r = F.parseHash();
+    } catch (e) {
+      // A truncated or hand-edited link (#/chat/%E0) is not valid percent-encoding.
+      F.toast(`Unreadable page address ${location.hash} (${e.name}: ${e.message})`, { tone: 'warn' });
+      history.replaceState(null, '', '#/chat');
+      return route();
+    }
     if (!r.view) {
       let last = null;
       try { last = localStorage.getItem('fdsa.lastRoute'); } catch (e) { /* preference only */ }

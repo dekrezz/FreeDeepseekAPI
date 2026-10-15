@@ -300,6 +300,9 @@ function claudeSettings(opts) {
 
 function mergeClaudeSettings(existing, incoming) {
   const out = existing && typeof existing === 'object' ? { ...existing } : {};
+  if (out.env != null && (typeof out.env !== 'object' || Array.isArray(out.env))) {
+    throw new SetupError('invalid_existing_file', `settings.json: "env" must be an object, found ${Array.isArray(out.env) ? 'an array' : typeof out.env}`);
+  }
   out.env = { ...(out.env || {}), ...incoming.env };
   out.model = incoming.model;
   return out;
@@ -1011,10 +1014,11 @@ const TARGETS = {
         '//overrideOpenAiBaseUrl': openaiBase(opts.baseUrl),
       }, null, 2)}\n`;
       // apiKeyRef (dashboard): the launcher reads the key from the shell, so the
-      // browser never receives it. The CLI keeps baking in --api-key.
+      // browser never receives it. The CLI uses it too; a key written literally is
+      // single-quoted so the shell expands nothing inside it.
       const keyLine = opts.apiKeyRef
         ? 'export OPENAI_API_KEY="${PROXY_API_KEY:-local}"'
-        : `export OPENAI_API_KEY=${JSON.stringify(opts.apiKey)}`;
+        : `export OPENAI_API_KEY='${String(opts.apiKey).replace(/'/g, `'\\''`)}'`;
       const launch = `#!/bin/sh
 # Launch Cursor with FreeDeepseekAPI as the OpenAI-compatible endpoint.
 export OPENAI_BASE_URL=${JSON.stringify(openaiBase(opts.baseUrl))}
@@ -2249,7 +2253,8 @@ function writeCursorTemplates(ctx, opts, plan) {
     fs.writeFileSync(dest, f.after, { encoding: 'utf8', mode: 0o600 });
     console.log(`wrote ${dest}`);
   }
-  if (!opts.dryRun) fs.chmodSync(launchPath, 0o755);
+  // The launcher may hold the proxy key and writeFileSync keeps the mode of an existing file.
+  if (!opts.dryRun) fs.chmodSync(launchPath, 0o700);
   console.log('Cursor: existing editor settings unchanged.');
   console.log(`        Optional profile launcher uses OpenAI Base URL = ${openaiBase(opts.baseUrl)}`);
   console.log(`        Add models: ${VALID_MODELS.join(', ')}`);
@@ -2305,7 +2310,7 @@ async function main(argv = process.argv) {
   if (!['user', 'project'].includes(opts.scope)) die('Unknown --scope. Use: user, project');
 
   console.log(`model=${opts.model} base=${opts.baseUrl} key=${opts.apiKey ? 'set' : 'missing'} dryRun=${opts.dryRun}`);
-  const planOpts = { model: opts.model, mode: opts.mode, baseUrl: opts.baseUrl, apiKey: opts.apiKey, scope: opts.scope, projectDir: ctx.cwd };
+  const planOpts = { model: opts.model, mode: opts.mode, baseUrl: opts.baseUrl, apiKey: opts.apiKey, apiKeyRef: true, scope: opts.scope, projectDir: ctx.cwd };
   const read = fileReader(ctx);
   const results = [];
   const plans = [];

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const BASE = process.env.BASE_URL || 'http://127.0.0.1:9665';
+const BASE = process.env.BASE_URL || `http://127.0.0.1:${process.env.PORT || 9655}`;
 const MODEL = process.env.MODEL || 'deepseek-v4-flash';
 
 async function post(path, body, timeoutMs = 120000) {
@@ -8,7 +8,7 @@ async function post(path, body, timeoutMs = 120000) {
   try {
     const resp = await fetch(`${BASE}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer test' },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.PROXY_API_KEY || 'test'}` },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });

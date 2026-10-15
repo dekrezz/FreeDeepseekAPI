@@ -13,8 +13,13 @@ const {
 
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_WASM = 'https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm';
-const envAuthPath = process.env.DEEPSEEK_AUTH_PATH || '';
-const DEFAULT_OUT = envAuthPath && !envAuthPath.includes(',') ? envAuthPath : path.join(ROOT, 'deepseek-auth.json');
+// DEEPSEEK_AUTH_PATH may list several account files separated by ','; a login or
+// import then writes the default file instead of a file literally named "a.json,b.json".
+function resolveAuthOutPath(env = process.env) {
+  const envAuthPath = env.DEEPSEEK_AUTH_PATH || '';
+  return envAuthPath && !envAuthPath.includes(',') ? envAuthPath : path.join(ROOT, 'deepseek-auth.json');
+}
+const DEFAULT_OUT = resolveAuthOutPath();
 
 function argValue(args, ...names) {
   for (let i = 0; i < args.length; i++) {
@@ -32,7 +37,7 @@ function readJson(file) {
 }
 function cookieArrayToHeader(cookies) {
   return cookies
-    .filter(c => c && c.name && c.value && /(^|\.)deepseek\.com$/i.test(String(c.domain || '').replace(/^\./, '.')) || (c && c.name && c.value && /deepseek/i.test(String(c.domain || ''))))
+    .filter(c => c && c.name && c.value && /(^|\.)deepseek\.com$/i.test(String(c.domain || '').replace(/^\./, '')))
     .map(c => `${String(c.name).trim()}=${String(c.value).trim()}`)
     .filter(Boolean)
     .join('; ');
@@ -61,11 +66,21 @@ function normalizeAuth(input, extra = {}, { useEnv = true } = {}) {
   };
   return auth;
 }
+// The proxy downloads and runs this WebAssembly for every PoW challenge, so an
+// imported file must not be able to point it at another host.
+function isDeepseekWasmUrl(value) {
+  let parsed;
+  try { parsed = new URL(String(value)); }
+  catch { return false; }
+  const host = parsed.hostname.toLowerCase();
+  return parsed.protocol === 'https:' && (host === 'deepseek.com' || host.endsWith('.deepseek.com'));
+}
 function validateAuth(auth) {
   const errors = [];
   if (!auth.token) errors.push('token missing');
   if (!auth.cookie) errors.push('cookie missing');
   if (!auth.wasmUrl) errors.push('wasmUrl missing');
+  else if (!isDeepseekWasmUrl(auth.wasmUrl)) errors.push('wasmUrl must be an https://*.deepseek.com URL');
   return errors;
 }
 function secureWriteJson(file, data) {
@@ -201,5 +216,6 @@ module.exports = {
   secureWriteJson,
   importFromFile,
   chooseImportPath,
+  resolveAuthOutPath,
   DEFAULT_OUT,
 };

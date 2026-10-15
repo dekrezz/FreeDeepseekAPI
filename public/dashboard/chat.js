@@ -110,11 +110,13 @@
     },
     async deleteAll() {
       await ready;
-      if (this.mode === 'memory') { this.mem.convs.clear(); this.mem.msgs.clear(); }
-      else await this.tx(['conversations', 'messages'], 'readwrite', t => { t.objectStore('conversations').clear(); t.objectStore('messages').clear(); });
-      for (const run of S.runs.values()) run.controller.abort();
+      // Forget the chats before aborting their runs: an aborted run's finally only
+      // persists a conversation that is still loaded, so it cannot write one back.
       S.convs.clear();
       S.msgs.clear();
+      for (const run of S.runs.values()) run.controller.abort();
+      if (this.mode === 'memory') { this.mem.convs.clear(); this.mem.msgs.clear(); }
+      else await this.tx(['conversations', 'messages'], 'readwrite', t => { t.objectStore('conversations').clear(); t.objectStore('messages').clear(); });
       S.quota = false;
       if (S.visible) F.navigate('chat');
       renderList();
@@ -163,6 +165,7 @@
     msgs: new Map(),           // convId -> messages (loaded)
     activeId: null,
     runs: new Map(),           // convId -> { controller, startedAt, msgId }
+    starting: new Set(),       // convIds whose edit or regenerate is persisting before run() registers
     models: { loaded: false, error: null, ids: new Set(), base: null, caps: {}, capsError: null, list: [] },
     think: false, search: true,
     attachments: [],
@@ -634,19 +637,26 @@
 
   async function commitEdit(m, text) {
     const conv = active();
-    if (!conv || S.runs.has(conv.id)) return;
+    if (!conv || S.runs.has(conv.id) || S.starting.has(conv.id)) return;
+    const reason = sendBlockReason();
+    if (reason) { setNote(reason, 'crit'); return; }
     if (text.trim() === '/new') { setNote('Use New chat to start fresh.'); return; }
     if (!text.trim() && !(m.images && m.images.length)) return;
-    m.content = text;
-    const list = msgsOf(conv.id);
-    const drop = list.filter(x => x.seq > m.seq);
-    S.msgs.set(conv.id, list.filter(x => x.seq <= m.seq));
-    await saveMsg(m);
-    if (drop.length) await persist(() => store.deleteMessages(conv.id, drop.map(x => x.id)));
-    conv.needsReset = true;
-    const a = newAssistant(conv);
-    renderTranscript();
-    run(conv, a);
+    S.starting.add(conv.id);
+    try {
+      m.content = text;
+      const list = msgsOf(conv.id);
+      const drop = list.filter(x => x.seq > m.seq);
+      S.msgs.set(conv.id, list.filter(x => x.seq <= m.seq));
+      await saveMsg(m);
+      if (drop.length) await persist(() => store.deleteMessages(conv.id, drop.map(x => x.id)));
+      conv.needsReset = true;
+      const a = newAssistant(conv);
+      renderTranscript();
+      run(conv, a);
+    } finally {
+      S.starting.delete(conv.id);
+    }
   }
 
   function assistantTurn(m, reveal) {
@@ -1091,8 +1101,11 @@
       S.runs.delete(conv.id);
       if (!a.meta.error && !a.meta.stopped) { conv.failStreak = 0; conv.coolUntil = 0; }
       conv.updatedAt = Date.now();
-      saveConv(conv);
-      saveMsg(a);
+      // A chat deleted while its answer ran (Delete all) must stay deleted.
+      if (S.convs.get(conv.id) === conv) {
+        saveConv(conv);
+        saveMsg(a);
+      }
       const burst = firstByteAt && (Date.now() - firstByteAt) <= BURST_MS;
       if (active() === conv) {
         updateTurn(a, Boolean(burst) && !a.meta.error && !a.meta.stopped);
@@ -1123,15 +1136,20 @@
 
   async function regenerate(m) {
     const conv = active();
-    if (!conv || S.runs.has(conv.id) || coolLeftMs(conv) > 0) return;
-    const list = msgsOf(conv.id);
-    const drop = list.filter(x => x.seq >= m.seq);
-    S.msgs.set(conv.id, list.filter(x => x.seq < m.seq));
-    await persist(() => store.deleteMessages(conv.id, drop.map(x => x.id)));
-    conv.needsReset = true;
-    const a = newAssistant(conv);
-    renderTranscript();
-    run(conv, a);
+    if (!conv || S.runs.has(conv.id) || S.starting.has(conv.id) || coolLeftMs(conv) > 0) return;
+    S.starting.add(conv.id);
+    try {
+      const list = msgsOf(conv.id);
+      const drop = list.filter(x => x.seq >= m.seq);
+      S.msgs.set(conv.id, list.filter(x => x.seq < m.seq));
+      await persist(() => store.deleteMessages(conv.id, drop.map(x => x.id)));
+      conv.needsReset = true;
+      const a = newAssistant(conv);
+      renderTranscript();
+      run(conv, a);
+    } finally {
+      S.starting.delete(conv.id);
+    }
   }
 
   // ================================================================ timers

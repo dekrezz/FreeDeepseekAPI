@@ -1,7 +1,8 @@
 'use strict';
 
 // Finding a Chrome the sign-in flow can drive over DevTools, and installing one
-// when none is present. Pure functions with injected fs access so they are testable.
+// when none is present, and saving the captured session. Kept out of the sign-in
+// script (which runs on load) so they are testable.
 
 const fs = require('fs');
 const path = require('path');
@@ -88,8 +89,26 @@ function brewInstallCommand(brew) {
   return { cmd: brew, args: ['install', '--cask', 'google-chrome'] };
 }
 
+// Saves a captured session only when it holds both a token and a cookie, so a login
+// that did not finish never replaces a working auth file. Writes a 0600 temp file
+// next to outPath and renames it over the target. Returns false when nothing was written.
+function writeCapturedAuth(outPath, auth) {
+  if (!auth || !auth.token || !auth.cookie) return false;
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  const tmpPath = `${outPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(auth, null, 2), { mode: 0o600, flag: 'wx' });
+    fs.renameSync(tmpPath, outPath);
+  } catch (err) {
+    fs.rmSync(tmpPath, { force: true });
+    throw err;
+  }
+  return true;
+}
+
 module.exports = {
   CHROME_DOWNLOAD_URL,
+  writeCapturedAuth,
   locateChrome,
   findBrew,
   brewInstallCommand,

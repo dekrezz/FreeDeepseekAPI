@@ -9,10 +9,10 @@ const {
   pick,
   LANGS,
 } = require('./lib/tui-menu');
-const { importFromFile, chooseImportPath, DEFAULT_OUT } = require('./auth_import');
+const { importFromFile, chooseImportPath, resolveAuthOutPath, DEFAULT_OUT } = require('./auth_import');
 
 const ROOT = path.resolve(__dirname, '..');
-const AUTH_PATH = process.env.DEEPSEEK_AUTH_PATH || path.join(ROOT, 'deepseek-auth.json');
+const AUTH_PATH = resolveAuthOutPath(process.env);
 const PROFILE_DIR = process.env.DEEPSEEK_CHROME_PROFILE || path.join(ROOT, '.chrome-for-testing-profile-deepseek');
 
 function loadAuth() {

@@ -101,6 +101,25 @@
     return na != null && na === norm(b);
   }
 
+  // Agents send the access key and every request to their base address. One that is not this
+  // proxy (a loopback name, the page's origin or the default address) may come from a crafted
+  // #/agents link, so its host is returned for Apply to name. An unparsable address returns
+  // null: the preview reports it and Apply stays blocked.
+  function foreignHost(a, base) {
+    const site = (u) => {
+      try {
+        const x = new URL(String(u).trim());
+        return { origin: x.origin, host: x.host, loopback: ['localhost', '127.0.0.1', '[::1]'].includes(x.hostname) };
+      } catch (e) {
+        return null;
+      }
+    };
+    const b = site(base);
+    if (!b || b.loopback) return null;
+    const known = [a.defaults.base_url, location.origin].map(site).filter(Boolean);
+    return known.some(k => k.origin === b.origin) ? null : b.host;
+  }
+
   function mark(id, cls) {
     const m = META[id];
     const el = h('span', { class: ['agent-mark', cls], 'aria-hidden': 'true', text: m ? m.mono : String(id).slice(0, 2).toUpperCase() });
@@ -498,7 +517,7 @@
   }
 
   // ---------------------------------------------------------------- apply, restore
-  async function apply() {
+  async function apply(confirmed = false) {
     const d = st.d;
     const a = agentById(d.id);
     if (!a || !a.writable || d.applying) return;
@@ -513,6 +532,17 @@
       return;
     }
     const o = opts();
+    const host = foreignHost(a, o.base);
+    if (host && !confirmed) {
+      F.confirm(st.els.applyActions.querySelector('.apply-btn'), {
+        text: `${host} is not this proxy. ${a.name} will send the access key and every request, with your prompts and code, to ${host}. Apply anyway?`,
+        confirmLabel: 'Apply anyway',
+        pendingLabel: 'Applying…',
+        danger: true,
+        run: () => apply(true),
+      });
+      return;
+    }
     const expect = Object.fromEntries(d.plan.files.map(f => [f.id, f.revision]));
     d.applying = true;
     d.applyError = null;
@@ -1184,7 +1214,10 @@
     if (els.baseError.textContent !== (err || '')) els.baseError.textContent = err || '';
     els.baseError.hidden = !err;
     input.setAttribute('aria-invalid', String(Boolean(err)));
-    els.baseHint.textContent = a.kind === 'editor' ? 'Cursor takes it with /v1; the settings below add it.' : 'Agents add /v1 where they need it.';
+    const foreign = foreignHost(a, o.base);
+    els.baseHint.textContent = foreign ? `${foreign} is not this proxy. ${a.name} would send the access key and every request there.`
+      : a.kind === 'editor' ? 'Cursor takes it with /v1; the settings below add it.' : 'Agents add /v1 where they need it.';
+    els.baseHint.classList.toggle('is-warn-text', Boolean(foreign));
     const origin = location.origin;
     const show = /^https?:/.test(origin) && !sameProxy(origin, o.base);
     keepFocus(() => els.useOrigin.replaceChildren(show ? F.btn(`Use ${origin}`, {

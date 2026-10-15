@@ -29,19 +29,30 @@ const CONFIG = {
 
 // Try loading from local auth files. deepseek-auth.json is created by `npm run auth`;
 // auth.json is kept as a legacy fallback for older local setups.
-try {
-    for (const fileName of ['deepseek-auth.json', 'auth.json']) {
-        const authPath = path.join(__dirname, fileName);
-        if (fs.existsSync(authPath) && !CONFIG.token) {
-            const auth = JSON.parse(fs.readFileSync(authPath, 'utf8'));
-            CONFIG.token = CONFIG.token || auth.token;
-            CONFIG.hif_dliq = CONFIG.hif_dliq || auth.hif_dliq;
-            CONFIG.hif_leim = CONFIG.hif_leim || auth.hif_leim;
-            CONFIG.cookie = CONFIG.cookie || auth.cookie;
-            CONFIG.wasmUrl = CONFIG.wasmUrl || auth.wasmUrl;
-        }
+for (const fileName of ['deepseek-auth.json', 'auth.json']) {
+    if (CONFIG.token) break;
+    const authPath = path.join(__dirname, fileName);
+    let raw;
+    try {
+        raw = fs.readFileSync(authPath, 'utf8');
+    } catch (e) {
+        if (e.code === 'ENOENT') continue;
+        console.error(`${authPath}: ${e.message}`);
+        process.exit(1);
     }
-} catch (e) {}
+    let auth;
+    try {
+        auth = JSON.parse(raw);
+    } catch (e) {
+        console.error(`${authPath}: invalid JSON (${e.message})`);
+        process.exit(1);
+    }
+    CONFIG.token = CONFIG.token || auth.token;
+    CONFIG.hif_dliq = CONFIG.hif_dliq || auth.hif_dliq;
+    CONFIG.hif_leim = CONFIG.hif_leim || auth.hif_leim;
+    CONFIG.cookie = CONFIG.cookie || auth.cookie;
+    CONFIG.wasmUrl = CONFIG.wasmUrl || auth.wasmUrl;
+}
 
 if (!CONFIG.token) {
     console.error('Error: DeepSeek auth is not set. Run `npm run auth`, or provide DEEPSEEK_TOKEN/DEEPSEEK_COOKIE via env.');
@@ -146,8 +157,8 @@ async function main() {
     });
     process.stdout.write('\n');
 
-    const outFile = path.join(os.tmpdir(), `deepseek_response_${Date.now()}.txt`);
-    fs.writeFileSync(outFile, fullText.trim());
+    const outFile = path.join(os.tmpdir(), `deepseek_response_${Date.now()}_${process.pid}.txt`);
+    fs.writeFileSync(outFile, fullText.trim(), { mode: 0o600, flag: 'wx' });
     console.error(`\n[*] Saved ${outFile}`);
 }
 

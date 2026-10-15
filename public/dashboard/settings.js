@@ -234,8 +234,12 @@
     renderUpdates();
   }
 
+  // The update buttons are only aria-disabled, so every action checks for itself.
+  function updateBusy(u) { return u.phase === 'checking' || u.phase === 'installing' || u.phase === 'restarting'; }
+
   async function checkUpdate() {
     const u = st.update;
+    if (updateBusy(u) || !u.status || u.status.method !== 'git') return;
     u.phase = 'checking'; u.check = null; u.message = null;
     renderUpdates();
     try { u.check = await F.api('POST', '/admin/update/check', { body: { channel: u.channel }, timeout: 90000 }); u.phase = 'checked'; }
@@ -245,6 +249,7 @@
 
   async function installUpdate() {
     const u = st.update;
+    if (updateBusy(u) || !u.check || !u.check.canInstall) return;
     u.phase = 'installing'; u.message = null;
     renderUpdates();
     try {
@@ -264,10 +269,13 @@
     renderUpdates();
   }
 
-  // Restart, then wait for a server on a different commit and reload the page on it.
+  // Restart, then wait for the server to answer on the installed commit and reload the page on it.
+  // GET /admin/update reports the commit on disk, so it cannot tell the old server from the new
+  // one; the old one stops listening 250 ms after /admin/restart, before the first poll.
   async function restartNow() {
     const u = st.update;
-    const before = u.status && u.status.commit;
+    if (u.phase !== 'installed') return;
+    const target = u.installed.installed.commit;
     u.phase = 'restarting';
     renderUpdates();
     try { await F.api('POST', '/admin/restart'); }
@@ -275,10 +283,14 @@
     const until = Date.now() + 60000;
     while (Date.now() < until) {
       await new Promise(r => setTimeout(r, 1000));
-      try {
-        const s = await F.api('GET', '/admin/update', { timeout: 2000 });
-        if (s.commit && s.commit !== before) { location.reload(); return; }
-      } catch (e) { /* the server is down while it restarts */ }
+      let s;
+      try { s = await F.api('GET', '/admin/update', { timeout: 2000 }); }
+      catch (e) { continue; /* the server is down while it restarts */ }
+      if (s.commit === target) { location.reload(); return; }
+      u.phase = 'installed';
+      u.message = { tone: 'crit', title: 'The proxy came back on a different commit', text: `It is on ${s.commit || 'an unknown commit'}, not the installed ${target}. Check the terminal where it runs.` };
+      renderUpdates();
+      return;
     }
     u.phase = 'installed';
     u.message = { tone: 'crit', title: 'The proxy did not come back within a minute', text: 'Check the terminal where it runs.' };
@@ -292,7 +304,7 @@
     if (u.error) { host.replaceChildren(F.notice('crit', 'GET /admin/update failed', F.errorText(u.error))); return; }
     const s = u.status;
     if (!s) { host.replaceChildren(h('div', { class: 'set-group' }, row('Version', null, h('span', { class: 'quiet', text: 'Loading…' }), null, 'download'))); return; }
-    const busy = u.phase === 'checking' || u.phase === 'installing' || u.phase === 'restarting';
+    const busy = updateBusy(u);
     // Channel name in the label face; a branch name stays exactly as git spells it.
     const where = s.channel ? [h('span', { text: `${CHANNEL_LABEL[s.channel]} channel` })]
       : s.branch ? [h('span', { text: 'Branch' }), h('code', { class: 'mono-id update-branch', text: s.branch })] : [h('span', { text: 'No channel' })];

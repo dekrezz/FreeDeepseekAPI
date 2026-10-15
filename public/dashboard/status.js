@@ -6,10 +6,13 @@
   const { h, fmt } = F;
   const WINDOWS = { '15m': 900000, '1h': 3600000, '6h': 21600000 };
 
+  let savedWindow = null;
+  try { savedWindow = localStorage.getItem('fdsa.status.window'); } catch (e) { /* preference only */ }
+
   const st = {
     root: null,
     els: {},
-    windowKey: localStorage.getItem('fdsa.status.window') || '15m',
+    windowKey: savedWindow || '15m',
     mode: 'diagram',
     visible: false,
   };
