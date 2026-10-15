@@ -37,7 +37,6 @@
   const SHOW_LABEL = { disk: 'on disk', after: 'after apply', diff: 'changes' };
   const BACKUPS_SHOWN = 8;
   const PLAN_DEBOUNCE_MS = 250;
-  const HERO_IMAGE = '/dashboard/media-milky-way.jpg';
 
   const st = {
     root: null,
@@ -756,7 +755,7 @@
   function mount(root) {
     st.root = root;
     // Overview
-    const heroO = F.pageHero({ image: HERO_IMAGE, label: 'Coding agents', position: '50% 74%' });
+    const heroO = F.pageHero({ icon: 'agent', label: 'Coding agents' });
     const ovBanner = h('div', { class: 'view-banner' });
     const roster = h('ul', { class: 'agents-roster set-group', role: 'list', 'aria-label': 'Agents' });
     // The j/k cursor follows Tab focus, so Enter and j/k always agree on the row.
@@ -781,7 +780,7 @@
       h('div', { class: 'view-pad agents' }, ovBanner, rosterSection, backupSection));
 
     // Detail
-    const heroD = F.pageHero({ image: HERO_IMAGE, label: 'Agent', position: '50% 80%' });
+    const heroD = F.pageHero({ icon: 'agent', label: 'Agent' });
     heroD.classList.add('hero-agent');
     const pathHost = h('div', { class: 'agent-path-host' });
     const dBanner = h('div', { class: 'view-banner' });
@@ -858,7 +857,7 @@
     F.on('tick', () => { if (st.visible && st.d) paintFileFacts(); });
   }
 
-  // The hero toolbar is see-through; past the photo it needs a ground (see app.css).
+  // The hero toolbar is see-through; past the hero it needs a ground (see app.css).
   function markScrolled() {
     if (!st.visible) return;
     const hero = st.d ? st.els.heroD : st.els.heroO;

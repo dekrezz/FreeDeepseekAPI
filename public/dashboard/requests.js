@@ -42,7 +42,7 @@
       st.held = null;
       render();
     });
-    const hero = F.pageHero({ image: '/dashboard/media-airglow-cities.jpg', label: 'Request log', position: '40% 30%' });
+    const hero = F.pageHero({ icon: 'requests', label: 'Request log' });
     root.append(hero, h('div', { class: 'view-pad' },
       h('div', { class: 'filter-row' }, statusSeg, selects, h('label', { class: 'search-field search-field-inline' }, F.icon('search'), client)),
       notice,

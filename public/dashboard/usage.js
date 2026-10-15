@@ -48,7 +48,7 @@
         breakdown),
       h('div', { class: 'rule' }),
       h('section', { class: 'section' }, h('div', { class: 'section-head' }, h('h3', { class: 'section-title', text: 'Lifetime by account' })), lifetime));
-    const hero = F.pageHero({ image: '/dashboard/media-aurora-arc.jpg', label: 'Usage', position: '50% 38%' });
+    const hero = F.pageHero({ icon: 'usage', label: 'Usage' });
     root.append(hero, h('div', { class: 'view-pad' },
       h('div', { class: 'filter-row' }, windowSeg, accountSlot),
       caveat, status, body));

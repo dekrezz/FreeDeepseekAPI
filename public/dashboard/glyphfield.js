@@ -1,8 +1,9 @@
 'use strict';
-// Empty chat backdrop: the project mark set in random letters and digits that keep
-// re-rolling, on the plain dark ground. A click on the background drops a ripple that
-// runs out like a ring on water: glyphs on its crest are pushed out, lit and re-rolled.
-// Only the press counts; holding the button or dragging does nothing.
+// Glyph field: a mark set in random letters and digits that keep re-rolling, on the plain
+// dark ground. Behind the empty chat the mark is the project logo; on a settings page it is
+// that page's icon. A click on the ground drops a ripple that runs out like a ring on water:
+// glyphs on its crest are pushed out, lit and re-rolled. Only the press counts; holding the
+// button or dragging does nothing.
 (function () {
   const F = window.FDSA;
 
@@ -69,6 +70,30 @@
     };
   }
 
+  // Where the mark sits, in the field's own pixels. 'center': the empty chat, a little above
+  // the middle. 'right': a page hero, cut by the right edge and clear of the headline on the
+  // left. 'top': a tall panel whose text sits at the bottom.
+  function maskRect(W, H, place) {
+    if (place === 'right') {
+      const size = H * 1.55;
+      return { size, left: Math.max(W * 0.5, W - size * 0.62), top: H * 0.5 - size / 2 };
+    }
+    if (place === 'top') {
+      const size = Math.min(W * 0.92, H * 0.6);
+      return { size, left: (W - size) / 2, top: H * 0.06 };
+    }
+    const size = Math.min(H * 1.02, W * 0.86);
+    return { size, left: W / 2 - size / 2, top: H * 0.45 - size / 2 };
+  }
+
+  // A sprite icon as a white stroke drawing the canvas can read back (currentColor is white).
+  function iconImageUrl(id) {
+    const symbol = document.getElementById(`i-${id}`);
+    if (!symbol) throw new Error(`glyph field: no icon #i-${id} in the sprite`);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${symbol.getAttribute('viewBox') || '0 0 24 24'}" width="256" height="256" color="#fff" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${symbol.innerHTML}</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  }
+
   function isBackgroundPress(e) {
     if (e.button !== 0 || e.isPrimary === false) return false;
     const t = e.target;
@@ -97,7 +122,14 @@
     return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
   }
 
-  function create(host) {
+  // opts.mask: { image: url } or { icon: sprite id } or null; opts.place: see maskRect;
+  // opts.fade: 'composer' (calm under the chat composer), 'headline' (calm where a hero's
+  // headline sits, bottom left), 'caption' (calm under a panel's text, bottom) or none;
+  // opts.when(host): extra condition for running, checked when the host's class changes.
+  function create(host, opts = {}) {
+    const place = opts.place || 'center';
+    const fadeKind = opts.fade || null;
+    const when = opts.when || (() => true);
     const canvas = document.createElement('canvas');
     canvas.className = 'glyph-field';
     canvas.setAttribute('aria-hidden', 'true');
@@ -132,11 +164,15 @@
     document.fonts.load(`${FONT_PX}px "Geist Mono"`).then(() => { dirty = true; if (running) relayout(); },
       (err) => console.error(`glyph field: Geist Mono did not load (${err && err.message}); glyphs use the system monospace.`));
 
-    const mark = new Image();
+    let mark = null;
     let markReady = false;
-    mark.src = '/dashboard/logo.png';
-    mark.decode().then(() => { markReady = true; dirty = true; if (running) relayout(); },
-      (err) => console.error(`glyph field: /dashboard/logo.png did not load (${err && err.message}); the field is drawn without the mark.`));
+    if (opts.mask) {
+      mark = new Image();
+      const what = opts.mask.image || `icon #i-${opts.mask.icon}`;
+      mark.src = opts.mask.image || iconImageUrl(opts.mask.icon);
+      mark.decode().then(() => { markReady = true; dirty = true; if (running) relayout(); },
+        (err) => console.error(`glyph field: ${what} did not load (${err && err.message}); the field is drawn without the mark.`));
+    }
 
     function atlas(color) {
       const a = document.createElement('canvas');
@@ -151,22 +187,36 @@
       return a;
     }
 
-    // Alpha of the mark per cell: the logo drawn into a cols x rows bitmap, one pixel per cell.
+    // Alpha of the mark per cell: the mark drawn into a cols x rows bitmap, one pixel per cell.
     function markAlpha() {
       if (!markReady) return null;
-      const size = Math.min(H * 1.02, W * 0.86);
-      const left = W * 0.5 - size / 2;
-      const top = H * 0.45 - size / 2;
+      const { size, left, top } = maskRect(W, H, place);
       const off = document.createElement('canvas');
       off.width = cols;
       off.height = rows;
       const o = off.getContext('2d', { willReadFrequently: true });
       o.imageSmoothingQuality = 'high';
       o.drawImage(mark, left / gw, top / gh, size / gw, size / gh);
-      const data = o.getImageData(0, 0, cols, rows).data;
+      let data;
+      try {
+        data = o.getImageData(0, 0, cols, rows).data;
+      } catch (err) {
+        console.error(`glyph field: the browser will not read the mark back (${err && err.message}); the field is drawn without it.`);
+        return null;
+      }
       const out = new Float32Array(cols * rows);
       for (let i = 0; i < out.length; i++) out[i] = data[i * 4 + 3] / 255;
       return out;
+    }
+
+    // Calm zones keep text on top of the field readable.
+    function fadeAt(c, r) {
+      const x = (c * gw) / W;
+      const y = (r * gh) / H;
+      if (fadeKind === 'composer') return Math.min(1, Math.max(0.35, (1 - y) / 0.22));
+      if (fadeKind === 'headline') return Math.min(1, Math.max(0.15, x / 0.5, (1 - y) / 0.6));
+      if (fadeKind === 'caption') return Math.min(1, Math.max(0.12, (0.62 - y) / 0.2));
+      return 1;
     }
 
     function restLevel(a, c, r) {
@@ -174,9 +224,7 @@
       const spark = a > 0.5 && hash(c, r + 9973) > 0.97 ? 0.25 : 0;
       const inside = a * (0.14 + 0.42 * n) + spark;
       const outside = (1 - a) * (n > 0.74 ? 0.035 + 0.16 * (n - 0.74) : 0);
-      // Calmer under the composer, so the model row stays easy to read.
-      const fade = Math.min(1, Math.max(0.35, (H - r * gh) / (H * 0.22)));
-      const v = (inside + outside) * fade;
+      const v = (inside + outside) * fadeAt(c, r);
       return v > 0.02 ? Math.min(1, v) : 0;
     }
 
@@ -268,7 +316,7 @@
 
     // Runs only while the empty chat is on screen and the tab is visible.
     function update() {
-      const should = visible && host.classList.contains('is-empty') && !document.hidden;
+      const should = visible && when(host) && !document.hidden;
       if (should === running) return;
       running = should;
       if (running) {
@@ -312,5 +360,12 @@
     };
   }
 
-  F.glyphField = { GLYPHS, RIPPLE, rippleSample, createRipples, bindPress, create };
+  // A field on `host` that answers clicks on it: the one call a view needs.
+  function attach(host, opts) {
+    const field = create(host, opts);
+    bindPress(host, (e) => field.press(e.clientX, e.clientY));
+    return field;
+  }
+
+  F.glyphField = { GLYPHS, RIPPLE, rippleSample, createRipples, bindPress, maskRect, create, attach };
 })();

@@ -310,13 +310,13 @@
       : s.branch ? [h('span', { text: 'Branch' }), h('code', { class: 'mono-id update-branch', text: s.branch })] : [h('span', { text: 'No channel' })];
     const checkBtn = F.btn(u.phase === 'checking' ? 'Checking…' : 'Check for updates', { kind: 'primary', icon: 'reload', onclick: checkUpdate });
     if (busy || s.method !== 'git') checkBtn.setAttribute('aria-disabled', 'true');
-    // The installed build, set like a launch board over the liftoff photo.
+    // The installed build over the download arrow set in glyphs (glyphfield.js).
     const hero = h('div', { class: 'update-hero' },
-      h('img', { class: 'update-hero-media', src: '/dashboard/media-liftoff.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' }),
       h('div', { class: 'update-hero-body' },
         h('p', { class: 'update-version', text: s.version ? `v${s.version}` : 'Unknown version' }),
         h('p', { class: 'update-where' }, ...where, s.commit ? h('code', { class: 'mono-id', text: s.commit }) : null)),
       s.method === 'git' ? h('div', { class: 'update-hero-action' }, checkBtn) : null);
+    F.glyphField.attach(hero, { mask: { icon: 'download' }, place: 'right', fade: 'headline' });
     if (s.method !== 'git') {
       host.replaceChildren(h('div', { class: 'update-panel' }, hero,
         h('p', { class: 'update-note', text: 'This copy was not installed with git clone (a container image or a downloaded archive), so it cannot update itself. Pull a new image or download the new release.' })));

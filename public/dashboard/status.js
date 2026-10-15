@@ -58,34 +58,11 @@
     F.on('tick', () => { if (st.visible) tick(); });
   }
 
-  // Full-bleed launch footage behind the pool sentence. Muted, looped, and only playing
-  // while Status is on screen and the reader has not asked for reduced motion.
+  // The pool sentence over the status pulse set in glyphs (glyphfield.js).
   function hero(content) {
-    const video = document.createElement('video');
-    video.className = 'hero-media';
-    video.muted = true;
-    video.defaultMuted = true;
-    video.loop = true;
-    video.playsInline = true;
-    video.preload = 'metadata';
-    video.poster = '/dashboard/media-liftoff.jpg';
-    video.setAttribute('aria-hidden', 'true');
-    // No download button, picture-in-picture, or casting for the background footage.
-    video.setAttribute('controlslist', 'nodownload noplaybackrate noremoteplayback');
-    video.disablePictureInPicture = true;
-    video.disableRemotePlayback = true;
-    video.src = '/dashboard/media-liftoff.mp4';
-    st.els.video = video;
-    return h('section', { class: 'hero', 'aria-label': 'Account pool' },
-      video,
-      h('div', { class: 'hero-inner' }, content));
-  }
-  function playHero() {
-    const v = st.els.video;
-    if (!v) return;
-    // Autoplay can be refused (power saving, browser policy); the poster stays, which is fine.
-    const p = v.play();
-    if (p && p.catch) p.catch(() => {});
+    const el = h('section', { class: 'hero', 'aria-label': 'Account pool' }, h('div', { class: 'hero-inner' }, content));
+    F.glyphField.attach(el, { mask: { icon: 'status' }, place: 'right', fade: 'headline' });
+    return el;
   }
 
   function rowsInWindow(now) {
@@ -259,8 +236,8 @@
     title: 'Status',
     live: true,
     mount,
-    show() { st.visible = true; render(); if (!F.reducedMotion()) playHero(); },
-    hide() { st.visible = false; F.charts.hideTip(); if (st.els.video) st.els.video.pause(); },
+    show() { st.visible = true; render(); },
+    hide() { st.visible = false; F.charts.hideTip(); },
     filterInput: null,
   };
 })();

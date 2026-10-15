@@ -794,15 +794,14 @@
   };
 
   // ---------------------------------------------------------------- notices
-  // Photo hero for the settings-window views (SpaceX grammar, like the Status video): a still
-  // NASA frame, a caps headline built from live data, and one quieter line under it.
-  F.pageHero = ({ image, label, position = '50% 50%' }) => {
-    const img = F.h('img', { class: 'hero-media', src: image, alt: '', decoding: 'async', 'aria-hidden': 'true' });
-    img.style.setProperty('object-position', position);
+  // Page hero for the settings-window views: the page icon in glyphs (glyphfield.js),
+  // a caps headline built from live data, and one quieter line under it.
+  F.pageHero = ({ icon, label }) => {
     const title = F.h('p', { class: 'status-sentence hero-title' });
     const sub = F.h('p', { class: 'hero-sub' });
-    const el = F.h('section', { class: 'hero hero-page', 'aria-label': label }, img,
+    const el = F.h('section', { class: 'hero hero-page', 'aria-label': label },
       F.h('div', { class: 'hero-inner' }, F.h('header', { class: 'status-head' }, title, sub)));
+    F.glyphField.attach(el, { mask: { icon }, place: 'right', fade: 'headline' });
     el.set = (headline, detail = '', tone = null) => {
       title.textContent = headline;
       title.classList.toggle('is-crit', tone === 'crit');
