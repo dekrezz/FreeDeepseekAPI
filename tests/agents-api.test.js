@@ -1084,3 +1084,47 @@ test('GET /admin/agents lists the older model names each model answers to', asyn
   assert.deepEqual(res.json.models.find(m => m.id === 'deepseek-v4-flash').aliases, ['deepseek-v4-flash-search']);
   assert.deepEqual(res.json.models.find(m => m.id === 'deepseek-v4-flash-nosearch').aliases, []);
 });
+
+function cursorLauncher(t, apiKey) {
+  const root = tmpdir();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const ctx = { ...ctxFor(root), root };
+  const p = A.planTarget('cursor', { ...OPTS, apiKey }, ctx, { read: A.fileReader(ctx, { salt: SALT }) });
+  const log = console.log;
+  console.log = () => {};
+  try { A.writeCursorTemplates(ctx, { ...OPTS, apiKey }, p); } finally { console.log = log; }
+  return { root, launcher: path.join(root, 'integrations', 'cursor', 'launch-cursor-deepseek.sh') };
+}
+
+test('audit tooling-1: the Cursor launcher holding the proxy key is not readable by other users', (t) => {
+  const { launcher } = cursorLauncher(t, 'SECRET-PROXY-KEY');
+  const mode = fs.statSync(launcher).mode & 0o777;
+  assert.equal(mode & 0o077, 0, `launcher mode is ${mode.toString(8)}, group/other can read the key`);
+});
+
+test('audit tooling-1: the Cursor launcher does not expand shell syntax inside the proxy key', (t) => {
+  const key = 'a$(touch pwned)b`touch pwned2`c';
+  const { root, launcher } = cursorLauncher(t, key);
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'cursor'), '#!/bin/sh\nprintf %s "$OPENAI_API_KEY"\n', { mode: 0o755 });
+  const work = path.join(root, 'work');
+  fs.mkdirSync(work);
+  const res = spawnSync('sh', [launcher], {
+    cwd: work, encoding: 'utf8',
+    env: { PATH: `${bin}:/usr/bin:/bin`, PROXY_API_KEY: key },
+  });
+  assert.equal(fs.existsSync(path.join(work, 'pwned')), false, 'command substitution in the key ran');
+  assert.equal(fs.existsSync(path.join(work, 'pwned2')), false, 'backticks in the key ran');
+  assert.equal(res.stdout, key);
+});
+
+test('audit tooling-5: mergeClaudeSettings rejects an env that is not an object', () => {
+  for (const env of ['x', ['a', 'b'], 5]) {
+    assert.throws(
+      () => A.mergeClaudeSettings({ env }, A.claudeSettings(OPTS)),
+      (e) => e instanceof A.SetupError && e.code === 'invalid_existing_file' && /env/.test(e.message),
+      `env ${JSON.stringify(env)} must be rejected`,
+    );
+  }
+});

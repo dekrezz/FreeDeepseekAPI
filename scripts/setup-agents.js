@@ -2411,5 +2411,6 @@ module.exports = {
   displayPath,
   revisionOf,
   sameProxy,
+  writeCursorTemplates,
   main,
 };

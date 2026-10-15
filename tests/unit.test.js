@@ -1777,3 +1777,66 @@ test('every paused login leaves no account that can serve', (t) => {
     (err) => err.status === 503 && err.type === 'no_auth',
   );
 });
+
+test('audit srv-tools-1: sanitizeContent keeps valid surrogate pairs and strips only lone surrogates', () => {
+  const { sanitizeContent } = serverInternals;
+  assert.equal(sanitizeContent('Launch \u{1F680} done'), 'Launch \u{1F680} done', 'emoji (a valid surrogate pair) must survive');
+  assert.equal(sanitizeContent('a\u{20BB7}b'), 'a\u{20BB7}b', 'astral CJK must survive');
+  assert.equal(sanitizeContent('a\ud83db'), 'ab', 'a lone high surrogate is removed');
+  assert.equal(sanitizeContent('a\ude00b'), 'ab', 'a lone low surrogate is removed');
+});
+
+test('audit srv-tools-2: Responses function_call input items stay in the history as assistant tool calls', () => {
+  const { messages } = serverInternals.normalizeApiParams({
+    input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'fix bug' }] },
+      { type: 'function_call', call_id: 'c1', name: 'shell', arguments: '{"cmd":"ls"}' },
+      { type: 'function_call_output', call_id: 'c1', output: 'a.txt' },
+      { type: 'function_call', call_id: 'c2', name: 'shell', arguments: '{"cmd":"cat a.txt"}' },
+      { type: 'function_call_output', call_id: 'c2', output: 'hello' },
+    ],
+  }, 'responses');
+
+  const callNames = messages
+    .filter(m => m.role === 'assistant' && Array.isArray(m.tool_calls))
+    .flatMap(m => m.tool_calls.map(tc => tc.function.name));
+  assert.deepEqual(callNames, ['shell', 'shell'], 'both function_call items must become assistant tool_calls');
+
+  const formatted = serverInternals.formatMessages(messages, []);
+  assert.match(formatted.prompt, /Assistant: TOOL_CALL: shell/);
+  assert.match(formatted.prompt, /cat a\.txt/);
+
+  const delta = serverInternals.continuationMessages(messages);
+  assert.equal(delta.length, 1, 'only the newest tool result is new on a live session');
+  assert.equal(delta[0].role, 'tool');
+  assert.equal(delta[0].content, 'hello');
+});
+
+test('audit srv-tools-4: extractScreenshotPaths does not throw on tool messages with array content', () => {
+  const { extractScreenshotPaths } = serverInternals;
+  let result;
+  assert.doesNotThrow(() => {
+    result = extractScreenshotPaths([
+      { role: 'user', content: 'go' },
+      { role: 'tool', tool_call_id: 'c1', content: [{ type: 'text', text: 'ok' }] },
+    ]);
+  });
+  assert.deepEqual(result, []);
+});
+
+test('audit srv-tools-4: extractScreenshotPaths only reports paths from the current turn', () => {
+  const { extractScreenshotPaths } = serverInternals;
+  const dir = tmpdir();
+  try {
+    const png = path.join(dir, 'bug.png');
+    fs.writeFileSync(png, 'x');
+    const result = extractScreenshotPaths([
+      { role: 'user', content: `see ${png}` },
+      { role: 'assistant', content: 'looked at it' },
+      { role: 'user', content: 'thanks, now explain the fix' },
+    ]);
+    assert.deepEqual(result, [], 'a path mentioned before the last assistant turn must not be re-injected');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

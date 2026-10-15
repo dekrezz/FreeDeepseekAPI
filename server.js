@@ -5442,6 +5442,8 @@ module.exports = {
         OPENCODE_AUTONOMY_INSTRUCTION,
         fingerprintPrompt,
         continuationMessages,
+        sanitizeContent,
+        extractScreenshotPaths,
         resolveUpstreamPrompt,
         stripHarnessWebSearchTools,
         isHarnessWebSearchTool,

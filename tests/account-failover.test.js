@@ -1777,3 +1777,439 @@ test('HTTP: stream mode no-tools still carries contract', async (t) => {
   const completions = byPath(calls, COMPLETION, 'A');
   assert.ok(completions[0].body.prompt.includes(NO_TOOLS_MARKER));
 });
+
+// ---------------------------------------------------------------------------
+// Audit sweep (srv-*)
+// ---------------------------------------------------------------------------
+
+test('audit srv-accounts-1: a failed completion on a freshly created chat does not keep that empty chat', async (t) => {
+  const A = acct('A');
+  useAccounts(t, [A]);
+  const calls = installUpstream(t, {
+    completion: { A: [() => new Response('busy', { status: 503 }), () => sse(okSse('second answer'))] },
+  });
+  t.after(() => { S.sessions.delete('audit-ctx'); });
+  const port = await startServer(t);
+
+  const first = await chat(port, 'audit-ctx', [{ role: 'user', content: 'FIRST-TURN-MARKER' }]);
+  assert.equal(first.status, 503, first.text);
+  assert.equal(S.sessions.get('audit-ctx').id, null, 'the empty chat must not stay attached to the session');
+
+  const second = await chat(port, 'audit-ctx', [
+    { role: 'user', content: 'FIRST-TURN-MARKER' },
+    { role: 'assistant', content: 'x' },
+    { role: 'user', content: 'second' },
+  ]);
+  assert.equal(second.status, 200, second.text);
+  const completions = byPath(calls, COMPLETION, 'A');
+  assert.equal(completions.length, 2);
+  assert.match(completions[1].body.prompt, /FIRST-TURN-MARKER/, 'the next turn must carry the earlier context');
+});
+
+test('audit srv-accounts-1: a failed completion on the recreated chat does not keep that empty chat', async (t) => {
+  const A = acct('A');
+  useAccounts(t, [A]);
+  installUpstream(t, {
+    completion: {
+      A: [
+        () => jsonResp({ code: 0, data: { biz_code: 7, biz_msg: 'invalid parent message id' } }, 400),
+        () => new Response('busy', { status: 503 }),
+      ],
+    },
+  });
+  const session = seedStickySession(t, 'audit-recreate-503', 'A', 'old-A');
+  const port = await startServer(t);
+
+  const res = await chat(port, 'audit-recreate-503', HISTORY_MESSAGES);
+
+  assert.equal(res.status, 503, res.text);
+  assert.equal(session.id, null, 'the recreated chat never accepted a message and must be dropped');
+});
+
+test('audit srv-accounts-2: a business auth code on HTTP 200 cools the account and the next request moves to a healthy login', async (t) => {
+  const A = acct('A');
+  const B = acct('B');
+  useAccounts(t, [A, B]);
+  installUpstream(t, {
+    pow: (account) => (account === 'A'
+      ? jsonResp({ code: 40003, msg: 'Authorization Failed (invalid token)', data: null })
+      : null),
+    completion: { B: [() => sse(okSse('served by B'))] },
+  });
+  t.after(() => { S.sessions.delete('audit-auth-code'); });
+  const port = await startServer(t);
+
+  const first = await chat(port, 'audit-auth-code', [{ role: 'user', content: 'hi' }]);
+  assert.notEqual(first.status, 500, first.text);
+  assert.ok(A.cooldownUntil > Date.now(), 'the dead login must be cooled down');
+  assert.equal(A.cooldownReason, 'auth');
+
+  const second = await chat(port, 'audit-auth-code', [{ role: 'user', content: 'hi again' }]);
+  assert.equal(second.status, 200, second.text);
+  assert.equal(second.headers['x-account-id'], 'B');
+});
+
+test('audit srv-tools-1: emoji in an upstream answer reaches the client', async (t) => {
+  const A = acct('A');
+  useAccounts(t, [A]);
+  installUpstream(t, { completion: { A: [() => sse(okSse('ok \u{1F600} and \u{1F680}'))] } });
+  t.after(() => { S.sessions.delete('audit-emoji'); });
+  const port = await startServer(t);
+
+  const res = await chat(port, 'audit-emoji', [{ role: 'user', content: 'hi' }]);
+
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.choices[0].message.content, 'ok \u{1F600} and \u{1F680}');
+});
+
+test('audit srv-admin-1: POST /admin/accounts/import refuses a wasmUrl outside deepseek.com', async (t) => {
+  useAccounts(t, []);
+  const dir = useAuthDir(t);
+  const port = await startServer(t);
+
+  for (const [i, wasmUrl] of ['http://127.0.0.1:1/evil.wasm', 'https://evil.example.com/x.wasm', 'http://fe-static.deepseek.com/x.wasm'].entries()) {
+    const res = await request(port, 'POST', '/admin/accounts/import', {
+      body: { name: `ssrf ${i}`, auth: { token: `tok-ssrf-${i}`, cookie: 'a=b', wasmUrl } },
+    });
+    if (res.status === 201) {
+      // Ignoring the client value (storing the default) is an acceptable fix.
+      const written = JSON.parse(fs.readFileSync(path.join(dir, `ssrf-${i}.json`), 'utf8'));
+      assert.notEqual(written.wasmUrl, wasmUrl, `a client-chosen wasmUrl must not be stored: ${wasmUrl}`);
+    } else {
+      assert.equal(res.status, 422, res.text);
+      assert.equal(res.json.error.type, 'invalid_auth');
+      assert.equal(fs.existsSync(path.join(dir, `ssrf-${i}.json`)), false);
+    }
+  }
+
+  const ok = await request(port, 'POST', '/admin/accounts/import', {
+    body: { name: 'good', auth: { token: 'tok-good', cookie: 'a=b', wasmUrl: 'https://fe-static.deepseek.com/chat/static/x.wasm' } },
+  });
+  assert.equal(ok.status, 201, ok.text);
+});
+
+// ---------------------------------------------------------------------------
+// Audit: server request handling (srv-http-*, srv-accounts-*)
+// ---------------------------------------------------------------------------
+
+const auditSleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// POST with the body delivered in several writes, awaiting a short delay between
+// writes so the server sees separate 'data' chunks.
+function auditChunkedPost(port, agent, buffer, splitAt) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      method: 'POST',
+      path: '/v1/chat/completions',
+      agent: false,
+      headers: { 'content-type': 'application/json', 'content-length': buffer.length, 'x-agent-session': agent },
+    }, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        let json = null;
+        try { json = JSON.parse(data); } catch (e) { /* non-JSON body */ }
+        resolve({ status: res.statusCode, text: data, json });
+      });
+    });
+    req.on('error', reject);
+    req.write(buffer.subarray(0, splitAt));
+    auditSleep(80).then(() => { req.end(buffer.subarray(splitAt)); });
+  });
+}
+
+test('audit srv-http-1: a multi-byte character split across request chunks reaches upstream intact', async (t) => {
+  useAccounts(t, [acct('A')]);
+  const calls = installUpstream(t, { completion: { A: [() => sse(okSse('ok'))] } });
+  const port = await startServer(t);
+
+  const buffer = Buffer.from(JSON.stringify({
+    model: 'deepseek-v4-flash',
+    messages: [{ role: 'user', content: 'привет мир' }],
+  }), 'utf8');
+  const lead = buffer.indexOf(0xD0);
+  assert.ok(lead > 0, 'fixture must contain a 2-byte Cyrillic sequence');
+  const res = await auditChunkedPost(port, 'audit-utf8-split', buffer, lead + 1);
+
+  assert.equal(res.status, 200, res.text);
+  const sent = byPath(calls, COMPLETION, 'A');
+  assert.equal(sent.length, 1);
+  const prompt = String(sent[0].body.prompt);
+  assert.ok(!prompt.includes('�'), 'the upstream prompt must not contain U+FFFD replacement characters');
+  assert.ok(prompt.includes('привет мир'), 'the upstream prompt must contain the original text');
+});
+
+test('audit srv-http-1: an oversized request body gets a typed 413 payload_too_large', async (t) => {
+  useAccounts(t, [acct('A')]);
+  installUpstream(t, { completion: { A: [() => sse(okSse('ok'))] } });
+  const prevLimit = process.env.MAX_REQUEST_BODY_BYTES;
+  process.env.MAX_REQUEST_BODY_BYTES = '500';
+  t.after(() => {
+    if (prevLimit === undefined) delete process.env.MAX_REQUEST_BODY_BYTES;
+    else process.env.MAX_REQUEST_BODY_BYTES = prevLimit;
+  });
+  const port = await startServer(t);
+
+  const res = await chat(port, 'audit-body-too-large', [{ role: 'user', content: 'a'.repeat(2000) }]);
+
+  assert.equal(res.status, 413, res.text);
+  assert.equal(res.json?.error?.type, 'payload_too_large');
+});
+
+test('audit srv-http-1: the request body limit is measured in bytes, not UTF-16 code units', async (t) => {
+  useAccounts(t, [acct('A')]);
+  installUpstream(t, { completion: { A: [() => sse(okSse('ok'))] } });
+  const prevLimit = process.env.MAX_REQUEST_BODY_BYTES;
+  process.env.MAX_REQUEST_BODY_BYTES = '500';
+  t.after(() => {
+    if (prevLimit === undefined) delete process.env.MAX_REQUEST_BODY_BYTES;
+    else process.env.MAX_REQUEST_BODY_BYTES = prevLimit;
+  });
+  const port = await startServer(t);
+
+  const payload = JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'user', content: 'я'.repeat(300) }] });
+  assert.ok(payload.length < 500 && Buffer.byteLength(payload) > 500, 'fixture: under the limit in characters, over it in bytes');
+  const res = await chat(port, 'audit-body-bytes', [{ role: 'user', content: 'я'.repeat(300) }]);
+
+  assert.equal(res.status, 413, `a body of ${Buffer.byteLength(payload)} bytes exceeds the 500 byte limit: ${res.text.slice(0, 200)}`);
+  assert.equal(res.json?.error?.type, 'payload_too_large');
+});
+
+test('audit srv-http-1: a burst of requests cannot exceed the in-flight cap', { timeout: 30000 }, async (t) => {
+  useAccounts(t, [acct('A')]);
+  let openGate;
+  const gate = new Promise(resolve => { openGate = resolve; });
+  installUpstream(t, { completion: { A: [() => gate.then(() => sse(okSse('ok')))] } });
+  const port = await startServer(t);
+  t.after(() => openGate());
+
+  const BURST = 30; // the default cap is 24
+  const statuses = [];
+  const pending = [];
+  const senders = [];
+  for (let i = 0; i < BURST; i++) {
+    const payload = JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'user', content: `burst ${i}` }] });
+    pending.push(new Promise((resolve) => {
+      const req = http.request({
+        host: '127.0.0.1',
+        port,
+        method: 'POST',
+        path: '/v1/chat/completions',
+        agent: false,
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), 'x-agent-session': `audit-burst-${i}` },
+      }, (res) => {
+        res.resume();
+        res.on('end', () => { statuses.push(res.statusCode); resolve(res.statusCode); });
+      });
+      req.on('error', () => resolve(0));
+      req.flushHeaders();
+      senders.push(() => req.end(payload));
+    }));
+  }
+  // All headers reach the server before any body does.
+  await auditSleep(150);
+  senders.forEach(send => send());
+  await auditSleep(400);
+
+  const early503 = statuses.filter(s => s === 503).length;
+  openGate();
+  await Promise.all(pending);
+  assert.ok(early503 >= 1, `with ${BURST} simultaneous requests and a cap of 24, the excess must be rejected with 503 while the first ones are still in flight (503s seen: ${early503})`);
+});
+
+test('audit srv-http-2: the same-account format repair does not paste the full context into the live chat', async (t) => {
+  const A = acct('A');
+  useAccounts(t, [A]);
+  const calls = installUpstream(t, {
+    completion: { A: [
+      () => sse(okSse(MALFORMED_TOOL_ENVELOPE)),
+      () => sse(okSse(MALFORMED_TOOL_ENVELOPE)),
+      () => sse(okSse(VALID_TOOL_CALL)),
+    ] },
+  });
+  const agent = 'audit-second-repair-short';
+  seedStickySession(t, agent, 'A', 'old-A');
+  const port = await startServer(t);
+
+  const res = await chat(port, agent, HISTORY_MESSAGES, { tools: TOOL_SCHEMA });
+
+  assert.equal(res.status, 200, res.text);
+  const sent = byPath(calls, COMPLETION, 'A');
+  assert.equal(sent.length, 3);
+  const third = sent[2];
+  assert.equal(third.body.chat_session_id, 'old-A', 'the format retry runs inside the same live chat');
+  const prompt = String(third.body.prompt);
+  assert.match(prompt, /\[STRICT INSTRUCTION\]/);
+  assert.ok(!prompt.includes('TASK_ONE original task'), 'the transcript is already in the live chat and must not be pasted again');
+  assert.ok(!prompt.includes('Read a file from disk'), 'the tool schema is already in the live chat and must not be pasted again');
+  assert.ok(prompt.length < 2000, `the second format retry must be a short instruction, got ${prompt.length} chars`);
+});
+
+test('audit srv-http-3: a complete large tool call is not auto-continued', async (t) => {
+  useAccounts(t, [acct('A')]);
+  const BIG_CALL = JSON.stringify({ tool_call: { name: 'read_file', arguments: { path: 'x'.repeat(26000) } } });
+  const calls = installUpstream(t, {
+    completion: { A: [() => sse(okSse(BIG_CALL)), () => sse(okSse(VALID_TOOL_CALL))] },
+  });
+  const port = await startServer(t);
+
+  const res = await chat(port, 'audit-no-autocontinue', HISTORY_MESSAGES, { tools: TOOL_SCHEMA });
+
+  assert.equal(res.status, 200, res.text.slice(0, 300));
+  assert.equal(byPath(calls, COMPLETION, 'A').length, 1, 'a complete answer must not trigger a continue turn');
+  const toolCalls = res.json?.choices?.[0]?.message?.tool_calls;
+  assert.equal(toolCalls?.length, 1, `expected exactly one tool call, got ${JSON.stringify(toolCalls)?.slice(0, 200)}`);
+});
+
+// Load a private copy of server.js so that module-level env settings can be changed.
+function auditLoadFreshServer(t, env) {
+  const serverPath = require.resolve('../server.js');
+  const cached = require.cache[serverPath];
+  const previous = {};
+  for (const [key, value] of Object.entries(env)) {
+    previous[key] = process.env[key];
+    process.env[key] = value;
+  }
+  const restore = () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    delete require.cache[serverPath];
+    if (cached) require.cache[serverPath] = cached;
+  };
+  t.after(restore);
+  delete require.cache[serverPath];
+  return require('../server.js').__test;
+}
+
+test('audit srv-http-4: a healthy completion stream longer than the fetch timeout is not aborted', async (t) => {
+  const F = auditLoadFreshServer(t, { DEEPSEEK_FETCH_TIMEOUT_MS: '300' });
+  const original = F.accounts.splice(0, F.accounts.length, acct('A'));
+  t.after(() => { F.accounts.splice(0, F.accounts.length, ...original); });
+  const calls = installUpstream(t, { completion: { A: [() => sse(okSse('unused'))] } });
+  const inner = globalThis.fetch;
+  const enc = new TextEncoder();
+  // installUpstream restores the real fetch in its own t.after hook.
+  globalThis.fetch = async (url, options = {}) => {
+    if (new URL(String(url)).pathname !== COMPLETION) return inner(url, options);
+    calls.push({ path: COMPLETION, account: 'A', body: JSON.parse(options.body) });
+    const signal = options.signal;
+    let timer;
+    const stream = new ReadableStream({
+      start(controller) {
+        const abort = () => {
+          clearInterval(timer);
+          try { controller.error(signal.reason ?? new Error('aborted')); } catch (e) { /* already closed */ }
+        };
+        if (signal) {
+          if (signal.aborted) { abort(); return; }
+          signal.addEventListener('abort', abort, { once: true });
+        }
+        const first = { v: { response: { message_id: 2, fragments: [{ type: 'RESPONSE', content: 'p0' }] } } };
+        controller.enqueue(enc.encode(`data: ${JSON.stringify(first)}\n\n`));
+        let i = 0;
+        timer = setInterval(() => {
+          i++;
+          try {
+            if (i <= 6) {
+              controller.enqueue(enc.encode(`data: ${JSON.stringify({ p: 'response/fragments/-1/content', v: `p${i}` })}\n\n`));
+            } else {
+              controller.enqueue(enc.encode('data: {"p":"response/status","v":"FINISHED"}\n\n'));
+              controller.close();
+              clearInterval(timer);
+            }
+          } catch (e) { clearInterval(timer); }
+        }, 100);
+      },
+      cancel() { clearInterval(timer); },
+    });
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8' } });
+  };
+  await new Promise(resolve => F.server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => F.server.close(resolve)));
+  const port = F.server.address().port;
+
+  const res = await chat(port, 'audit-idle-timeout', [{ role: 'user', content: 'hi' }]);
+
+  assert.equal(res.status, 200, `the stream produced a chunk every 100 ms, so it is not idle: ${res.text.slice(0, 300)}`);
+  assert.equal(res.json?.choices?.[0]?.message?.content, 'p0p1p2p3p4p5p6');
+});
+
+test('audit srv-http-4: a non-numeric DEEPSEEK_ACCOUNT_COOLDOWN_MS fails loudly at startup', (t) => {
+  assert.throws(
+    () => auditLoadFreshServer(t, { DEEPSEEK_ACCOUNT_COOLDOWN_MS: '10m' }),
+    /DEEPSEEK_ACCOUNT_COOLDOWN_MS/,
+  );
+});
+
+test('audit srv-http-5: a screenshot path from an earlier turn is not re-injected into a later answer', async (t) => {
+  useAccounts(t, [acct('A')]);
+  const calls = installUpstream(t, { completion: { A: [() => sse(okSse('4'))] } });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fdsapi-audit-media-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const png = path.join(dir, 'shot.png');
+  fs.writeFileSync(png, 'png');
+  const port = await startServer(t);
+
+  const res = await chat(port, 'audit-stale-media', [
+    { role: 'user', content: 'take a screenshot' },
+    { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'browser_vision', arguments: '{}' } }] },
+    { role: 'tool', tool_call_id: 'c1', content: JSON.stringify({ screenshot_path: png }) },
+    { role: 'assistant', content: 'done' },
+    { role: 'user', content: 'what is 2+2' },
+  ]);
+
+  assert.equal(res.status, 200, res.text);
+  assert.equal(byPath(calls, COMPLETION, 'A').length, 1);
+  const content = res.json?.choices?.[0]?.message?.content;
+  assert.ok(!String(content).includes('MEDIA:'), `a screenshot from a previous turn must not be appended, got ${JSON.stringify(content)}`);
+});
+
+test('audit srv-http-5: a tool message with array content parts does not crash the response', async (t) => {
+  useAccounts(t, [acct('A')]);
+  installUpstream(t, { completion: { A: [() => sse(okSse('fine'))] } });
+  const port = await startServer(t);
+
+  const res = await chat(port, 'audit-tool-array-content', [
+    { role: 'user', content: 'run it' },
+    { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a"}' } }] },
+    { role: 'tool', tool_call_id: 'c1', content: [{ type: 'text', text: 'file contents' }] },
+    { role: 'user', content: 'summarize' },
+  ], { tools: TOOL_SCHEMA });
+
+  assert.equal(res.status, 200, `array tool content is valid OpenAI input: ${res.text.slice(0, 300)}`);
+  assert.equal(res.json?.choices?.[0]?.message?.content, 'fine');
+});
+
+test('audit srv-accounts-3: a request queued on an account lock does not use that account after it was rate-limited', { timeout: 20000 }, async (t) => {
+  const X = acct('X');
+  const Y = acct('Y');
+  useAccounts(t, [X, Y]);
+  const calls = installUpstream(t, {
+    completion: {
+      X: [
+        async () => { await auditSleep(150); return sse(HINT_SSE); },
+        () => sse(HINT_SSE),
+      ],
+      Y: [() => sse(okSse('ok'))],
+    },
+  });
+  const agent = 'audit-queued-lock';
+  seedStickySession(t, agent, 'X', 'old-X');
+  const port = await startServer(t);
+
+  const first = chat(port, agent, HISTORY_MESSAGES);
+  for (let i = 0; i < 50 && byPath(calls, COMPLETION, 'X').length === 0; i++) await auditSleep(10);
+  assert.equal(byPath(calls, COMPLETION, 'X').length, 1, 'fixture: the first request must be in flight on X');
+  const second = chat(port, agent, HISTORY_MESSAGES);
+  const [r1, r2] = await Promise.all([first, second]);
+
+  assert.equal(r1.status, 200, r1.text);
+  assert.equal(r2.status, 200, r2.text);
+  assert.equal(byPath(calls, COMPLETION, 'X').length, 1, 'X was rate-limited by the first request; the queued request must not call it again');
+  assert.equal(byPath(calls, POW, 'X').length, 1, 'no PoW challenge may be requested on the cooling account');
+});

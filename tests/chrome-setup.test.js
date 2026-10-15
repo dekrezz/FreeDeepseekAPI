@@ -114,3 +114,25 @@ test('a missing Chrome in a non-interactive run lists the checked paths without 
   assert.match(out, /CHROME_PATH/);
   assert.doesNotMatch(out, /\n\s+at main \(/, 'a missing browser is a setup problem, not a crash');
 });
+
+test('audit auth-1: a failed capture never overwrites a working auth file', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-auth-1-'));
+  try {
+    const file = path.join(dir, 'deepseek-auth.json');
+    const good = { token: 'good', cookie: 'a=b' };
+    fs.writeFileSync(file, JSON.stringify(good), { mode: 0o600 });
+    assert.equal(typeof chrome.writeCapturedAuth, 'function', 'scripts/lib/chrome-setup.js must export writeCapturedAuth(outPath, auth)');
+    const empty = { token: '', cookie: '', hif_dliq: '', hif_leim: '', wasmUrl: 'x' };
+    const partial = { token: '', cookie: 'a=b', hif_dliq: '', hif_leim: '', wasmUrl: 'x' };
+    for (const captured of [empty, partial]) {
+      let outcome;
+      try { outcome = chrome.writeCapturedAuth(file, captured); } catch { outcome = false; }
+      assert.equal(outcome, false, 'a failed capture must throw or return false');
+      assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), good, 'the existing auth file must stay untouched');
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
