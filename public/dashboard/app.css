@@ -240,7 +240,7 @@ path, circle, rect, ellipse, line, polyline { vector-effect: non-scaling-stroke;
 .account-switch.is-empty .account-name { font-weight: 500; }
 .account-menu .account-item { height: auto; min-height: 48px; padding: 6px 10px; gap: 10px; }
 .account-menu .account-item .account-text { line-height: 1.125rem; }
-.account-check { width: 16px; height: 16px; color: var(--ink); flex: none; }
+.account-menu .account-check { width: 16px; height: 16px; color: var(--ink); stroke-width: 2; flex: none; }
 .account-menu .menu-item .avatar .icon { color: inherit; }
 .account-menu-note { padding: 8px 10px; }
 
@@ -1150,19 +1150,25 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 .meta-btn-model .meta-btn-label { color: var(--ink); }
 .meta-btn-detail { color: var(--ink-3); margin-left: 4px; }
 .meta-chev { width: 14px; height: 14px; color: var(--ink-3); }
-.model-menu, .account-menu { gap: 2px; }
-.popover:has(.model-menu), .popover:has(.account-menu) { border-radius: 14px; padding: 6px; background: #2a2a2a; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12), var(--shadow-pop); }
-.model-item { height: auto; min-height: 52px; padding: 8px 12px; border-radius: 10px; gap: 12px; }
-.model-text { display: grid; flex: 1; min-width: 0; line-height: 1.25rem; }
-.model-title { font-size: 0.9375rem; color: var(--ink); }
-.model-desc { font-size: 0.8125rem; color: var(--ink-3); }
-.model-check { width: 18px; height: 18px; color: var(--signal); stroke-width: 2; flex: none; }
+/* Model and account menus: the composer's card (dark, hairline, 12px), tight rows led by an icon,
+   a white check, hairlines running edge to edge between groups. */
+.model-menu, .account-menu { gap: 1px; }
+.popover:has(.model-menu), .popover:has(.account-menu) { border-radius: 12px; padding: 4px; background: #1f1f1f; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12), 0 12px 32px rgb(0 0 0 / 0.45); }
+:is(.model-menu, .account-menu) .menu-sep { margin: 4px -4px; background: rgb(255 255 255 / 0.08); }
+.model-item { height: auto; min-height: 44px; padding: 5px 10px; border-radius: 8px; gap: 10px; }
+.model-menu .model-icon { width: 16px; height: 16px; flex: none; color: var(--ink-2); }
+.model-item[aria-checked=true] .model-icon { color: var(--ink); }
+.model-text { display: grid; flex: 1; min-width: 0; line-height: 1.125rem; }
+.model-title { font-size: 0.875rem; color: var(--ink); }
+.model-desc { font-size: 0.75rem; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-menu .model-check { width: 16px; height: 16px; color: var(--ink); stroke-width: 2; flex: none; }
 .model-item[aria-disabled=true] .model-title { color: var(--ink-3); }
-.model-row { height: 44px; padding: 0 12px; border-radius: 10px; }
-.model-row-label { flex: 1; font-size: 0.9375rem; }
-.model-row-value { color: var(--ink-3); font-size: 0.875rem; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-row { height: 36px; padding: 0 10px; border-radius: 8px; gap: 10px; color: var(--ink-2); }
+.model-row-label { flex: 1; font-size: 0.875rem; }
+.model-row-value { color: var(--ink-3); font-size: 0.8125rem; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-row .model-row-chev { width: 14px; height: 14px; color: var(--ink-3); }
 .model-menu-note { padding: 10px 12px; }
+.account-menu .account-item { border-radius: 8px; }
 .attach-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 4px; }
 .thumb { position: relative; width: 56px; height: 56px; border-radius: var(--r-md); background: var(--raised); display: grid; place-items: center; }
 .thumb img { width: 56px; height: 56px; object-fit: cover; border-radius: var(--r-md); display: block; }

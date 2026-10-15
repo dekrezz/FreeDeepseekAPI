@@ -337,8 +337,8 @@
   // Modes are model variants on this server: base, -thinking, and their -nosearch twins.
   // Web search is on by default; the menu has a separate switch to turn it off.
   const MODES = [
-    { think: false, title: 'Instant', desc: 'Direct answers, fastest' },
-    { think: true, title: 'DeepThink', desc: 'Reasons step by step before answering' },
+    { think: false, title: 'Instant', desc: 'Direct answers, fastest', icon: 'bolt' },
+    { think: true, title: 'DeepThink', desc: 'Reasons step by step before answering', icon: 'think' },
   ];
   const modeLabel = (think, search) => `${MODES.find(m => m.think === think).title}${search ? '' : ' · No search'}`;
   // "deepseek-v4-flash" → "V4 Flash": the id, made readable, nothing invented.
@@ -371,6 +371,7 @@
           type: 'button', role: 'menuitemradio', class: 'menu-item model-item', 'aria-checked': String(checked),
           'aria-disabled': ok ? null : 'true', 'data-tip': ok ? id : unavailableReason(id),
         },
+          F.icon(mode.icon, 'model-icon'),
           h('span', { class: 'model-text' }, h('span', { class: 'model-title', text: mode.title }), h('span', { class: 'model-desc', text: mode.desc })),
           checked ? F.icon('check', 'model-check') : null);
         b.addEventListener('click', () => { if (!ok) return; F.closePopover(); setMode(mode.think, S.search); });
@@ -383,6 +384,7 @@
         type: 'button', role: 'menuitemcheckbox', class: 'menu-item model-item', 'aria-checked': String(S.search),
         'aria-disabled': searchOk ? null : 'true', 'data-tip': searchOk ? searchId : unavailableReason(searchId),
       },
+        F.icon('search-web', 'model-icon'),
         h('span', { class: 'model-text' }, h('span', { class: 'model-title', text: 'Web search' }), h('span', { class: 'model-desc', text: 'Answers with live results from the web' })),
         S.search ? F.icon('check', 'model-check') : null);
       sw.addEventListener('click', () => { if (!searchOk) return; F.closePopover(); setMode(S.think, !S.search); });
@@ -390,6 +392,7 @@
     }
     list.append(h('div', { class: 'menu-sep', role: 'separator' }));
     const acct = h('button', { type: 'button', role: 'menuitem', class: 'menu-item model-row' },
+      F.icon('accounts', 'model-icon'),
       h('span', { class: 'model-row-label', text: 'Account' }),
       h('span', { class: 'model-row-value', text: chatAccountLabel() }),
       F.icon('chevron-right', 'model-row-chev'));
@@ -405,7 +408,7 @@
       if (e.key === 'ArrowDown') { e.preventDefault(); btns[(i + 1) % btns.length].focus(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); btns[(i - 1 + btns.length) % btns.length].focus(); }
     });
-    F.popover(trigger, list, { width: 300, align: 'auto', role: 'presentation', label: 'Model' });
+    F.popover(trigger, list, { width: 288, align: 'auto', role: 'presentation', label: 'Model' });
   }
 
   function chatAccountLabel() {
