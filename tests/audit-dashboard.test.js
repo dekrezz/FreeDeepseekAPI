@@ -50,3 +50,23 @@ test('no scrollbar is drawn anywhere; long commands wrap instead of scrolling', 
   const core = fs.readFileSync(path.join(DASHBOARD_DIR, 'core.js'), 'utf8');
   assert.match(core, /F\.scrollEdges = /, 'scrollable areas mark the edges that have more past them');
 });
+
+test('agent tiles take each brand\'s own avatar colours (Lobe Icons), not a computed hue', () => {
+  const agents = fs.readFileSync(path.join(DASHBOARD_DIR, 'agents.js'), 'utf8');
+  const block = agents.match(/const AGENTS = \[([\s\S]*?)\];/)[1];
+  const brand = {
+    'claude-code': { bg: '#09090B', fg: '#D97757' },
+    codex: { bg: '#FFFFFF', fg: null },
+    opencode: { bg: '#000000', fg: '#FFFFFF' },
+    hermes: { bg: '#FFFFFF', fg: '#000000' },
+    openclaw: { bg: '#000000', fg: null },
+    cursor: { bg: '#000000', fg: '#FFFFFF' },
+  };
+  for (const [id, c] of Object.entries(brand)) {
+    const entry = block.match(new RegExp(`\\{ id: '${id}'[^}]*\\}`));
+    assert.ok(entry, `no entry for ${id}`);
+    assert.match(entry[0], new RegExp(`bg: '${c.bg}'`), `${id} tile background`);
+    assert.match(entry[0], c.fg ? new RegExp(`fg: '${c.fg}'`) : /fg: null/, `${id} mark colour (null keeps the logo's own colours)`);
+    assert.doesNotMatch(entry[0], /hue:/, `${id} still uses a computed hue`);
+  }
+});
