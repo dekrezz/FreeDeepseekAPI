@@ -272,7 +272,7 @@
     const dock = h('div', { class: 'composer-dock' }, note, form, meta, fileInput);
     // Empty chat: greeting in the middle, composer at the bottom, the glyph field behind both.
     root.append(scroll, empty, dock);
-    S.field = F.glyphField.attach(root, { mask: { image: '/dashboard/logo.png' }, place: 'center', fade: 'composer', when: (el) => el.classList.contains('is-empty') });
+    S.field = F.glyphField.attach(root, { mask: { image: '/dashboard/logo.png' }, fade: 'composer', when: (el) => el.classList.contains('is-empty') });
     Object.assign(S.els, { banners, empty, emptyTitle, emptyLine, unknown, transcript, scroll, textarea, thumbs, fileInput, attachBtn, modelBtn, modelName, modelMode, sendBtn, form, note, dock });
 
     // composer behaviour

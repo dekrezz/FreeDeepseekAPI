@@ -58,11 +58,9 @@
     F.on('tick', () => { if (st.visible) tick(); });
   }
 
-  // The pool sentence over the status pulse set in glyphs (glyphfield.js).
+  // The pool sentence as the page's headline.
   function hero(content) {
-    const el = h('section', { class: 'hero', 'aria-label': 'Account pool' }, h('div', { class: 'hero-inner' }, content));
-    F.glyphField.attach(el, { mask: { icon: 'status' }, place: 'right', fade: 'headline' });
-    return el;
+    return h('section', { class: 'hero', 'aria-label': 'Account pool' }, h('div', { class: 'hero-inner' }, content));
   }
 
   function rowsInWindow(now) {

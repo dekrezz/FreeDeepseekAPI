@@ -165,21 +165,24 @@
             <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
             <input type="search" id="settings-search" placeholder="Search" aria-label="Search settings" autocomplete="off" spellcheck="false">
           </label>
+          <!-- One card like the model picker: groups split by hairlines, the open page checked. -->
+          <div class="nav-card">
           <p class="settings-nav-title">Settings</p>
           <ul class="nav-list" role="list">
-            <li><a class="nav-item" href="#/settings" data-nav="settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span>General</span></a></li>
+            <li><a class="nav-item nav-pick" href="#/settings" data-nav="settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span class="nav-text"><span class="nav-title">General</span><span class="nav-desc">Access key, connection, updates</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
           </ul>
           <p class="settings-nav-title">Proxy</p>
           <ul class="nav-list" role="list">
-            <li><a class="nav-item" href="#/status" data-nav="status"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-status"/></svg><span>Status</span></a></li>
-            <li><a class="nav-item" href="#/accounts" data-nav="accounts"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-accounts"/></svg><span>Accounts</span></a></li>
-            <li><a class="nav-item" href="#/usage" data-nav="usage"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-usage"/></svg><span>Usage</span></a></li>
-            <li><a class="nav-item" href="#/requests" data-nav="requests"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-requests"/></svg><span>Requests</span></a></li>
+            <li><a class="nav-item nav-pick" href="#/status" data-nav="status"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-status"/></svg><span class="nav-text"><span class="nav-title">Status</span><span class="nav-desc">Pool health and live traffic</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
+            <li><a class="nav-item nav-pick" href="#/accounts" data-nav="accounts"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-accounts"/></svg><span class="nav-text"><span class="nav-title">Accounts</span><span class="nav-desc">DeepSeek logins in the pool</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
+            <li><a class="nav-item nav-pick" href="#/usage" data-nav="usage"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-usage"/></svg><span class="nav-text"><span class="nav-title">Usage</span><span class="nav-desc">Tokens and requests over time</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
+            <li><a class="nav-item nav-pick" href="#/requests" data-nav="requests"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-requests"/></svg><span class="nav-text"><span class="nav-title">Requests</span><span class="nav-desc">Every call through the proxy</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
           </ul>
           <p class="settings-nav-title">Connect</p>
           <ul class="nav-list" role="list">
-            <li><a class="nav-item" href="#/agents" data-nav="agents"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-agent"/></svg><span>Agents</span></a></li>
+            <li><a class="nav-item nav-pick" href="#/agents" data-nav="agents"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-agent"/></svg><span class="nav-text"><span class="nav-title">Agents</span><span class="nav-desc">Point coding agents at this proxy</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
           </ul>
+          </div>
           <p class="settings-nav-empty" id="settings-nav-empty" hidden>Nothing matches.</p>
         </nav>
         <div class="settings-pane" id="settings-pane">

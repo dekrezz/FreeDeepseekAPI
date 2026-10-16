@@ -755,7 +755,7 @@
   function mount(root) {
     st.root = root;
     // Overview
-    const heroO = F.pageHero({ icon: 'agent', label: 'Coding agents' });
+    const heroO = F.pageHero({ label: 'Coding agents' });
     const ovBanner = h('div', { class: 'view-banner' });
     const roster = h('ul', { class: 'agents-roster set-group', role: 'list', 'aria-label': 'Agents' });
     // The j/k cursor follows Tab focus, so Enter and j/k always agree on the row.
@@ -780,7 +780,7 @@
       h('div', { class: 'view-pad agents' }, ovBanner, rosterSection, backupSection));
 
     // Detail
-    const heroD = F.pageHero({ icon: 'agent', label: 'Agent' });
+    const heroD = F.pageHero({ label: 'Agent' });
     heroD.classList.add('hero-agent');
     const pathHost = h('div', { class: 'agent-path-host' });
     const dBanner = h('div', { class: 'view-banner' });
