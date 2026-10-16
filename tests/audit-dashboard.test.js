@@ -70,3 +70,16 @@ test('agent tiles take each brand\'s own avatar colours (Lobe Icons), not a comp
     assert.doesNotMatch(entry[0], /hue:/, `${id} still uses a computed hue`);
   }
 });
+
+test('agent rows carry no file/proxy/model chain; channel and mode choices read like the model picker', () => {
+  const agents = fs.readFileSync(path.join(DASHBOARD_DIR, 'agents.js'), 'utf8');
+  const settings = fs.readFileSync(path.join(DASHBOARD_DIR, 'settings.js'), 'utf8');
+  assert.doesNotMatch(agents, /sigpath-sm|smallPath/, 'the roster row repeats the path its subtitle already gives');
+  for (const [name, code] of [['agents.js', agents], ['settings.js', settings]]) {
+    assert.doesNotMatch(code, /channel-dot/, `${name} still draws a radio dot`);
+    assert.match(code, /F\.icon\('check', 'channel-check'\)/, `${name} marks the chosen tile with a check`);
+  }
+  for (const title of ['Model', 'Install as', 'Proxy address', 'Access key']) {
+    assert.match(agents, new RegExp(`cfgSection\\('${title}', '[a-z-]+', '[a-z-]+'`), `${title} has no icon`);
+  }
+});
