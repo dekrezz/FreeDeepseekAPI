@@ -44,19 +44,19 @@
     const appearance = h('div', { class: 'set-group' });
     const chat = h('div', { class: 'set-stack' });
     root.append(h('div', { class: 'view-pad settings' },
-      section('Access key', 'The PROXY_API_KEY this dashboard signs its requests with.', key),
-      section('Connection', 'Point any OpenAI- or Anthropic-compatible client at this proxy.', conn),
-      section('Server', 'Facts from GET /health.', server),
-      section('Updates', 'Stable gets a release once it has been checked. Latest gets every release first.', updates),
-      section('Appearance', null, appearance),
-      section('Chat data', `Stored in this browser only, for ${location.origin}. 127.0.0.1 and localhost keep separate stores.`, chat)));
+      section('Access key', 'The PROXY_API_KEY this dashboard signs its requests with.', key, 'key'),
+      section('Connection', 'Point any OpenAI- or Anthropic-compatible client at this proxy.', conn, 'route'),
+      section('Server', 'Facts from GET /health.', server, 'status'),
+      section('Updates', 'Stable gets a release once it has been checked. Latest gets every release first.', updates, 'download'),
+      section('Appearance', null, appearance, 'settings'),
+      section('Chat data', `Stored in this browser only, for ${location.origin}. 127.0.0.1 and localhost keep separate stores.`, chat, 'chat')));
     Object.assign(st.els, { key, conn, server, updates, appearance, chat });
     F.on('accounts', () => { if (st.visible) renderServer(); });
   }
 
-  function section(title, lead, body) {
+  function section(title, lead, body, icon) {
     return h('section', { class: 'settings-section' },
-      h('header', { class: 'settings-head' }, h('h2', { class: 'settings-title', text: title }), lead ? h('p', { class: 'settings-desc', text: lead }) : null),
+      h('header', { class: 'settings-head' }, h('h2', { class: 'settings-title' }, F.icon(icon, 'title-icon'), h('span', { text: title })), lead ? h('p', { class: 'settings-desc', text: lead }) : null),
       body);
   }
 

@@ -31,23 +31,23 @@
       readouts,
       h('div', { class: 'rule' }),
       h('section', { class: 'section' },
-        h('div', { class: 'section-head' }, h('h3', { class: 'section-title', text: 'Tokens over time' }),
+        h('div', { class: 'section-head' }, h('h3', { class: 'section-title' }, F.icon('token', 'title-icon'), h('span', { text: 'Tokens over time' })),
           h('div', { class: 'section-controls' }, h('ul', { class: 'legend', 'aria-label': 'Series' },
             h('li', null, h('span', { class: 'key key-data-2', 'aria-hidden': 'true' }), 'Prompt'),
             h('li', null, h('span', { class: 'key key-data-1', 'aria-hidden': 'true' }), 'Completion')), modeToggle('tokens'))),
         tokensHost),
       h('section', { class: 'section section-tight' },
-        h('div', { class: 'section-head' }, h('h3', { class: 'section-title', text: 'Requests and errors' }),
+        h('div', { class: 'section-head' }, h('h3', { class: 'section-title' }, F.icon('requests', 'title-icon'), h('span', { text: 'Requests and errors' })),
           h('div', { class: 'section-controls' }, h('ul', { class: 'legend', 'aria-label': 'Series' },
             h('li', null, h('span', { class: 'key key-ink', 'aria-hidden': 'true' }), 'Requests'),
             h('li', null, F.lamp('error', 'key-x'), 'Errors')), modeToggle('requests'))),
         reqHost),
       h('div', { class: 'rule' }),
       h('section', { class: 'section' },
-        h('div', { class: 'section-head' }, h('h3', { class: 'section-title', text: 'Where it went' }), h('div', { class: 'section-controls' }, metricSeg, modeToggle('breakdown'))),
+        h('div', { class: 'section-head' }, h('h3', { class: 'section-title' }, F.icon('route', 'title-icon'), h('span', { text: 'Where it went' })), h('div', { class: 'section-controls' }, metricSeg, modeToggle('breakdown'))),
         breakdown),
       h('div', { class: 'rule' }),
-      h('section', { class: 'section' }, h('div', { class: 'section-head' }, h('h3', { class: 'section-title', text: 'Lifetime by account' })), lifetime));
+      h('section', { class: 'section' }, h('div', { class: 'section-head' }, h('h3', { class: 'section-title' }, F.icon('accounts', 'title-icon'), h('span', { text: 'Lifetime by account' }))), lifetime));
     const hero = F.pageHero({ label: 'Usage' });
     root.append(hero, h('div', { class: 'view-pad' },
       h('div', { class: 'filter-row' }, windowSeg, accountSlot),
@@ -159,13 +159,14 @@
       lifetime.replaceChildren();
       return;
     }
+    const last = `last ${d.window.key}`;
     readouts.replaceChildren(
-      readout(fmt.int(t.requests), 'requests'),
-      readout(`${fmt.compact(t.prompt_tokens + t.completion_tokens)} ≈`, 'tokens'),
-      readout(`${fmt.compact(t.prompt_tokens)} / ${fmt.compact(t.completion_tokens)} ≈`, 'prompt / completion'),
-      readout(`${fmt.usd(t.usd)} ≈`, 'at API prices'),
-      readout(t.requests ? fmt.pct(errRate) : '—', `errors (${fmt.int(t.errors)})`, t.errors ? 'crit' : null),
-      readout(t.avg_ms ? fmt.ms(t.avg_ms) : '—', 'average latency'));
+      readout(fmt.int(t.requests), 'requests', null, 'requests', last),
+      readout(`${fmt.compact(t.prompt_tokens + t.completion_tokens)} ≈`, 'tokens', null, 'token', 'estimated'),
+      readout(`${fmt.compact(t.prompt_tokens)} / ${fmt.compact(t.completion_tokens)} ≈`, 'prompt / completion', null, 'route', 'estimated'),
+      readout(`${fmt.usd(t.usd)} ≈`, 'at API prices', null, 'usage', 'what the paid API would bill'),
+      readout(t.requests ? fmt.pct(errRate) : '—', `errors (${fmt.int(t.errors)})`, t.errors ? 'crit' : null, 'alert', 'of requests'),
+      readout(t.avg_ms ? fmt.ms(t.avg_ms) : '—', 'average latency', null, 'latency', last));
 
     const xLabel = xLabelFor(d.bucket.ms);
     const series = d.series || [];
@@ -287,8 +288,12 @@
     return api ? F.hashFor('requests', '', { api }) : null;
   }
 
-  function readout(value, label, tone) {
-    return h('div', { class: 'readout' }, h('p', { class: ['readout-value', tone && `is-${tone}`], text: value }), h('p', { class: 'readout-label', text: label }));
+  // One cell of the readout card: icon and name, the number, and what the number covers.
+  function readout(value, label, tone, icon, hint) {
+    return h('div', { class: 'readout' },
+      h('p', { class: 'readout-label' }, F.icon(icon, 'readout-icon'), h('span', { text: label })),
+      h('p', { class: ['readout-value', tone && `is-${tone}`], text: value }),
+      h('p', { class: 'readout-hint', text: hint }));
   }
 
   F.views.usage = {

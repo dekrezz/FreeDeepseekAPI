@@ -9,15 +9,16 @@
   const F = window.FDSA;
   const { h, fmt } = F;
 
-  // Fixed order and marks. Hue feeds the same oklch formula as account avatars; the square
-  // shape keeps an agent from ever reading as an account (circles).
+  // Fixed order and marks. Each agent shows its own logo (sprite symbol #a-<id>) on a tile
+  // whose hue feeds the same oklch formula as account avatars; the square shape keeps an
+  // agent from ever reading as an account (circles).
   const AGENTS = [
-    { id: 'claude-code', name: 'Claude Code', mono: 'CC', hue: 32 },
-    { id: 'codex', name: 'Codex', mono: 'CX', hue: 255 },
-    { id: 'opencode', name: 'OpenCode', mono: 'OC', hue: 160 },
-    { id: 'hermes', name: 'Hermes', mono: 'HE', hue: 300 },
-    { id: 'openclaw', name: 'OpenClaw', mono: 'OW', hue: 12 },
-    { id: 'cursor', name: 'Cursor', mono: 'CU', hue: 210 },
+    { id: 'claude-code', name: 'Claude Code', hue: 32 },
+    { id: 'codex', name: 'Codex', hue: 255 },
+    { id: 'opencode', name: 'OpenCode', hue: 160 },
+    { id: 'hermes', name: 'Hermes', hue: 300 },
+    { id: 'openclaw', name: 'OpenClaw', hue: 12 },
+    { id: 'cursor', name: 'Cursor', hue: 210 },
   ];
   const META = Object.fromEntries(AGENTS.map(a => [a.id, a]));
   const STATES = {
@@ -119,10 +120,20 @@
     return known.some(k => k.origin === b.origin) ? null : b.host;
   }
 
+  // The agent's logo, white on its tile. An agent this dashboard does not know yet (a newer
+  // server) has no logo here and keeps its initials.
   function mark(id, cls) {
     const m = META[id];
-    const el = h('span', { class: ['agent-mark', cls], 'aria-hidden': 'true', text: m ? m.mono : String(id).slice(0, 2).toUpperCase() });
+    const el = h('span', { class: ['agent-mark', cls], 'aria-hidden': 'true' });
     el.style.setProperty('--agent-h', String(m ? m.hue : 220));
+    if (!m) { el.textContent = String(id).slice(0, 2).toUpperCase(); return el; }
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'agent-logo');
+    svg.setAttribute('focusable', 'false');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', `#a-${id}`);
+    svg.append(use);
+    el.append(svg);
     return el;
   }
 
@@ -767,13 +778,13 @@
     });
     const rosterSection = h('section', { class: 'agents-section', 'aria-labelledby': 'agents-roster-title' },
       h('header', { class: 'settings-head' },
-        h('h2', { class: 'settings-title', id: 'agents-roster-title', text: 'Agents' }),
+        h('h2', { class: 'settings-title', id: 'agents-roster-title' }, F.icon('agent', 'title-icon'), h('span', { text: 'Agents' })),
         h('p', { class: 'settings-desc', text: 'Each agent reads its own config file. Pick one to see the file and point it at this proxy.' })),
       roster);
     const backupBody = h('div', { class: 'set-stack' });
     const backupSection = h('section', { class: 'agents-section', id: 'agents-backups', 'aria-labelledby': 'agents-backups-title' },
       h('header', { class: 'settings-head' },
-        h('h2', { class: 'settings-title', id: 'agents-backups-title', text: 'Restore points' }),
+        h('h2', { class: 'settings-title', id: 'agents-backups-title' }, F.icon('undo', 'title-icon'), h('span', { text: 'Restore points' })),
         h('p', { class: 'settings-desc', text: 'Every apply backs up the files it changes first. Restoring also deletes files that setup created.' })),
       backupBody);
     const overview = h('div', { class: 'agents-page' }, heroO,
@@ -1547,7 +1558,7 @@
     if (!a.writable) return;
     if (!host.firstChild) {
       host.append(h('header', { class: 'settings-head' },
-        h('h2', { class: 'settings-title', id: 'agent-restore-title', text: 'Restore points' }),
+        h('h2', { class: 'settings-title', id: 'agent-restore-title' }, F.icon('undo', 'title-icon'), h('span', { text: 'Restore points' })),
         h('p', { class: 'settings-desc', text: 'The newest backups that include this agent. Restoring puts every file in a backup back.' })),
       h('div', { class: 'set-stack agent-restore-list' }),
       h('a', { class: 'link agents-all-backups', href: F.hashFor('agents', '', { section: 'backups' }), text: 'All restore points' }));

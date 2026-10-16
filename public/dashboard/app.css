@@ -400,7 +400,9 @@ textarea.input { height: auto; padding: 10px 14px; resize: vertical; }
 /* ------------------------------------------------------------------ sections */
 .section { margin-top: 0; }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 40px 0 14px; }
-.section-title { font-size: 1.125rem; line-height: 1.75rem; font-weight: 600; }
+.section-title { display: flex; align-items: center; gap: 8px; font-size: 1.125rem; line-height: 1.75rem; font-weight: 600; }
+/* Section names carry a small icon, like the rows of the settings menu. */
+.title-icon { width: 16px; height: 16px; flex: none; color: var(--ink-2); }
 .section-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .section-tight .section-head { margin-top: 28px; }
 .rule { height: 1px; background: var(--rule); margin: 36px 0 0; }
@@ -413,12 +415,17 @@ textarea.input { height: auto; padding: 10px 14px; resize: vertical; }
 .table-note { margin-top: 16px; max-width: 80ch; }
 
 /* ------------------------------------------------------------------ readouts */
-.readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.readout { padding: 16px 18px; border-radius: var(--r-lg); background: var(--surface); min-width: 0; }
+/* Readouts: one card whose cells are split by hairlines. Each cell draws the line on its left
+   and top; the card clips the ones on its own edge, so a wrapped row still lines up. */
+.readouts { display: flex; flex-wrap: wrap; overflow: hidden; border-radius: 12px; background: #1f1f1f; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12); }
+.readout { flex: 1 1 170px; min-width: 0; display: grid; gap: 4px; padding: 14px 18px 16px; box-shadow: -1px 0 0 rgb(255 255 255 / 0.08), 0 -1px 0 rgb(255 255 255 / 0.08); }
 .readout-value { font-family: var(--font-ui); font-size: 2rem; line-height: 2.25rem; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
 .readout-value.is-crit { color: var(--crit); }
-.readout-label { font-size: 0.8125rem; line-height: 1.125rem; color: var(--ink-2); margin-top: 4px; }
-.readouts-note { grid-column: 1 / -1; }
+.readout-label { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 0.8125rem; line-height: 1.125rem; color: var(--ink-2); }
+.readout-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.readout-icon { width: 15px; height: 15px; flex: none; color: var(--ink-3); }
+.readout-hint { font-size: 0.75rem; line-height: 1rem; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.readouts-note { flex-basis: 100%; margin: 0; padding: 10px 18px; box-shadow: 0 -1px 0 rgb(255 255 255 / 0.08); }
 
 /* ------------------------------------------------------------------ tables */
 .table-scroll { overflow-x: auto; max-width: 100%; }
@@ -529,6 +536,8 @@ a.lane-label:hover .lane-name { text-decoration: underline; text-underline-offse
 .skel-track { display: block; height: 1px; background: var(--rule-mid); }
 .lanes-host-mini { margin-top: 4px; }
 
+.recent-errors { border-radius: 12px; background: #1f1f1f; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12); padding: 4px 8px; }
+.recent-errors > :is(.quiet, .meta) { margin: 0; padding: 12px 10px; }
 .recent-errors .data-table td { white-space: nowrap; }
 .recent-errors .data-table td.err-cell { white-space: normal; padding-top: 10px; padding-bottom: 10px; }
 
@@ -811,7 +820,7 @@ dialog::backdrop { background: var(--scrim); }
 /* The menu is one card like the model picker: icon-led rows with a quiet line under the name,
    groups split by edge-to-edge hairlines (group names stay for screen readers), the open page
    checked. */
-.nav-card { display: grid; padding: 4px; border-radius: 12px; background: #1f1f1f; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12), 0 8px 24px rgb(0 0 0 / 0.22); }
+.nav-card { flex: 1; display: grid; align-content: start; padding: 4px; border-radius: 12px; background: #1f1f1f; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12), 0 8px 24px rgb(0 0 0 / 0.22); }
 .nav-card .settings-nav-title { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .nav-card .nav-list { gap: 1px; }
 .nav-card .nav-list ~ .nav-list { margin: 4px -4px 0; padding: 4px 4px 0; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08); }
@@ -842,7 +851,6 @@ dialog::backdrop { background: var(--scrim); }
 .settings-modal .input { border-radius: var(--r-sm); background: #262626; }
 .settings-pane .table-scroll { border-radius: 12px; background: #1f1f1f; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12); padding: 4px 8px; }
 .settings-pane .table-scroll:has(> table[hidden]) { display: none; }
-.settings-pane .readout { border-radius: 12px; background: #1f1f1f; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12); }
 .settings-pane .hero-page + .view-pad { padding-top: 8px; }
 body.settings-open .new-pill.new-pill { left: 50%; }
 
@@ -852,7 +860,7 @@ body.settings-open .new-pill.new-pill { left: 50%; }
 .settings { display: grid; gap: 40px; }
 .settings-section { display: grid; gap: 14px; min-width: 0; }
 .settings-head { display: grid; gap: 4px; padding: 0 2px; }
-.settings-title { font-size: 1rem; line-height: 1.5rem; font-weight: 600; letter-spacing: -0.01em; }
+.settings-title { display: flex; align-items: center; gap: 8px; font-size: 1rem; line-height: 1.5rem; font-weight: 600; letter-spacing: -0.01em; }
 .settings-desc { font-size: 0.8125rem; line-height: 1.25rem; color: var(--ink-3); max-width: 62ch; text-wrap: pretty; }
 .settings-foot { font-size: 0.8125rem; line-height: 1.25rem; color: var(--ink-3); padding: 0 2px; max-width: 62ch; text-wrap: pretty; }
 .set-stack { display: grid; gap: 12px; min-width: 0; }
@@ -1201,6 +1209,7 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 .app[data-view=agents].agents-scrolled .settings-pane .toolbar-title { text-shadow: none; }
 .agents-section { display: grid; gap: 14px; min-width: 0; }
 .agent-mark { --agent-h: 220; width: 36px; height: 36px; flex: none; border-radius: 10px; display: grid; place-items: center; background: oklch(0.52 0.11 var(--agent-h)); color: #fff; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em; user-select: none; -webkit-user-select: none; }
+.agent-logo { width: 55%; height: 55%; display: block; fill: currentColor; }
 
 /* roster */
 .agents-roster { list-style: none; margin: 0; padding: 0; overflow: hidden; }

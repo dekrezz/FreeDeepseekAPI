@@ -17,6 +17,7 @@ images.nasa.gov id was not kept when the file was added; look it up there before
 | `i-files` in `index.html` (Add account drop zone) | Hugeicons `files-02`, https://hugeicons.com (via https://icon-sets.iconify.design/hugeicons/) | MIT |
 | `i-session-reset` in `index.html` (chat menu, Reset server session) | Hugeicons `reload`, https://hugeicons.com (via https://icon-sets.iconify.design/hugeicons/) | MIT |
 | `i-eye`, `i-eye-off` in `index.html` (Settings, show or hide the access key) | Hugeicons `view`, `view-off-slash`, https://hugeicons.com (via https://icon-sets.iconify.design/hugeicons/) | MIT |
+| `a-claude-code`, `a-codex`, `a-opencode`, `a-hermes`, `a-openclaw`, `a-cursor` in `index.html` (Agents, each agent's logo) | Lobe Icons `claudecode`, `codex`, `opencode`, `hermesagent`, `openclaw`, `cursor` (mono), https://github.com/lobehub/lobe-icons via `@lobehub/icons-static-svg` 1.95.1; the marks belong to their owners | MIT |
 
 ## Fonts
 
