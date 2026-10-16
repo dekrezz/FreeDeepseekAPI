@@ -27,3 +27,16 @@ test('audit dash-panels-4: status view registers even when localStorage access t
   assert.equal(typeof window.FDSA.views.status, 'object');
   assert.ok(window.FDSA.views.status, 'F.views.status must be registered');
 });
+
+test('every coding agent shows its own logo, not its initials', () => {
+  const agents = fs.readFileSync(path.join(DASHBOARD_DIR, 'agents.js'), 'utf8');
+  const index = fs.readFileSync(path.join(DASHBOARD_DIR, 'index.html'), 'utf8');
+  const block = agents.match(/const AGENTS = \[([\s\S]*?)\];/);
+  assert.ok(block, 'agents.js lists its agents in const AGENTS');
+  const ids = [...block[1].matchAll(/id: '([a-z-]+)'/g)].map(m => m[1]);
+  assert.deepEqual(ids, ['claude-code', 'codex', 'opencode', 'hermes', 'openclaw', 'cursor']);
+  for (const id of ids) {
+    assert.match(index, new RegExp(`<symbol id="a-${id}" viewBox="0 0 24 24">`), `index.html has no logo symbol for ${id}`);
+  }
+  assert.match(agents, /href: `#a-\$\{/, 'the agent mark draws the logo symbol');
+});
