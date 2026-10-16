@@ -322,14 +322,14 @@
         h('p', { class: 'update-note', text: 'This copy was not installed with git clone (a container image or a downloaded archive), so it cannot update itself. Pull a new image or download the new release.' })));
       return;
     }
-    // Channels as two tiles: what each one gets, the current one marked.
+    // Channels as picker rows: what each one gets, the chosen one checked, the installed one marked.
     const tile = (value, title, desc) => {
       const on = u.channel === value;
       const b = h('button', { type: 'button', class: ['channel-tile', on && 'is-on'], role: 'radio', 'aria-checked': String(on) },
-        h('span', { class: 'channel-dot', 'aria-hidden': 'true' }),
         h('span', { class: 'channel-text' },
           h('span', { class: 'channel-title' }, h('span', { text: title }), s.channel === value ? h('span', { class: 'channel-current', text: 'Current' }) : null),
-          h('span', { class: 'channel-desc', text: desc })));
+          h('span', { class: 'channel-desc', text: desc })),
+        F.icon('check', 'channel-check'));
       b.addEventListener('click', () => { if (busy || u.channel === value) return; u.channel = value; u.check = null; u.phase = 'idle'; u.message = null; renderUpdates(); });
       return b;
     };

@@ -216,7 +216,6 @@
       kind: 'file',
       fileId: a.entry_file,
       label: manual ? 'Cursor settings (in the app)' : entry ? entry.display_path : a.entry_file,
-      short: manual ? 'Cursor settings' : baseName(entry ? entry.display_path : a.entry_file),
       sub: fileSub,
       tone: fileTone,
       mono: !manual,
@@ -226,12 +225,12 @@
     if (s.base_url) {
       const elsewhere = s.points_here === false;
       proxy = {
-        label: hostOf(s.base_url), short: hostOf(s.base_url).replace(/\/v1$/, ''), mono: true,
+        label: hostOf(s.base_url), mono: true,
         sub: elsewhere ? 'Another address' : has('key_differs') ? 'Sends an old access key' : 'This proxy',
         tone: elsewhere || has('key_differs') ? 'warn' : null,
       };
     } else {
-      proxy = { label: hostOf(proxyBase), short: hostOf(proxyBase), mono: true, sub: manual ? 'Paste into Cursor' : 'This proxy, not used yet', tone: null, muted: true };
+      proxy = { label: hostOf(proxyBase), mono: true, sub: manual ? 'Paste into Cursor' : 'This proxy, not used yet', tone: null, muted: true };
     }
 
     let model;
@@ -239,9 +238,9 @@
       const info = modelById(s.model);
       const sub = !info ? 'Not served by this proxy'
         : s.model_written ? 'Older ID, still served' : features(info);
-      model = { label: info ? info.id : s.model, short: fmt.shortModel(info ? info.id : s.model), mono: true, sub, tone: info ? null : 'warn' };
+      model = { label: info ? info.id : s.model, mono: true, sub, tone: info ? null : 'warn' };
     } else {
-      model = { label: 'No model yet', short: 'no model', sub: manual ? 'Picked in Cursor' : 'Pick one below', tone: null, muted: true };
+      model = { label: 'No model yet', sub: manual ? 'Picked in Cursor' : 'Pick one below', tone: null, muted: true };
     }
 
     const links = [
@@ -250,19 +249,6 @@
       !s.model || !wired || s.points_here !== true ? null : has('model_unknown') ? 'is-warn' : 'is-live',
     ];
     return { nodes: [{ kind: 'agent', ...tool }, file, proxy, { kind: 'model', ...model }], links };
-  }
-
-  // Overview row: file → proxy → model as dots and short labels. Decorative; the row's own
-  // text carries the same facts for assistive tech.
-  function smallPath(a) {
-    const p = pathModel(a);
-    const ol = h('ol', { class: 'sigpath sigpath-sm', 'aria-hidden': 'true' });
-    p.nodes.slice(1).forEach((n, i) => {
-      if (i) ol.append(h('li', { class: ['sig-link', p.links[i]] }));
-      ol.append(h('li', { class: ['sig-node', n.tone && `is-${n.tone}`, n.muted && 'is-muted', p.links[i] === 'is-live' && 'is-on'] },
-        h('span', { class: 'sig-dot' }), h('span', { class: 'sig-label', translate: 'no', text: n.short })));
-    });
-    return ol;
   }
 
   function bigPath(a) {
@@ -802,8 +788,8 @@
 
     const modelHost = h('div', { class: 'set-stack' });
     const modeHost = h('div');
-    const secModel = cfgSection('Model', 'cfg-model', modelHost);
-    const secMode = cfgSection('Install as', 'cfg-mode', modeHost);
+    const secModel = cfgSection('Model', 'cfg-model', 'model', modelHost);
+    const secMode = cfgSection('Install as', 'cfg-mode', 'download', modeHost);
 
     const base = h('input', {
       class: 'input', id: 'agent-base', type: 'url', name: 'base_url', inputmode: 'url', autocomplete: 'off', spellcheck: 'false',
@@ -819,14 +805,14 @@
     const useOrigin = h('div', { class: 'base-use' });
     const baseError = h('p', { class: 'form-error base-error', id: 'agent-base-error', role: 'alert', hidden: true });
     const baseHint = h('p', { class: 'field-help', id: 'agent-base-hint' });
-    const secBase = cfgSection('Proxy address', 'cfg-base',
+    const secBase = cfgSection('Proxy address', 'cfg-base', 'route',
       h('div', { class: 'set-group' },
         h('div', { class: 'set-row set-row-form base-row' },
           h('label', { class: 'sr-only', for: 'agent-base', text: 'Proxy address' }), base, useOrigin)),
       baseHint, baseError);
 
     const keyHost = h('div');
-    const secKey = cfgSection('Access key', 'cfg-key', keyHost);
+    const secKey = cfgSection('Access key', 'cfg-key', 'key', keyHost);
     const notesHost = h('div', { class: 'set-stack cfg-notes' });
     const usageHost = h('div');
     // The apply bar is built once and updated in place: its alert and live summary must not be
@@ -880,9 +866,9 @@
     document.getElementById('app').classList.toggle('agents-scrolled', past);
   }
 
-  function cfgSection(title, id, ...body) {
+  function cfgSection(title, id, icon, ...body) {
     return h('section', { class: 'cfg-section', 'aria-labelledby': id },
-      h('h2', { class: 'cfg-title', id, text: title }), ...body);
+      h('h2', { class: 'cfg-title', id }, F.icon(icon, 'title-icon'), h('span', { text: title })), ...body);
   }
 
   // ---------------------------------------------------------------- paint: overview
@@ -966,7 +952,7 @@
       if (!st.data) {
         ul.setAttribute('aria-busy', 'true');
         ul.replaceChildren(...AGENTS.map(() => h('li', null, h('div', { class: 'agent-row is-skel' },
-          skel(36, 36, 'skel-mark'), h('span', { class: 'agent-id' }, skel(140, 14), skel(220, 10)), h('span'), skel(72, 24, 'skel-pill'), h('span')))));
+          skel(36, 36, 'skel-mark'), h('span', { class: 'agent-id' }, skel(140, 14), skel(220, 10)), skel(72, 24, 'skel-pill'), h('span')))));
         return;
       }
       ul.removeAttribute('aria-busy');
@@ -984,7 +970,6 @@
     const link = h('a', { class: ['agent-row', st.cursor === a.id && 'is-cursor'], href: F.hashFor('agents', a.id), 'data-id': a.id, 'data-focus-key': `row-${a.id}` },
       mark(a.id),
       h('span', { class: 'agent-id' }, h('span', { class: 'agent-name', text: a.name }), sub),
-      smallPath(a),
       h('span', { class: `agent-state is-${s.tone}` }, F.lamp(s.lamp), h('span', { text: s.label })),
       F.icon('chevron-right', 'agent-chev'));
     return h('li', null, link);
@@ -1194,11 +1179,11 @@
         type: 'button', role: 'radio', class: ['channel-tile', on && 'is-on'], 'aria-checked': String(on),
         tabindex: on || (!anyOn && i === 0) ? '0' : '-1', 'data-value': md.value, 'data-focus-key': `mode-${md.value}`,
       },
-      h('span', { class: 'channel-dot', 'aria-hidden': 'true' }),
       h('span', { class: 'channel-text' },
         h('span', { class: 'channel-title' }, h('span', { text: md.title }), a.setup.mode === md.value ? h('span', { class: 'channel-current', text: 'Now' }) : null),
         h('span', { class: 'channel-desc', text: md.description }),
-        md.writes.length ? h('span', { class: 'channel-writes' }, 'Writes ', ...listNodes(md.writes.map(fileLabel), (v) => h('code', { class: 'mono-id', translate: 'no', text: v }))) : null));
+        md.writes.length ? h('span', { class: 'channel-writes' }, 'Writes ', ...listNodes(md.writes.map(fileLabel), (v) => h('code', { class: 'mono-id', translate: 'no', text: v }))) : null),
+      F.icon('check', 'channel-check'));
       b.addEventListener('click', () => { if (md.value !== opts().mode) setOpt('mode', md.value); });
       return b;
     });
@@ -1350,7 +1335,7 @@
       : 'Set OpenAI API Key to this proxy\'s PROXY_API_KEY.';
     const code = (t) => h('code', { class: 'mono-id', translate: 'no', text: t });
     return h('section', { class: 'cfg-section manual', 'aria-labelledby': 'cfg-manual' },
-      h('h2', { class: 'cfg-title', id: 'cfg-manual', text: 'Set it up in Cursor' }),
+      h('h2', { class: 'cfg-title', id: 'cfg-manual' }, F.icon('agent', 'title-icon'), h('span', { text: 'Set it up in Cursor' })),
       h('ol', { class: 'manual-steps' },
         h('li', null, `Open Cursor Settings, then Models. ${keyText}`),
         h('li', null, h('span', { text: 'Turn on Override OpenAI Base URL and paste:' }), baseMissing() ? null : F.codeLine(base)),
