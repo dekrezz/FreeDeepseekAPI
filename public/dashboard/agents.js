@@ -9,16 +9,17 @@
   const F = window.FDSA;
   const { h, fmt } = F;
 
-  // Fixed order and marks. Each agent shows its own logo (sprite symbol #a-<id>) on a tile
-  // whose hue feeds the same oklch formula as account avatars; the square shape keeps an
-  // agent from ever reading as an account (circles).
+  // Fixed order and marks. Each agent shows its own logo (sprite symbol #a-<id>) as its brand's
+  // avatar draws it (Lobe Icons): the tile colour, the mark colour (null keeps the logo's own
+  // colours) and how much of the tile the mark fills. The square shape keeps an agent from
+  // ever reading as an account (circles).
   const AGENTS = [
-    { id: 'claude-code', name: 'Claude Code', hue: 32 },
-    { id: 'codex', name: 'Codex', hue: 255 },
-    { id: 'opencode', name: 'OpenCode', hue: 160 },
-    { id: 'hermes', name: 'Hermes', hue: 300 },
-    { id: 'openclaw', name: 'OpenClaw', hue: 12 },
-    { id: 'cursor', name: 'Cursor', hue: 210 },
+    { id: 'claude-code', name: 'Claude Code', bg: '#09090B', fg: '#D97757', scale: 0.7 },
+    { id: 'codex', name: 'Codex', bg: '#FFFFFF', fg: null, scale: 0.7 },
+    { id: 'opencode', name: 'OpenCode', bg: '#000000', fg: '#FFFFFF', scale: 0.75 },
+    { id: 'hermes', name: 'Hermes', bg: '#FFFFFF', fg: '#000000', scale: 0.75 },
+    { id: 'openclaw', name: 'OpenClaw', bg: '#000000', fg: null, scale: 0.75 },
+    { id: 'cursor', name: 'Cursor', bg: '#000000', fg: '#FFFFFF', scale: 0.6 },
   ];
   const META = Object.fromEntries(AGENTS.map(a => [a.id, a]));
   const STATES = {
@@ -121,13 +122,15 @@
     return known.some(k => k.origin === b.origin) ? null : b.host;
   }
 
-  // The agent's logo, white on its tile. An agent this dashboard does not know yet (a newer
-  // server) has no logo here and keeps its initials.
+  // The agent's logo on its brand tile. An agent this dashboard does not know yet (a newer
+  // server) has no logo here and keeps its initials on a neutral tile.
   function mark(id, cls) {
     const m = META[id];
     const el = h('span', { class: ['agent-mark', cls], 'aria-hidden': 'true' });
-    el.style.setProperty('--agent-h', String(m ? m.hue : 220));
     if (!m) { el.textContent = String(id).slice(0, 2).toUpperCase(); return el; }
+    el.style.setProperty('--agent-bg', m.bg);
+    if (m.fg) el.style.setProperty('--agent-fg', m.fg);
+    el.style.setProperty('--agent-scale', String(m.scale));
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'agent-logo');
     svg.setAttribute('focusable', 'false');
