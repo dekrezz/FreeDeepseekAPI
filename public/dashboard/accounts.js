@@ -214,7 +214,7 @@
     const empty = h('div', { class: 'empty-host' });
     const note = h('p', { class: 'meta table-note', text: 'Usage is since the server started. Tokens are estimates (characters ÷ 4). Pause is runtime only; Disable in file survives a restart.' });
 
-    const hero = F.pageHero({ label: 'Account pool' });
+    const hero = F.pageHero({ image: '/dashboard/media-surface.jpg', label: 'Account pool', position: '50% 40%' });
     root.append(hero, h('div', { class: 'view-pad' },
       h('div', { class: 'filter-row' }, h('label', { class: 'search-field search-field-inline' }, F.icon('search'), filterInput), chips, count),
       banner,
@@ -677,8 +677,9 @@
       h('span', { class: 'add-step-n', 'aria-hidden': 'true', text: String(n) }),
       h('span', { class: 'add-step-body' }, h('span', { class: 'add-step-title', text: title }), h('span', { class: 'add-step-detail' }, detail)));
     const code = (text) => h('code', { text });
-    // Where the file comes from, on the left; the form on the right.
+    // Where the file comes from, over whale sharks rising to the surface (MEDIA.md); the form on the right.
     const visual = h('aside', { class: 'add-visual' },
+      h('img', { class: 'add-visual-media', src: '/dashboard/media-whale-sharks.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' }),
       h('div', { class: 'add-visual-inner' },
           h('h2', { class: 'add-title', id: 'add-title', text: 'Add a DeepSeek account' }),
           h('ol', { class: 'add-steps', 'aria-label': 'Where the file comes from' },

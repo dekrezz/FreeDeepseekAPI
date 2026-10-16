@@ -794,12 +794,14 @@
   };
 
   // ---------------------------------------------------------------- notices
-  // Page header for the settings-window views: a caps headline built from live data and one
-  // quieter line under it, on the plain ground.
-  F.pageHero = ({ label }) => {
+  // Page header for the settings-window views: an ocean photo (MEDIA.md), a caps headline built
+  // from live data, and one quieter line under it.
+  F.pageHero = ({ image, label, position = '50% 50%' }) => {
+    const img = F.h('img', { class: 'hero-media', src: image, alt: '', decoding: 'async', 'aria-hidden': 'true' });
+    img.style.setProperty('object-position', position);
     const title = F.h('p', { class: 'status-sentence hero-title' });
     const sub = F.h('p', { class: 'hero-sub' });
-    const el = F.h('section', { class: 'hero hero-page', 'aria-label': label },
+    const el = F.h('section', { class: 'hero hero-page', 'aria-label': label }, img,
       F.h('div', { class: 'hero-inner' }, F.h('header', { class: 'status-head' }, title, sub)));
     el.set = (headline, detail = '', tone = null) => {
       title.textContent = headline;
@@ -885,27 +887,39 @@
     });
   };
 
-  F.codeLine = (text) => {
-    const code = F.h('code', { class: 'mono-id', text });
-    // The scrollbar is hidden, so mark clipped sides and let a plain mouse wheel scroll sideways.
-    const mark = () => {
-      const max = code.scrollWidth - code.clientWidth;
-      code.classList.toggle('is-clip-start', max > 1 && code.scrollLeft > 1);
-      code.classList.toggle('is-clip-end', max > 1 && code.scrollLeft < max - 1);
+  // A command wraps at its spaces, continuation lines indented, so all of it is in view and
+  // nothing scrolls sideways; Copy takes the exact text.
+  F.codeLine = (text) => F.h('div', { class: 'code-line' }, F.h('code', { class: 'mono-id', text }), F.copyBtn(text, 'Copy command'));
+
+  // Scrollbars are hidden everywhere (app.css). A scrollable area instead fades out on each
+  // edge that has more content past it, and the fade goes as soon as that edge is reached.
+  F.scrollEdges = (el) => {
+    if (el._edges) return;
+    el._edges = true;
+    el.classList.add('edge-fade');
+    const update = () => {
+      const maxY = el.scrollHeight - el.clientHeight;
+      const maxX = el.scrollWidth - el.clientWidth;
+      el.classList.toggle('more-up', maxY > 1 && el.scrollTop > 1);
+      el.classList.toggle('more-down', maxY > 1 && el.scrollTop < maxY - 1);
+      el.classList.toggle('more-left', maxX > 1 && el.scrollLeft > 1);
+      el.classList.toggle('more-right', maxX > 1 && el.scrollLeft < maxX - 1);
     };
-    code.addEventListener('scroll', mark, { passive: true });
-    code.addEventListener('wheel', (e) => {
-      if (Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
-      const max = code.scrollWidth - code.clientWidth;
-      // At either end the wheel goes back to scrolling the page.
-      if (max <= 0 || (e.deltaY < 0 && code.scrollLeft <= 0) || (e.deltaY > 0 && code.scrollLeft >= max - 1)) return;
-      e.preventDefault();
-      code.scrollLeft += e.deltaY;
-    }, { passive: false });
-    if (typeof ResizeObserver === 'function') new ResizeObserver(mark).observe(code);
-    requestAnimationFrame(mark);
-    return F.h('div', { class: 'code-line' }, code, F.copyBtn(text, 'Copy command'));
+    el.addEventListener('scroll', update, { passive: true });
+    new ResizeObserver(update).observe(el);
+    new MutationObserver(update).observe(el, { childList: true, subtree: true, characterData: true });
+    update();
   };
+  // Every area that scrolls gets its edges, including the ones views build later.
+  const EDGE_AREAS = '#scroll, .settings-nav, .chat-list, .table-scroll, .code-vs, .inspector-body, .popover';
+  const attachEdges = (root) => {
+    if (!(root instanceof Element)) return;
+    if (root.matches(EDGE_AREAS)) F.scrollEdges(root);
+    for (const el of root.querySelectorAll(EDGE_AREAS)) F.scrollEdges(el);
+  };
+  attachEdges(document.body);
+  new MutationObserver((records) => { for (const r of records) for (const n of r.addedNodes) attachEdges(n); })
+    .observe(document.body, { childList: true, subtree: true });
 
   F.emptyRequests = (sinceTs) => {
     return F.h('div', { class: 'empty' },

@@ -1,13 +1,20 @@
 # Dashboard media
 
-NASA imagery; NASA content is generally not subject to copyright in the United States
-(https://www.nasa.gov/nasa-brand-center/images-and-media/). Files are re-encoded and resized,
-nothing else is changed. NASA's logo or endorsement is not implied. "Not recorded" means the
-images.nasa.gov id was not kept when the file was added; look it up there before relying on it.
+Deep-ocean photographs from Unsplash, free to use under the Unsplash License
+(https://unsplash.com/license); each is found at https://unsplash.com/photos/<id>. Files are
+resized and re-encoded, nothing else is changed. Where no name is given, the photographer was
+not recorded; the photo page names them.
 
-| File | Source (images.nasa.gov) | Credit | Processing |
+| File | Source | Credit | Processing |
 |---|---|---|---|
-| `media-night-launch.jpg` | `KSC-20250115-PH-FMX02_0001` (Falcon 9, Blue Ghost Mission 1) | NASA/Frank Michaux | 1920 px, JPEG q72 |
+| `media-manta.jpg` | Unsplash `-iwAeDwvbDw`, spotted eagle ray in a shaft of light (Status) | Rémi METIN, Unsplash License | 1920 px, JPEG q72 |
+| `media-surface.jpg` | Unsplash `ZwcCisqoAv4`, the surface from below (Accounts) | Digital Reach, Unsplash License | 1920 px, JPEG q72 |
+| `media-bubbles.jpg` | Unsplash `QURU8IY-RaI`, divers' bubbles rising to the light (Usage) | Unsplash License | 1920 px, JPEG q60 |
+| `media-caustics.jpg` | Unsplash `3o5oUjrD90w`, light on a dark sea floor (Requests) | Jonathan Borba, Unsplash License | 1920 px, JPEG q60 |
+| `media-ripples.jpg` | Unsplash `iBPj9fCIftg`, dark water with light on its ripples (Agents) | Francesco Ungaro, Unsplash License | 1920 px, JPEG q60 |
+| `media-whale-sharks.jpg` | Unsplash `bZc2GI4LR2Q`, whale sharks at the surface (Add account) | Kevin Charit, Unsplash License | 1200 px, JPEG q72 |
+| `media-breach.jpg` | Unsplash `foA4hrxXRxE`, a humpback breaking the surface (Updates) | Unsplash License | 1920 px, JPEG q60 |
+| `media-sea-glint.jpg` | Unsplash `-06smVJ7ppg`, sunlight on deep blue water (access key screen) | Tadeusz Zachwieja, Unsplash License | 1920 px, JPEG q72 |
 | `logo.png` | `docs/assets/logo.png` (project logo) | FreeDeepseekAPI | cropped to the whale, 128×128 PNG with alpha |
 
 ## Icons
@@ -24,4 +31,3 @@ images.nasa.gov id was not kept when the file was added; look it up there before
 | File | Source | License | Processing |
 |---|---|---|---|
 | `geist.woff2` | Geist `Geist-Variable.woff2` from the `geist` npm package 1.7.2 (Vercel) | SIL OFL 1.1, see `GEIST-LICENSE.txt` | none |
-| `geist-mono.woff2` | Geist Mono `GeistMono-Variable.woff2` from the same package | SIL OFL 1.1, see `GEIST-LICENSE.txt` | none |

@@ -310,8 +310,9 @@
       : s.branch ? [h('span', { text: 'Branch' }), h('code', { class: 'mono-id update-branch', text: s.branch })] : [h('span', { text: 'No channel' })];
     const checkBtn = F.btn(u.phase === 'checking' ? 'Checking…' : 'Check for updates', { kind: 'primary', icon: 'reload', onclick: checkUpdate });
     if (busy || s.method !== 'git') checkBtn.setAttribute('aria-disabled', 'true');
-    // The installed build, with the check on its right.
+    // The installed build over a humpback breaking the surface (MEDIA.md), the check on its right.
     const hero = h('div', { class: 'update-hero' },
+      h('img', { class: 'update-hero-media', src: '/dashboard/media-breach.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' }),
       h('div', { class: 'update-hero-body' },
         h('p', { class: 'update-version', text: s.version ? `v${s.version}` : 'Unknown version' }),
         h('p', { class: 'update-where' }, ...where, s.commit ? h('code', { class: 'mono-id', text: s.commit }) : null)),

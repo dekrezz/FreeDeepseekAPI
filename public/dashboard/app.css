@@ -1,21 +1,16 @@
-/* FreeDeepseekAPI dashboard. Graphite surfaces, hairline cards, Geist. The one image is the
-   glyph field behind the empty chat (glyphfield.js): the project mark set in re-rolling letters
-   and digits. Settings pages open on a still caps DIN headline. Dark only. CSP: no inline
-   styles; dynamic values arrive through the CSSOM. */
+/* FreeDeepseekAPI dashboard. Graphite surfaces, hairline cards, Geist. The empty chat has the
+   glyph field (glyphfield.js): the project mark set in re-rolling letters and digits. Settings
+   pages open on deep-ocean photos (MEDIA.md) under a caps DIN headline. No scrollbars: scrolling
+   areas fade on the edges that have more. Dark only. CSP: no inline styles; dynamic values
+   arrive through the CSSOM. */
 
 /* ------------------------------------------------------------------ fonts */
-/* Geist and Geist Mono (Vercel, SIL OFL 1.1, GEIST-LICENSE.txt) set the whole interface.
-   Variable fonts, one file each, served by the proxy itself (CSP font-src 'self'). */
+/* Geist (Vercel, SIL OFL 1.1, GEIST-LICENSE.txt) sets the whole interface: one variable font
+   served by the proxy itself (CSP font-src 'self'). Code keeps the system monospace (SF Mono,
+   Cascadia, Consolas), which is drawn for screens at small sizes. */
 @font-face {
   font-family: "Geist";
   src: url("/dashboard/geist.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Geist Mono";
-  src: url("/dashboard/geist-mono.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -35,7 +30,7 @@
   --font-ui: "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
   --font-display: "Mission", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
   --font-read: var(--font-ui);
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   --bg: #212121;
   --rail: #181818;
@@ -99,7 +94,16 @@ img, video, picture { -webkit-user-drag: none; user-select: none; -webkit-user-s
 /* Surfaces painted with a photo never take a selection highlight; fields inside still do. */
 .view-chat.is-empty, .hero, .gate, .add-visual { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 :is(.view-chat.is-empty, .hero, .gate) :is(input, textarea, [contenteditable="true"]) { -webkit-user-select: text; user-select: text; }
-* { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 0.16) transparent; }
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { display: none; }
+/* No scrollbars: a scrolling area fades out on each edge that has more past it (F.scrollEdges). */
+.edge-fade { --edge: 28px; }
+.edge-fade.more-up:not(.more-down) { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--edge)); mask-image: linear-gradient(to bottom, transparent, #000 var(--edge)); }
+.edge-fade.more-down:not(.more-up) { -webkit-mask-image: linear-gradient(to top, transparent, #000 var(--edge)); mask-image: linear-gradient(to top, transparent, #000 var(--edge)); }
+.edge-fade.more-up.more-down { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--edge), #000 calc(100% - var(--edge)), transparent); mask-image: linear-gradient(to bottom, transparent, #000 var(--edge), #000 calc(100% - var(--edge)), transparent); }
+.edge-fade.more-left:not(.more-right):not(.more-up):not(.more-down) { -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--edge)); mask-image: linear-gradient(to right, transparent, #000 var(--edge)); }
+.edge-fade.more-right:not(.more-left):not(.more-up):not(.more-down) { -webkit-mask-image: linear-gradient(to left, transparent, #000 var(--edge)); mask-image: linear-gradient(to left, transparent, #000 var(--edge)); }
+.edge-fade.more-left.more-right:not(.more-up):not(.more-down) { -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--edge), #000 calc(100% - var(--edge)), transparent); mask-image: linear-gradient(to right, transparent, #000 var(--edge), #000 calc(100% - var(--edge)), transparent); }
 html { font: 100%/1.5 var(--font-ui); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; font-optical-sizing: auto; -webkit-text-size-adjust: 100%; background: var(--bg); }
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-size: 0.875rem; line-height: 1.25rem; overflow: hidden; }
@@ -369,28 +373,10 @@ textarea.input { height: auto; padding: 10px 14px; resize: vertical; }
 .empty-title { font-size: 1.25rem; line-height: 1.75rem; font-weight: 600; }
 .empty-text { color: var(--ink-2); }
 .empty-actions { display: flex; gap: 8px; margin-top: 4px; }
-.code-line { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; background: var(--surface); border-radius: var(--r-md); padding: 4px 4px 4px 14px; }
-.code-line code { --fade: none; overflow-x: auto; white-space: nowrap; flex: 1; min-width: 0; padding: 6px 0 4px;
-  /* auto/auto lets Chrome use the ::-webkit-scrollbar rules below instead of its own thin bar. */
-  scrollbar-width: auto; scrollbar-color: auto;
-  /* The fade covers the text only; the bottom 5px (the scrollbar) stays fully drawn. */
-  -webkit-mask: var(--fade) top / 100% calc(100% - 5px) no-repeat, linear-gradient(#000, #000) bottom / 100% 5px no-repeat;
-  mask: var(--fade) top / 100% calc(100% - 5px) no-repeat, linear-gradient(#000, #000) bottom / 100% 5px no-repeat; }
-.code-line code.is-clip-end { --fade: linear-gradient(90deg, #000 calc(100% - 40px), transparent); }
-.code-line code.is-clip-start { --fade: linear-gradient(90deg, transparent, #000 40px); }
-.code-line code.is-clip-start.is-clip-end { --fade: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent); }
-.code-line code:not(.is-clip-start):not(.is-clip-end) { -webkit-mask: none; mask: none; }
-/* A thin rounded bar, always visible so a mouse user sees the line scrolls; brighter on hover (Chrome, Edge, Safari). */
-.code-line code::-webkit-scrollbar { height: 5px; }
-.code-line code::-webkit-scrollbar-track { background: transparent; }
-.code-line code::-webkit-scrollbar-thumb { border-radius: 999px; background: rgb(255 255 255 / 0.18); }
-.code-line:hover code::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.3); }
-.code-line code::-webkit-scrollbar-thumb:hover, .code-line code::-webkit-scrollbar-thumb:active { background: rgb(255 255 255 / 0.5); }
-/* Firefox has no pixel width for scrollbars: its thin bar, same colours. */
-@supports (-moz-appearance: none) {
-  .code-line code { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 0.18) transparent; }
-  .code-line:hover code { scrollbar-color: rgb(255 255 255 / 0.3) transparent; }
-}
+.code-line { display: flex; align-items: flex-start; gap: 4px; min-width: 0; max-width: 100%; background: var(--surface); border-radius: var(--r-md); padding: 4px 4px 4px 14px; }
+/* A long command wraps at its spaces; continuation lines hang one step in, like a shell
+   command broken across lines, so the start of each command is easy to find. */
+.code-line code { flex: 1; min-width: 0; padding: 6px 0 6px 1.5em; text-indent: -1.5em; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 
 .skel { display: block; height: 10px; width: var(--w, 50%); border-radius: 6px; background: var(--surface); animation: skel 1.4s ease-in-out infinite alternate; }
 @keyframes skel { to { opacity: 0.5; } }
@@ -483,11 +469,18 @@ textarea.input { height: auto; padding: 10px 14px; resize: vertical; }
 /* ------------------------------------------------------------------ imagery (SpaceX grammar) */
 /* Full-bleed frame, caps DIN headline floating on the dark side of the shot,
    the frame dissolving into the page at its bottom edge. */
-.hero { position: relative; display: grid; align-items: end; background: var(--bg); }
-.hero-inner { width: 100%; max-width: 1280px; margin: 0 auto; padding: calc(var(--toolbar-h) + 28px) 40px 28px; }
-/* Accounts, Usage, Requests, Agents: the headline a step smaller than Status */
+.hero { position: relative; isolation: isolate; min-height: clamp(300px, 46vh, 460px); display: grid; align-items: end; overflow: hidden; background: #000; }
+.hero-media { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; max-width: none; display: block; object-fit: cover; }
+.hero::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    linear-gradient(to right, rgb(0 0 0 / 0.62) 0%, rgb(0 0 0 / 0.3) 40%, rgb(0 0 0 / 0) 68%),
+    linear-gradient(to bottom, rgb(0 0 0 / 0.4) 0%, rgb(0 0 0 / 0) 26%, rgb(0 0 0 / 0) 52%, var(--bg) 100%); }
+.hero-inner { width: 100%; max-width: 1280px; margin: 0 auto; padding: calc(var(--toolbar-h) + 40px) 40px 40px; }
+/* Accounts, Usage, Requests, Agents: a shorter header, so the tools stay above the fold */
+.hero-page { min-height: clamp(230px, 32vh, 320px); }
+.hero-page .hero-inner { padding-bottom: 32px; }
 .hero-page .status-sentence { font-size: clamp(1.75rem, 1.2rem + 1.8vw, 2.5rem); }
-.hero-sub { font-size: 0.9375rem; line-height: 1.375rem; color: var(--ink-2); text-wrap: pretty; }
+.hero-sub { font-size: 0.9375rem; line-height: 1.375rem; color: rgb(240 240 250 / 0.82); text-shadow: 0 1px 10px rgb(0 0 0 / 0.55); text-wrap: pretty; }
 .hero-sub[hidden] { display: none; }
 
 /* ------------------------------------------------------------------ status view */
@@ -700,10 +693,13 @@ dialog::backdrop { background: var(--scrim); }
 .dialog-foot { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 28px; }
 .dialog-foot .dialog-actions { margin-top: 0; flex: none; }
 
-/* Add account: the three steps on a quiet panel on the left, the form on the right. */
+/* Add account: the three steps over whale sharks rising to the surface, the form on the right. */
 .dialog.dialog-split { width: min(940px, calc(100vw - 32px)); overflow: hidden; border-radius: 24px; }
 .dialog-split[open] { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
-.add-visual { position: relative; display: flex; align-items: flex-start; min-height: 540px; background: #1a1a1a; box-shadow: inset -1px 0 0 rgb(255 255 255 / 0.08); color: #f0f0fa; }
+.add-visual { position: relative; isolation: isolate; display: flex; align-items: flex-end; min-height: 540px; overflow: hidden; background: #000; color: #f0f0fa; }
+.add-visual-media { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; max-width: none; object-fit: cover; object-position: 50% 30%; }
+.add-visual::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(180deg, rgb(0 0 0 / 0) 28%, rgb(0 0 0 / 0.55) 56%, rgb(0 0 0 / 0.9) 100%); }
 .add-visual-inner { width: 100%; padding: 32px 30px 30px; }
 .add-title { max-width: 11ch; font-family: var(--font-display); font-size: 2rem; line-height: 1.02; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; text-wrap: balance; }
 .add-steps { list-style: none; display: grid; gap: 16px; margin: 26px 0 0; padding: 0; }
@@ -759,7 +755,7 @@ dialog::backdrop { background: var(--scrim); }
   .dialog.dialog-split { overflow: auto; border-radius: 20px; }
   .dialog-split[open] { grid-template-columns: minmax(0, 1fr); }
   .add-visual { min-height: 0; }
-  .add-visual-inner { padding: 22px; }
+  .add-visual-inner { padding: 168px 22px 22px; }
   .add-title { font-size: 1.625rem; max-width: none; }
   .add-steps { gap: 12px; margin-top: 18px; }
   .add-panel { position: static; max-height: none; overflow: visible; padding: 22px; }
@@ -785,8 +781,8 @@ dialog::backdrop { background: var(--scrim); }
 .palette-detail { color: var(--ink-3); font-size: 0.8125rem; }
 .palette-empty { padding: 16px 12px; color: var(--ink-3); }
 
-/* the key screen sits on the night-launch photograph */
-.gate { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: #000 url("/dashboard/media-night-launch.jpg") 60% 50% / cover no-repeat; }
+/* the key screen sits on sunlight over deep water */
+.gate { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: #000 url("/dashboard/media-sea-glint.jpg") 50% 50% / cover no-repeat; }
 .gate::before { content: ""; position: absolute; inset: 0; background: linear-gradient(to right, rgb(0 0 0 / 0.55), rgb(0 0 0 / 0.2) 70%); }
 .gate-card { position: relative; width: min(460px, 100%); border-radius: 20px; padding: 28px; display: grid; gap: 12px; }
 .gate-icon { width: 24px; height: 24px; color: var(--ink-2); }
@@ -905,7 +901,7 @@ body.settings-open .new-pill.new-pill { left: 50%; }
 .set-code { background: #1e1e1e; }
 .set-code .code-pre { padding: 14px 18px 16px 0; }
 /* VS Code Dark+ token colours, with a line-number gutter that selection and copy skip */
-.code-vs { color: #d4d4d4; counter-reset: ln; scrollbar-width: thin; scrollbar-color: #4a4a4a transparent; }
+.code-vs { color: #d4d4d4; counter-reset: ln; }
 .code-vs .vs-line { display: block; counter-increment: ln; }
 .code-vs .vs-line::before { content: counter(ln); display: inline-block; width: 3.25em; padding-right: 1.25em; text-align: right; color: #8b949e; user-select: none; -webkit-user-select: none; }
 .code-vs .tk-kw { color: #569cd6; }
@@ -1084,7 +1080,10 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 @media (prefers-reduced-motion: reduce) { .auth-line .auth-value { transition: none; } }
 /* The installed build as a launch board: liftoff photo, the version in the display face. */
 .update-panel { border-radius: 12px; background: #1f1f1f; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12); overflow: hidden; min-width: 0; }
-.update-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 20px; box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.08); color: #f0f0fa; }
+.update-hero { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; min-height: 148px; padding: 20px; background: #000; color: #f0f0fa; }
+.update-hero-media { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; max-width: none; object-fit: cover; object-position: 50% 45%; }
+.update-hero::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(90deg, rgb(0 0 0 / 0.82) 0%, rgb(0 0 0 / 0.5) 55%, rgb(0 0 0 / 0.2) 100%), linear-gradient(0deg, rgb(0 0 0 / 0.45), transparent 60%); }
 .update-hero-body { display: grid; gap: 6px; min-width: 0; }
 .update-version { font-family: var(--font-display); font-size: 2.5rem; line-height: 1; font-weight: 700; letter-spacing: 0.01em; font-variant-numeric: tabular-nums; }
 .update-where { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: rgb(240 240 250 / 0.72); font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -1338,8 +1337,7 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 
 /* file viewer: VS Code Dark+ ground, one tab per file the agent reads */
 .filebox { display: grid; min-width: 0; border-radius: var(--r-lg); background: #1e1e1e; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.07); overflow: hidden; }
-.filebox-tabs { display: flex; gap: 2px; padding: 6px; background: #252526; box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.06); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
-.filebox-tabs::-webkit-scrollbar { display: none; }
+.filebox-tabs { display: flex; gap: 2px; padding: 6px; background: #252526; box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.06); overflow-x: auto; overscroll-behavior-x: contain; }
 .file-tab { flex: none; display: grid; grid-template-columns: auto auto; column-gap: 8px; align-items: baseline; text-align: left; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-2); white-space: nowrap; touch-action: manipulation; transition: background-color 120ms ease, color 120ms ease; }
 .file-tab[aria-selected=true] { background: #333; color: var(--ink); }
 @media (hover: hover) and (pointer: fine) { .file-tab:hover:not([aria-selected=true]) { background: var(--hover-wash); color: var(--ink); } }
@@ -1458,7 +1456,9 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
   .toolbar-actions .btn { width: 36px; padding: 0; }
   .view-pad { padding: 20px 16px calc(96px + env(safe-area-inset-bottom)); }
   .banner-slot { padding: 12px 16px 0; }
-  .hero-inner { padding: calc(var(--toolbar-h) + 20px) 16px 20px; }
+  .hero { min-height: clamp(260px, 44vh, 380px); }
+  .hero-page { min-height: clamp(210px, 30vh, 280px); }
+  .hero-inner { padding: calc(var(--toolbar-h) + 28px) 16px 28px; }
   .tabbar { display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; height: calc(58px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); border-radius: 0; }
   .tab { display: grid; justify-items: center; align-content: center; gap: 3px; color: var(--ink-3); text-decoration: none; font-size: 0.6875rem; font-weight: 500; min-height: 44px; }
   .tab:hover { text-decoration: none; }
@@ -1498,7 +1498,7 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
   .accounts-table, .accounts-table tbody { display: block; }
   .accounts-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "account actions" "state actions"; padding: 12px 4px; border-bottom: 1px solid var(--rule); }
   .accounts-table td, .data-table.accounts-table td { display: none; border: 0; height: auto; padding: 0; }
-  .filter-row .segmented { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .filter-row .segmented { max-width: 100%; overflow-x: auto; }
   .accounts-table td.cell-account { display: block; grid-area: account; }
   .accounts-table td.cell-state { display: block; grid-area: state; font-size: 0.8125rem; margin-top: 2px; }
   .accounts-table td.cell-actions { display: flex; align-items: center; grid-area: actions; }
@@ -1607,7 +1607,7 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
   .btn-primary, .send-btn { background: ButtonText; color: ButtonFace; forced-color-adjust: none; }
   .mark-data-2 { fill: url(#texture-45); forced-color-adjust: none; color: CanvasText; }
   .lamp, .icon { forced-color-adjust: auto; }
-  .gate::before, .glyph-field { display: none; }
+  .hero::before, .gate::before, .glyph-field { display: none; }
   .sig-link.is-live::after { background: CanvasText; }
   .sig-link:is(.is-live, .is-warn)::before { border-left-color: CanvasText; }
   .secret-chip, .agent-state, .sigpath-lg, .filebox, .apply-bar { border: 1px solid CanvasText; }
@@ -1616,7 +1616,7 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 }
 @media print {
   .mark-data-2 { fill: url(#texture-45); color: #000; }
-  .rail, .toolbar, .tabbar, .toasts, .composer-dock, .glyph-field { display: none !important; }
+  .rail, .toolbar, .tabbar, .toasts, .composer-dock, .glyph-field, .hero-media { display: none !important; }
   body { overflow: visible; }
   .scroll { position: static; mask-image: none; padding-top: 0; }
 }

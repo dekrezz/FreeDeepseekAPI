@@ -58,9 +58,11 @@
     F.on('tick', () => { if (st.visible) tick(); });
   }
 
-  // The pool sentence as the page's headline.
+  // The pool sentence over a manta ray in a shaft of light (MEDIA.md).
   function hero(content) {
-    return h('section', { class: 'hero', 'aria-label': 'Account pool' }, h('div', { class: 'hero-inner' }, content));
+    const img = h('img', { class: 'hero-media', src: '/dashboard/media-manta.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' });
+    img.style.setProperty('object-position', '50% 38%');
+    return h('section', { class: 'hero', 'aria-label': 'Account pool' }, img, h('div', { class: 'hero-inner' }, content));
   }
 
   function rowsInWindow(now) {

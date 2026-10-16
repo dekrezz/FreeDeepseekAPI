@@ -38,6 +38,7 @@
   const SHOW_LABEL = { disk: 'on disk', after: 'after apply', diff: 'changes' };
   const BACKUPS_SHOWN = 8;
   const PLAN_DEBOUNCE_MS = 250;
+  const HERO_IMAGE = '/dashboard/media-ripples.jpg';
 
   const st = {
     root: null,
@@ -766,7 +767,7 @@
   function mount(root) {
     st.root = root;
     // Overview
-    const heroO = F.pageHero({ label: 'Coding agents' });
+    const heroO = F.pageHero({ image: HERO_IMAGE, label: 'Coding agents' });
     const ovBanner = h('div', { class: 'view-banner' });
     const roster = h('ul', { class: 'agents-roster set-group', role: 'list', 'aria-label': 'Agents' });
     // The j/k cursor follows Tab focus, so Enter and j/k always agree on the row.
@@ -791,7 +792,7 @@
       h('div', { class: 'view-pad agents' }, ovBanner, rosterSection, backupSection));
 
     // Detail
-    const heroD = F.pageHero({ label: 'Agent' });
+    const heroD = F.pageHero({ image: HERO_IMAGE, label: 'Agent', position: '50% 60%' });
     heroD.classList.add('hero-agent');
     const pathHost = h('div', { class: 'agent-path-host' });
     const dBanner = h('div', { class: 'view-banner' });

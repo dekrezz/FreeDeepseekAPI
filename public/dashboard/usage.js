@@ -48,7 +48,7 @@
         breakdown),
       h('div', { class: 'rule' }),
       h('section', { class: 'section' }, h('div', { class: 'section-head' }, h('h3', { class: 'section-title' }, F.icon('accounts', 'title-icon'), h('span', { text: 'Lifetime by account' }))), lifetime));
-    const hero = F.pageHero({ label: 'Usage' });
+    const hero = F.pageHero({ image: '/dashboard/media-bubbles.jpg', label: 'Usage', position: '50% 30%' });
     root.append(hero, h('div', { class: 'view-pad' },
       h('div', { class: 'filter-row' }, windowSeg, accountSlot),
       caveat, status, body));
