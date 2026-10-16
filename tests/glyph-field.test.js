@@ -102,13 +102,23 @@ test('glyph field: only a press starts a ripple; holding or dragging does nothin
   assert.equal(presses.length, 1, 'a press on the composer or a button does not');
 });
 
-test('settings pages and the add-account dialog show no photos or video', () => {
+test('settings headers, Add account, Updates and the access gate show ocean photos that ship and are credited; no video', () => {
   const dir = path.join(__dirname, '..', 'public', 'dashboard');
-  for (const file of ['core.js', 'status.js', 'accounts.js', 'usage.js', 'requests.js', 'agents.js', 'settings.js']) {
+  const credits = fs.readFileSync(path.join(dir, 'MEDIA.md'), 'utf8');
+  const used = new Set();
+  for (const file of ['status.js', 'accounts.js', 'usage.js', 'requests.js', 'agents.js', 'settings.js', 'app.css']) {
     const code = fs.readFileSync(path.join(dir, file), 'utf8');
-    assert.doesNotMatch(code, /\/dashboard\/media-/, `${file} still shows a photo or video`);
     assert.doesNotMatch(code, /createElement\(['"]video['"]\)/, `${file} still plays a video`);
+    const photos = [...code.matchAll(/\/dashboard\/(media-[a-z0-9-]+\.jpg)/g)].map(m => m[1]);
+    if (file !== 'app.css') assert.ok(photos.length, `${file} shows no photo`);
+    photos.forEach(p => used.add(p));
   }
+  assert.match(fs.readFileSync(path.join(dir, 'app.css'), 'utf8'), /\.gate \{[^}]*\/dashboard\/media-[a-z0-9-]+\.jpg/, 'the access gate shows a photo');
+  for (const photo of used) {
+    assert.ok(fs.existsSync(path.join(dir, photo)), `${photo} is used but not shipped`);
+    assert.match(credits, new RegExp('`' + photo.replace('.', '\\.') + '`'), `${photo} is not credited in MEDIA.md`);
+  }
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, 'chat.js'), 'utf8'), /\/dashboard\/media-/, 'the chat keeps its glyph field, no photo');
 });
 
 test('the glyph field lives only behind the empty chat; settings and Add account stay still', () => {

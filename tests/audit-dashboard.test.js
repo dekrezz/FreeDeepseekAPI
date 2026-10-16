@@ -40,3 +40,13 @@ test('every coding agent shows its own logo, not its initials', () => {
   }
   assert.match(agents, /`#a-\$\{/, 'the agent mark draws the logo symbol');
 });
+
+test('no scrollbar is drawn anywhere; long commands wrap instead of scrolling', () => {
+  const css = fs.readFileSync(path.join(DASHBOARD_DIR, 'app.css'), 'utf8');
+  assert.match(css, /^\* \{ scrollbar-width: none; \}$/m, 'scrollbars are hidden for every element');
+  assert.match(css, /^\*::-webkit-scrollbar \{ display: none; \}$/m, 'and in WebKit and Blink');
+  assert.match(css, /\.code-line code \{[^}]*white-space: pre-wrap;/, 'a long command wraps');
+  assert.doesNotMatch(css, /::-webkit-scrollbar-thumb/, 'no scrollbar is styled back in');
+  const core = fs.readFileSync(path.join(DASHBOARD_DIR, 'core.js'), 'utf8');
+  assert.match(core, /F\.scrollEdges = /, 'scrollable areas mark the edges that have more past them');
+});
