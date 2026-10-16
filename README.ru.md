@@ -23,6 +23,7 @@
 </p>
 
 <p align="center">
+  <a href="#с-чего-начать">С чего начать</a> •
   <a href="#быстрый-старт">Быстрый старт</a> •
   <a href="#что-это-даёт">Что это даёт</a> •
   <a href="#примеры-запросов">Примеры</a> •
@@ -36,6 +37,48 @@
   <a href="#панель-аккаунтов"><img src="docs/assets/dashboard.png" alt="Дашборд FreeDeepseekAPI: встроенный чат поверх DeepSeek Web" width="880" /></a>
 </p>
 
+## С чего начать
+
+**Что это.** У вас есть бесплатный аккаунт DeepSeek на [chat.deepseek.com](https://chat.deepseek.com). FreeDeepseekAPI работает на вашем компьютере и превращает этот аккаунт в API по адресу `http://127.0.0.1:9655` — такой же адрес выдают платные AI-сервисы. Любая программа, которая умеет работать с OpenAI или Anthropic, сможет через него пользоваться DeepSeek: Open WebUI, Cursor, Claude Code, Codex, ваши скрипты. Платный API-ключ не нужен: ваш аккаунт, на вашем компьютере.
+
+**Понадобится:** [Node.js](https://nodejs.org) 18 или новее, Git, Google Chrome и бесплатный аккаунт DeepSeek.
+
+### 1. Запуск за минуту
+
+```bash
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
+cd FreeDeepseekAPI
+npm run auth
+npm run dashboard
+```
+
+- `npm run auth`: выберите **Войти через Chrome**, войдите на chat.deepseek.com в открывшемся окне, отправьте короткое сообщение, например `ok`, и вернитесь в терминал. Вход сохранится в `deepseek-auth.json`.
+- `npm run dashboard`: запускает прокси и открывает `http://127.0.0.1:9655/dashboard`. Там можно сразу общаться с DeepSeek.
+
+### 2. Подключите свою программу
+
+| Настройка | Значение |
+|---|---|
+| Base URL | `http://127.0.0.1:9655/v1` |
+| API key | любой текст (если прокси запущен с `PROXY_API_KEY`, укажите этот ключ) |
+| Модель | `deepseek-v4-flash` отвечает с поиском в интернете, `deepseek-v4-flash-thinking` сначала думает; добавьте `-nosearch`, чтобы выключить поиск |
+
+Open WebUI в Docker: укажите `http://host.docker.internal:9655/v1`.
+
+### 3. Агенты для кода одной командой
+
+Пока прокси запущен:
+
+```bash
+npm run setup:agents
+```
+
+Команда настроит Claude Code, Codex, OpenCode, Hermes, OpenClaw и Cursor как дополнительный профиль; то, чем вы пользуетесь сейчас, останется как есть. То же можно сделать в дашборде: Settings → Agents. Потом запускайте, например, `claude --settings ~/.claude/freedeepseek.settings.json` или `codex --profile freedeepseek`.
+
+Что-то не так? `npm run doctor` проверит настройку, а `curl http://127.0.0.1:9655/health` покажет, работает ли прокси. Всё остальное — ниже.
+
+---
+
 FreeDeepseekAPI поднимает локальный API-сервер перед **DeepSeek Web Chat** ([chat.deepseek.com](https://chat.deepseek.com)). К нему подключаются Open WebUI, LiteLLM, Hermes, Claude Code, Codex, OpenCode, OpenClaw, Cursor и любой OpenAI-compatible клиент.
 
 Проект работает через ваш обычный залогиненный аккаунт DeepSeek. Локальный сервер принимает API-запросы и продолжает сохранённую Web-сессию. Платный ключ `api.deepseek.com` не нужен.
@@ -48,6 +91,7 @@ FreeDeepseekAPI поднимает локальный API-сервер пере�
 
 ## Навигация
 
+- [С чего начать](#с-чего-начать)
 - [Что это даёт](#что-это-даёт)
 - [Возможности](#возможности)
 - [Быстрый старт](#быстрый-старт)

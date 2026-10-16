@@ -23,6 +23,7 @@
 </p>
 
 <p align="center">
+  <a href="#从这里开始">从这里开始</a> •
   <a href="#快速开始">快速开始</a> •
   <a href="#能做什么">能做什么</a> •
   <a href="#请求示例">示例</a> •
@@ -36,6 +37,48 @@
   <a href="#账号面板"><img src="docs/assets/dashboard.png" alt="FreeDeepseekAPI 控制面板：基于 DeepSeek Web 的内置聊天" width="880" /></a>
 </p>
 
+## 从这里开始
+
+**这是什么。** 你在 [chat.deepseek.com](https://chat.deepseek.com) 有一个免费的 DeepSeek 账号。FreeDeepseekAPI 运行在你的电脑上，把这个账号变成一个 API，地址是 `http://127.0.0.1:9655`，和付费 AI 服务给你的地址是同一类东西。任何能对接 OpenAI 或 Anthropic 的应用都可以通过它使用 DeepSeek：Open WebUI、Cursor、Claude Code、Codex，或者你自己的脚本。不需要付费的 API 密钥：用的是你自己的账号，跑在你自己的电脑上。
+
+**你需要：** [Node.js](https://nodejs.org) 18 或更高版本、Git、Google Chrome，以及一个免费的 DeepSeek 账号。
+
+### 1. 一分钟启动
+
+```bash
+git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
+cd FreeDeepseekAPI
+npm run auth
+npm run dashboard
+```
+
+- `npm run auth`：选择 **用 Chrome 登录**，在打开的窗口里登录 chat.deepseek.com，发送一条简短消息，比如 `ok`，然后回到终端。登录信息会保存到 `deepseek-auth.json`。
+- `npm run dashboard`：启动代理并打开 `http://127.0.0.1:9655/dashboard`，可以直接在那里和 DeepSeek 聊天。
+
+### 2. 连接你的应用
+
+| 设置 | 值 |
+|---|---|
+| Base URL | `http://127.0.0.1:9655/v1` |
+| API key | 任意文本（如果启动代理时设置了 `PROXY_API_KEY`，就填这个密钥） |
+| 模型 | `deepseek-v4-flash` 会联网搜索后回答，`deepseek-v4-flash-thinking` 会先思考；在任一模型后加 `-nosearch` 可关闭搜索 |
+
+在 Docker 中运行的 Open WebUI：使用 `http://host.docker.internal:9655/v1`。
+
+### 3. 一条命令配置编程代理
+
+在代理运行时：
+
+```bash
+npm run setup:agents
+```
+
+它会把 Claude Code、Codex、OpenCode、Hermes、OpenClaw 和 Cursor 配置成一个额外的配置档；你现在用的东西保持不变。也可以在控制面板里完成：Settings → Agents。之后可以这样启动，例如 `claude --settings ~/.claude/freedeepseek.settings.json` 或 `codex --profile freedeepseek`。
+
+遇到问题？`npm run doctor` 会检查你的配置，`curl http://127.0.0.1:9655/health` 可以确认代理是否在运行。其余内容都在下面。
+
+---
+
 FreeDeepseekAPI 在本机启动一个 API 服务，后端是 **DeepSeek Web Chat**（[chat.deepseek.com](https://chat.deepseek.com)）。Open WebUI、LiteLLM、Hermes、Claude Code、Codex、OpenCode、OpenClaw、Cursor，以及任何 OpenAI 兼容客户端都可以连上来。
 
 它使用你已经登录的 DeepSeek 账号。本地服务接收 API 请求，再沿着保存好的 Web 会话继续聊。不需要 `api.deepseek.com` 的付费密钥。
@@ -48,6 +91,7 @@ FreeDeepseekAPI 在本机启动一个 API 服务，后端是 **DeepSeek Web Chat
 
 ## 目录
 
+- [从这里开始](#从这里开始)
 - [能做什么](#能做什么)
 - [功能](#功能)
 - [快速开始](#快速开始)
