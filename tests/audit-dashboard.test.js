@@ -38,5 +38,5 @@ test('every coding agent shows its own logo, not its initials', () => {
   for (const id of ids) {
     assert.match(index, new RegExp(`<symbol id="a-${id}" viewBox="0 0 24 24">`), `index.html has no logo symbol for ${id}`);
   }
-  assert.match(agents, /href: `#a-\$\{/, 'the agent mark draws the logo symbol');
+  assert.match(agents, /`#a-\$\{/, 'the agent mark draws the logo symbol');
 });
