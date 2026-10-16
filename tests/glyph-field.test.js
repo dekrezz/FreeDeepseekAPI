@@ -111,13 +111,10 @@ test('settings pages and the add-account dialog show no photos or video', () => 
   }
 });
 
-test('glyph field: a page hero keeps its mark on the right, clear of the headline; the chat centres it', () => {
-  const G = loadGlyphField();
-  for (const [W, H] of [[1200, 320], [800, 300], [480, 260]]) {
-    const r = G.maskRect(W, H, 'right');
-    assert.ok(r.left >= W * 0.45, `hero mark starts at ${r.left}px of ${W}px, over the headline`);
-    assert.ok(r.size >= H, 'the hero mark is at least as tall as the hero');
+test('the glyph field lives only behind the empty chat; settings and Add account stay still', () => {
+  const dir = path.join(__dirname, '..', 'public', 'dashboard');
+  for (const file of ['core.js', 'status.js', 'accounts.js', 'usage.js', 'requests.js', 'agents.js', 'settings.js']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(dir, file), 'utf8'), /glyphField/, `${file} still draws a glyph field`);
   }
-  const c = G.maskRect(1200, 800, 'center');
-  assert.ok(Math.abs(c.left + c.size / 2 - 600) < 1, 'the chat mark is centred');
+  assert.match(fs.readFileSync(path.join(dir, 'chat.js'), 'utf8'), /glyphField\.attach\(/, 'the empty chat keeps its field');
 });
