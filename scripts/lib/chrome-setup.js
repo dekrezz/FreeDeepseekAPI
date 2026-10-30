@@ -1,11 +1,14 @@
 'use strict';
 
-// Finding a Chrome the sign-in flow can drive over DevTools, and installing one
-// when none is present, and saving the captured session. Kept out of the sign-in
-// script (which runs on load) so they are testable.
+// Finding a Chrome the sign-in flow can drive over DevTools, installing one
+// when none is present, saving the captured session, and keeping that profile
+// private. Kept out of the sign-in script (which runs on load) so they are testable.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+
+const PROFILE_DIR_MODE = 0o700;
 
 const CHROME_DOWNLOAD_URL = 'https://www.google.com/chrome/';
 const BREW_PREFIXES = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew'];
@@ -89,6 +92,86 @@ function brewInstallCommand(brew) {
   return { cmd: brew, args: ['install', '--cask', 'google-chrome'] };
 }
 
+// DevTools has no authentication. Bind it to 127.0.0.1 instead of leaving the
+// address unset.
+function signInChromeArgs(profileDir, port, url) {
+  return [
+    `--user-data-dir=${profileDir}`,
+    `--remote-debugging-port=${port}`,
+    '--remote-debugging-address=127.0.0.1',
+    '--use-mock-keychain',
+    '--password-store=basic',
+    '--disable-sync',
+    '--disable-extensions',
+    '--disable-component-extensions-with-background-pages',
+    '--disable-features=AutofillServerCommunication,OptimizationHints,MediaRouter,InterestFeedContentSuggestions,Translate',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-infobars',
+    url,
+  ];
+}
+
+// Default mkdir is 0755 under umask 022, and mkdir does not change a directory
+// that already exists. chmod afterwards so a leftover profile is tightened too.
+function ensurePrivateProfileDir(dir, io = fs) {
+  io.mkdirSync(dir, { recursive: true, mode: PROFILE_DIR_MODE });
+  io.chmodSync(dir, PROFILE_DIR_MODE);
+}
+
+function pauseSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {}
+}
+
+// Deletes the sign-in profile. If it is busy, move it out of the repo so the
+// cookies cannot be committed, lock the copy to 0700, and still try to delete it.
+function removeProfileSafely(dir, opts = {}) {
+  const io = opts.fs || fs;
+  const tmpdir = opts.tmpdir || os.tmpdir();
+  const pause = opts.sleepSync || pauseSync;
+  const now = opts.now || Date.now;
+  const log = opts.log || ((line) => console.log(line));
+  if (!io.existsSync(dir)) return;
+  for (let i = 0; i < 5; i++) {
+    try {
+      io.rmSync(dir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 250,
+      });
+      if (!io.existsSync(dir)) return;
+    } catch (e) {
+      if (i === 4) {
+        // Outside the repo, so a leftover copy of the logged-in cookies can never be committed.
+        const staleDir = path.join(tmpdir, `${path.basename(dir)}.stale-${now()}`);
+        try {
+          io.chmodSync(dir, PROFILE_DIR_MODE);
+          io.renameSync(dir, staleDir);
+          io.chmodSync(staleDir, PROFILE_DIR_MODE);
+        } catch (renameErr) {
+          throw new Error(
+            `Cannot remove the old auth Chrome profile ${dir} (${e.code || e.message}) or move it to ${staleDir} (${renameErr.code || renameErr.message}). Close the DeepSeek auth Chrome window and retry.`,
+          );
+        }
+        try {
+          io.rmSync(staleDir, {
+            recursive: true,
+            force: true,
+            maxRetries: 3,
+            retryDelay: 250,
+          });
+        } catch {}
+        log(`[auth] Old profile was busy; moved it aside: ${staleDir}`);
+        return;
+      }
+    }
+    pause(300);
+  }
+}
+
 // Saves a captured session only when it holds both a token and a cookie, so a login
 // that did not finish never replaces a working auth file. Writes a 0600 temp file
 // next to outPath and renames it over the target. Returns false when nothing was written.
@@ -108,8 +191,12 @@ function writeCapturedAuth(outPath, auth) {
 
 module.exports = {
   CHROME_DOWNLOAD_URL,
+  PROFILE_DIR_MODE,
   writeCapturedAuth,
   locateChrome,
   findBrew,
   brewInstallCommand,
+  signInChromeArgs,
+  ensurePrivateProfileDir,
+  removeProfileSafely,
 };
