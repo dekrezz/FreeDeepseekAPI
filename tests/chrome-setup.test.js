@@ -115,6 +115,134 @@ test('a missing Chrome in a non-interactive run lists the checked paths without 
   assert.doesNotMatch(out, /\n\s+at main \(/, 'a missing browser is a setup problem, not a crash');
 });
 
+test('sign-in Chrome binds DevTools to 127.0.0.1', () => {
+  assert.deepEqual(
+    chrome.signInChromeArgs('/data/profile', 9334, 'https://chat.deepseek.com/'),
+    [
+      '--user-data-dir=/data/profile',
+      '--remote-debugging-port=9334',
+      '--remote-debugging-address=127.0.0.1',
+      '--use-mock-keychain',
+      '--password-store=basic',
+      '--disable-sync',
+      '--disable-extensions',
+      '--disable-component-extensions-with-background-pages',
+      '--disable-features=AutofillServerCommunication,OptimizationHints,MediaRouter,InterestFeedContentSuggestions,Translate',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-infobars',
+      'https://chat.deepseek.com/',
+    ],
+  );
+  const custom = chrome.signInChromeArgs('/tmp/p', 9444, 'https://chat.deepseek.com/');
+  assert.ok(custom.includes('--remote-debugging-port=9444'));
+  assert.equal(custom.filter((arg) => arg.startsWith('--remote-debugging-address=')).join(','), '--remote-debugging-address=127.0.0.1');
+});
+
+test('sign-in profile directory is created mode 0700 and an existing one is tightened', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-profile-mode-'));
+  const dir = path.join(root, 'profile');
+  const calls = [];
+  const prev = process.umask(0);
+  try {
+    chrome.ensurePrivateProfileDir(dir, {
+      mkdirSync(target, opts) {
+        calls.push(['mkdir', target, opts]);
+        fs.mkdirSync(target, opts);
+      },
+      chmodSync(target, mode) {
+        calls.push(['chmod', target, mode]);
+        fs.chmodSync(target, mode);
+      },
+    });
+    assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+    assert.deepEqual(calls, [
+      ['mkdir', dir, { recursive: true, mode: 0o700 }],
+      ['chmod', dir, 0o700],
+    ]);
+    fs.chmodSync(dir, 0o755);
+    assert.equal(fs.statSync(dir).mode & 0o777, 0o755);
+    chrome.ensurePrivateProfileDir(dir);
+    assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+  } finally {
+    process.umask(prev);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a busy sign-in profile is mode 0700 before and after it is moved aside', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-profile-busy-'));
+  const dir = path.join(root, 'profile');
+  const stale = path.join(root, 'profile.stale-1');
+  fs.mkdirSync(dir, { mode: 0o755 });
+  fs.chmodSync(dir, 0o755);
+  fs.writeFileSync(path.join(dir, 'Cookies'), 'secret', { mode: 0o644 });
+  const events = [];
+  const logs = [];
+  try {
+    chrome.removeProfileSafely(dir, {
+      tmpdir: root,
+      now: () => 1,
+      sleepSync() {},
+      log: (line) => logs.push(line),
+      fs: {
+        existsSync: (p) => fs.existsSync(p),
+        chmodSync(p, mode) {
+          events.push(['chmod', p, mode]);
+          fs.chmodSync(p, mode);
+        },
+        renameSync(from, to) {
+          events.push(['rename', from, to]);
+          fs.renameSync(from, to);
+        },
+        rmSync(p) {
+          events.push(['rm', p]);
+          const err = new Error('busy');
+          err.code = 'EBUSY';
+          throw err;
+        },
+      },
+    });
+    assert.equal(fs.existsSync(dir), false);
+    assert.equal(fs.statSync(stale).mode & 0o777, 0o700);
+    assert.equal(fs.readFileSync(path.join(stale, 'Cookies'), 'utf8'), 'secret');
+    const chmodDir = events.findIndex((e) => e[0] === 'chmod' && e[1] === dir);
+    const rename = events.findIndex((e) => e[0] === 'rename');
+    const chmodStale = events.findIndex((e) => e[0] === 'chmod' && e[1] === stale);
+    const rmStale = events.findIndex((e) => e[0] === 'rm' && e[1] === stale);
+    assert.equal(events.filter((e) => e[0] === 'chmod' && e[1] === dir).length, 1);
+    assert.ok(chmodDir !== -1 && chmodDir < rename, 'chmod the profile before moving it');
+    assert.equal(events[chmodDir][2], 0o700);
+    assert.ok(chmodStale > rename, 'chmod the destination after the move');
+    assert.equal(events[chmodStale][2], 0o700);
+    assert.ok(rmStale > chmodStale, 'still try to delete the moved profile');
+    assert.equal(logs[0], `[auth] Old profile was busy; moved it aside: ${stale}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('removeProfileSafely deletes a profile that is not busy', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-profile-rm-'));
+  const dir = path.join(root, 'profile');
+  try {
+    assert.equal(chrome.removeProfileSafely(path.join(root, 'missing')), undefined);
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'Cookies'), 'secret');
+    chrome.removeProfileSafely(dir, { tmpdir: root, sleepSync() {} });
+    assert.equal(fs.existsSync(dir), false);
+    assert.deepEqual(fs.readdirSync(root).filter((name) => name.startsWith('profile.stale-')), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('audit auth-1: a failed capture never overwrites a working auth file', () => {
   const fs = require('node:fs');
   const os = require('node:os');
