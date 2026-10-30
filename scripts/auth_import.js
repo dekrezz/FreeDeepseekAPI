@@ -10,9 +10,11 @@ const {
   askText,
   printWordmark,
 } = require('./lib/tui-menu');
+// Same host rule the proxy uses when it downloads and runs PoW wasm. Defined in
+// lib/pow.js so the container image (which does not ship this file) can reuse it.
+const { isDeepseekWasmUrl, wasmUrlOrDefault, DEFAULT_WASM } = require('../lib/pow');
 
 const ROOT = path.resolve(__dirname, '..');
-const DEFAULT_WASM = 'https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm';
 // DEEPSEEK_AUTH_PATH may list several account files separated by ','; a login or
 // import then writes the default file instead of a file literally named "a.json,b.json".
 function resolveAuthOutPath(env = process.env) {
@@ -65,15 +67,6 @@ function normalizeAuth(input, extra = {}, { useEnv = true } = {}) {
     wasmUrl: String(input.wasmUrl || input.wasm_url || extra.wasmUrl || DEFAULT_WASM),
   };
   return auth;
-}
-// The proxy downloads and runs this WebAssembly for every PoW challenge, so an
-// imported file must not be able to point it at another host.
-function isDeepseekWasmUrl(value) {
-  let parsed;
-  try { parsed = new URL(String(value)); }
-  catch { return false; }
-  const host = parsed.hostname.toLowerCase();
-  return parsed.protocol === 'https:' && (host === 'deepseek.com' || host.endsWith('.deepseek.com'));
 }
 function validateAuth(auth) {
   const errors = [];
@@ -218,4 +211,7 @@ module.exports = {
   chooseImportPath,
   resolveAuthOutPath,
   DEFAULT_OUT,
+  isDeepseekWasmUrl,
+  wasmUrlOrDefault,
+  DEFAULT_WASM,
 };

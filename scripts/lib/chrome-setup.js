@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { isDeepseekWasmUrl, wasmUrlOrDefault, DEFAULT_WASM } = require('../auth_import');
 
 const CHROME_DOWNLOAD_URL = 'https://www.google.com/chrome/';
 const BREW_PREFIXES = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew'];
@@ -89,15 +90,26 @@ function brewInstallCommand(brew) {
   return { cmd: brew, args: ['install', '--cask', 'google-chrome'] };
 }
 
+// The chat page records whatever resource name matched sha3*.wasm. That first
+// hit is kept only when it is https://*.deepseek.com (isDeepseekWasmUrl); any
+// other name stays the built-in module.
+function capturedWasmUrl(resources) {
+  const list = Array.isArray(resources) ? resources : [];
+  const found = list.find((entry) => /sha3.*\.wasm/.test(String(entry || '')));
+  return isDeepseekWasmUrl(found) ? found : DEFAULT_WASM;
+}
+
 // Saves a captured session only when it holds both a token and a cookie, so a login
-// that did not finish never replaces a working auth file. Writes a 0600 temp file
+// that did not finish never replaces a working auth file. A wasmUrl outside
+// https://*.deepseek.com is stored as the built-in module. Writes a 0600 temp file
 // next to outPath and renames it over the target. Returns false when nothing was written.
 function writeCapturedAuth(outPath, auth) {
   if (!auth || !auth.token || !auth.cookie) return false;
+  const stored = { ...auth, wasmUrl: wasmUrlOrDefault(auth.wasmUrl) };
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   const tmpPath = `${outPath}.${process.pid}.${Date.now()}.tmp`;
   try {
-    fs.writeFileSync(tmpPath, JSON.stringify(auth, null, 2), { mode: 0o600, flag: 'wx' });
+    fs.writeFileSync(tmpPath, JSON.stringify(stored, null, 2), { mode: 0o600, flag: 'wx' });
     fs.renameSync(tmpPath, outPath);
   } catch (err) {
     fs.rmSync(tmpPath, { force: true });
@@ -108,6 +120,7 @@ function writeCapturedAuth(outPath, auth) {
 
 module.exports = {
   CHROME_DOWNLOAD_URL,
+  capturedWasmUrl,
   writeCapturedAuth,
   locateChrome,
   findBrew,

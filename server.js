@@ -292,6 +292,9 @@ function readAccountFiles(paths) {
             if (!config || typeof config !== 'object' || Array.isArray(config)) {
                 throw new Error('expected a JSON object');
             }
+            // scripts/auth_import.js isDeepseekWasmUrl. Anything else keeps the
+            // built-in module instead of being fetched and run.
+            config.wasmUrl = pow.wasmUrlOrDefault(config.wasmUrl);
             loaded.push({ file, config });
         } catch (e) {
             errors.push({ file, message: describeAuthFileError(e) });
