@@ -50,3 +50,27 @@ test('audit auth-5: cookie export import keeps only deepseek.com cookies', () =>
   }, { token: 't' }, { useEnv: false });
   assert.equal(auth.cookie, 'ds_session_id=1');
 });
+
+test('auth import reports invalid JSON without quoting secrets and replaces a 0644 file with 0600', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { importFromFile, secureWriteJson } = require('../scripts/auth_import');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-auth-json-'));
+  try {
+    const broken = path.join(dir, 'broken.json');
+    fs.writeFileSync(broken, '{"token": super-secret-fragment}');
+    assert.throws(
+      () => importFromFile(broken, path.join(dir, 'out.json')),
+      (err) => err instanceof SyntaxError && err.message === 'invalid JSON' && !err.message.includes('super-secret'),
+    );
+    const target = path.join(dir, 'existing.json');
+    fs.writeFileSync(target, '{}', { mode: 0o644 });
+    if (process.platform !== 'win32') fs.chmodSync(target, 0o644);
+    secureWriteJson(target, { token: 'tok', cookie: 'a=b' });
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(target).mode & 0o777, 0o600);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

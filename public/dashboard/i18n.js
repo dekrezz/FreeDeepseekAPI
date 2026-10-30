@@ -937,8 +937,8 @@
     ["OpenClaw uses DeepSeek as its primary model. Your other settings in openclaw.json stay.", "OpenClaw 把 DeepSeek 用作主模型。openclaw.json 里的其他设置保持不变。"],
   ];
 
-  const en = {};
-  const zh = {};
+  const en = Object.create(null);
+  const zh = Object.create(null);
   for (const pair of PAIRS) {
     const src = pair[0];
     const chinese = pair[1];
@@ -962,10 +962,10 @@
   function t(key, vars) {
     const lang = langGet();
     const pack = STRINGS[lang] || STRINGS.en;
-    let s = pack[key];
-    if (typeof s !== 'string' || !s.trim()) s = STRINGS.en[key];
+    let s = Object.prototype.hasOwnProperty.call(pack, key) ? pack[key] : undefined;
+    if (typeof s !== 'string' || !s.trim()) s = Object.prototype.hasOwnProperty.call(STRINGS.en, key) ? STRINGS.en[key] : undefined;
     if (typeof s !== 'string' || !s.trim()) s = key == null ? '' : String(key);
-    if (vars) s = s.replace(/\{(\w+)\}/g, (m, name) => (vars[name] == null ? m : String(vars[name])));
+    if (vars) s = s.replace(/\{(\w+)\}/g, (m, name) => (Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null ? String(vars[name]) : m));
     return s;
   }
 

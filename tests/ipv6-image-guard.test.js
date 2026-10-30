@@ -96,7 +96,22 @@ test('every textual form of an IPv4-mapped address follows the embedded IPv4', (
 });
 
 test('IPv6 addresses that are not IPv4-mapped keep their previous classification', () => {
-  for (const address of ['::1', '::', 'fc00::1', 'fd12:3456::1', 'fe80::1', 'fe80::1%eth0']) {
+  for (const address of [
+    '::1',
+    '::0001',
+    '0:0:0:0:0:0:0:1',
+    '0000:0000:0000:0000:0000:0000:0000:0001',
+    '0::1',
+    '::0:1',
+    '::',
+    '::0',
+    '0:0:0:0:0:0:0:0',
+    'fc00::1',
+    'fd12:3456::1',
+    'fe80::1',
+    'fe80::1%eth0',
+    'ff02::1',
+  ]) {
     assert.equal(S.isPrivateNetworkAddress(address), true, address);
   }
   for (const address of [
@@ -144,6 +159,22 @@ test('bracketed IPv6 image literals resolve, then the private check sees the loo
     /public network addresses/,
   );
   await assertImageRejected(
+    { protocol: 'https:', hostname: '[0:0:0:0:0:0:0:1]' },
+    /public network addresses/,
+  );
+  await assertImageRejected(
+    { protocol: 'https:', hostname: '[0000:0000:0000:0000:0000:0000:0000:0001]' },
+    /public network addresses/,
+  );
+  await assertImageRejected(
+    { protocol: 'https:', hostname: '[0::1]' },
+    /public network addresses/,
+  );
+  await assertImageRejected(
+    { protocol: 'https:', hostname: '[0:0:0:0:0:0:0:0]' },
+    /public network addresses/,
+  );
+  await assertImageRejected(
     { protocol: 'https:', hostname: '[::FFFF:7F00:1]' },
     /public network addresses/,
   );
@@ -171,8 +202,11 @@ test('bracketed IPv6 image literals resolve, then the private check sees the loo
 test('image URL checks still reject non-HTTPS and local names, and still allow public IPv4 literals', async () => {
   await assertImageRejected(new URL('http://[2001:4860:4860::8888]/photo.png'), /public HTTPS URL/);
   await assertImageRejected(new URL('https://localhost/photo.png'), /public HTTPS URL/);
+  await assertImageRejected(new URL('https://localhost./photo.png'), /public HTTPS URL/);
   await assertImageRejected(new URL('https://app.localhost/photo.png'), /public HTTPS URL/);
+  await assertImageRejected(new URL('https://app.localhost./photo.png'), /public HTTPS URL/);
   await assertImageRejected(new URL('https://printer.local/photo.png'), /public HTTPS URL/);
+  await assertImageRejected(new URL('https://printer.local./photo.png'), /public HTTPS URL/);
   await assertImageRejected(new URL('https://127.0.0.1/photo.png'), /public network addresses/);
 
   const publicV4 = await S.assertPublicImageUrl(new URL('https://8.8.8.8/photo.png'));

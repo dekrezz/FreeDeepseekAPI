@@ -31,8 +31,11 @@
     }
     if (!r.view) {
       let last = null;
-      try { last = localStorage.getItem('fdsa.lastRoute'); } catch (e) { /* preference only */ }
-      const lastView = last && F.parseHash(last).view;
+      let lastView = '';
+      try {
+        last = localStorage.getItem('fdsa.lastRoute');
+        if (typeof last === 'string' && last.startsWith('#/')) lastView = F.parseHash(last).view;
+      } catch (e) { lastView = ''; }
       history.replaceState(null, '', VIEWS.includes(lastView) ? last : '#/chat');
       return route();
     }

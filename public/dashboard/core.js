@@ -10,7 +10,7 @@
   const F = window.FDSA = window.FDSA || {};
   if (typeof F.t !== 'function') F.t = (key, vars) => {
     let s = key == null ? '' : String(key);
-    if (vars) s = s.replace(/\{(\w+)\}/g, (m, name) => (vars[name] == null ? m : String(vars[name])));
+    if (vars) s = s.replace(/\{(\w+)\}/g, (m, name) => (Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null ? String(vars[name]) : m));
     return s;
   };
   if (!F.lang) F.lang = { get() { return 'en'; }, set() {} };

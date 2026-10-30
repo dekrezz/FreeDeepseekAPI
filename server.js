@@ -253,6 +253,9 @@ const configuredPromptChars = Number(process.env.DEEPSEEK_MAX_PROMPT_CHARS);
 const MAX_UPSTREAM_PROMPT_CHARS = Number.isFinite(configuredPromptChars)
     ? Math.max(MIN_UPSTREAM_PROMPT_CHARS, Math.floor(configuredPromptChars))
     : 80000;
+function sanitizeHeaderValue(value) {
+    return String(value || '').replace(/[\r\n\0]+/g, '').trim();
+}
 function buildBaseHeaders(config = DS_CONFIG) {
     return {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
@@ -261,12 +264,12 @@ function buildBaseHeaders(config = DS_CONFIG) {
         "x-client-locale": "ru",
         "x-client-timezone-offset": "14400",
         "x-app-version": "2.0.2",
-        "Authorization": `Bearer ${config.token || ''}`,
-        "x-hif-dliq": config.hif_dliq || '',
-        "x-hif-leim": config.hif_leim || '',
+        "Authorization": `Bearer ${sanitizeHeaderValue(config.token)}`,
+        "x-hif-dliq": sanitizeHeaderValue(config.hif_dliq),
+        "x-hif-leim": sanitizeHeaderValue(config.hif_leim),
         "Origin": "https://chat.deepseek.com",
         "Referer": "https://chat.deepseek.com/",
-        "Cookie": config.cookie || '',
+        "Cookie": sanitizeHeaderValue(config.cookie),
         "Content-Type": "application/json",
     };
 }
@@ -628,14 +631,15 @@ function scrubLogText(text) {
     if (text === null || text === undefined || text === '') return null;
     let out = String(text);
     const secrets = new Set();
-    for (const account of accounts) {
-        const config = account.config || {};
+    if (typeof PROXY_API_KEY === 'string' && PROXY_API_KEY.length >= 6) secrets.add(PROXY_API_KEY);
+    for (const account of [...accounts, { config: DS_CONFIG }]) {
+        const config = account?.config || {};
         for (const value of [config.token, config.hif_dliq, config.hif_leim]) {
             if (typeof value === 'string' && value.length >= 6) secrets.add(value);
         }
         for (const pair of String(config.cookie || '').split(';')) {
-            const value = pair.slice(pair.indexOf('=') + 1).trim();
-            if (pair.includes('=') && value.length >= 6) secrets.add(value);
+            const value = (pair.includes('=') ? pair.slice(pair.indexOf('=') + 1) : pair).trim();
+            if (value.length >= 6) secrets.add(value);
         }
     }
     for (const secret of [...secrets].sort((a, b) => b.length - a.length)) out = out.split(secret).join('[redacted]');
@@ -983,18 +987,20 @@ function createUpstreamHttpError(status, body = '', retryAfter = null) {
     const normalized = String(body || '').replace(/\s+/g, ' ').trim();
     const detail = normalized.substring(0, 300);
     const safeDetail = scrubUpstreamText(normalized);
-    if (Number(status) === 429 || isRateLimitSignal(detail)) {
+    const retryMs = parseRetryAfterMs(retryAfter);
+    const safeRetryAfter = retryMs != null ? String(Math.max(1, Math.ceil(retryMs / 1000))) : null;
+    if (Number(status) === 429 || isRateLimitSignal(safeDetail) || isRateLimitSignal(detail)) {
         const error = new Error(`DeepSeek rate limit (upstream HTTP ${Number(status) || 429})${safeDetail ? `: ${safeDetail}` : ''}`);
         error.status = 429;
         error.type = 'rate_limit_error';
-        if (retryAfter) error.retryAfter = retryAfter;
+        if (safeRetryAfter) error.retryAfter = safeRetryAfter;
         return error;
     }
-    if (isContextTooLongError(detail)) {
+    if (isContextTooLongError(safeDetail) || isContextTooLongError(detail)) {
         const error = new Error(safeDetail || 'DeepSeek prompt is too long');
         error.status = 400;
         error.type = 'context_length_exceeded';
-        if (retryAfter) error.retryAfter = retryAfter;
+        if (safeRetryAfter) error.retryAfter = safeRetryAfter;
         return error;
     }
     const code = Number(status) || 502;
@@ -1002,7 +1008,7 @@ function createUpstreamHttpError(status, body = '', retryAfter = null) {
     const error = new Error(`DeepSeek upstream HTTP ${code}${safeDetail ? `: ${safeDetail}` : ''}`);
     error.status = code;
     error.type = type;
-    if (retryAfter) error.retryAfter = retryAfter;
+    if (safeRetryAfter) error.retryAfter = safeRetryAfter;
     return error;
 }
 
@@ -1049,7 +1055,9 @@ function canonicalizeModelId(model) {
 }
 function resolveModelConfig(model) {
     const requested = canonicalizeModelId(model);
-    return MODEL_CONFIGS[requested] || MODEL_CONFIGS[DEFAULT_MODEL_ID];
+    return Object.prototype.hasOwnProperty.call(MODEL_CONFIGS, requested)
+        ? MODEL_CONFIGS[requested]
+        : MODEL_CONFIGS[DEFAULT_MODEL_ID];
 }
 // `web_search` (boolean) in the request body overrides the model's search default.
 function resolveRequestWebFlags(model, rawParams) {
@@ -1103,24 +1111,23 @@ function imageExtension(mediaType) {
     }[mediaType] || '';
 }
 
-// Every textual form of an IPv4-mapped address (::ffff:0:0/96), not only
-// ::ffff:a.b.c.d. dns.lookup returns hex (::ffff:7f00:1) and uncompressed
-// (0:0:0:0:0:ffff:127.0.0.1) literals unchanged, and both open TCP to the embedded IPv4.
-function ipv4FromMappedIpv6(address) {
-    let text = address;
+// Parse an IPv6 literal into its eight 16-bit groups (including embedded IPv4
+// tails like ::ffff:a.b.c.d or 0:0:0:0:0:ffff:127.0.0.1), or null if invalid.
+function parseIpv6Groups(address) {
+    let text = String(address || '').toLowerCase();
     const colon = text.lastIndexOf(':');
     const tail = colon === -1 ? text : text.slice(colon + 1);
     if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(tail)) {
         const octets = tail.split('.').map(Number);
-        if (octets.some(octet => octet > 255)) return '';
+        if (octets.some(octet => octet > 255)) return null;
         const hi = (octets[0] << 8) | octets[1];
         const lo = (octets[2] << 8) | octets[3];
         text = `${text.slice(0, colon + 1)}${hi.toString(16)}:${lo.toString(16)}`;
     } else if (text.includes('.')) {
-        return '';
+        return null;
     }
     const halves = text.split('::');
-    if (halves.length > 2) return '';
+    if (halves.length > 2) return null;
     const parseHalf = (half) => {
         if (half === '') return [];
         const parts = half.split(':');
@@ -1128,16 +1135,24 @@ function ipv4FromMappedIpv6(address) {
         return parts.map(part => parseInt(part, 16));
     };
     const head = parseHalf(halves[0]);
-    if (head === null) return '';
+    if (head === null) return null;
     let groups = head;
     if (halves.length === 2) {
         const rest = parseHalf(halves[1]);
-        if (rest === null) return '';
+        if (rest === null) return null;
         const missing = 8 - head.length - rest.length;
-        if (missing < 1) return '';
+        if (missing < 1) return null;
         groups = head.concat(Array(missing).fill(0), rest);
     }
-    if (groups.length !== 8) return '';
+    return groups.length === 8 ? groups : null;
+}
+
+// Every textual form of an IPv4-mapped address (::ffff:0:0/96), not only
+// ::ffff:a.b.c.d. dns.lookup returns hex (::ffff:7f00:1) and uncompressed
+// (0:0:0:0:0:ffff:127.0.0.1) literals unchanged, and both open TCP to the embedded IPv4.
+function ipv4FromMappedIpv6(address) {
+    const groups = parseIpv6Groups(address);
+    if (!groups) return '';
     const mapped = groups[0] === 0 && groups[1] === 0 && groups[2] === 0
         && groups[3] === 0 && groups[4] === 0 && groups[5] === 0xffff;
     if (!mapped) return '';
@@ -1162,9 +1177,14 @@ function isPrivateNetworkAddress(address) {
             || a >= 224;
     }
     if (net.isIPv6(value)) {
-        if (value === '::' || value === '::1') return true;
-        if (value.startsWith('fc') || value.startsWith('fd')) return true;
-        if (/^fe[89ab]/.test(value)) return true;
+        const groups = parseIpv6Groups(value);
+        if (!groups) return true;
+        const allZeroPrefix = groups[0] === 0 && groups[1] === 0 && groups[2] === 0
+            && groups[3] === 0 && groups[4] === 0 && groups[5] === 0 && groups[6] === 0;
+        if (allZeroPrefix && (groups[7] === 0 || groups[7] === 1)) return true;
+        if ((groups[0] & 0xfe00) === 0xfc00) return true;
+        if ((groups[0] & 0xffc0) === 0xfe80) return true;
+        if ((groups[0] & 0xff00) === 0xff00) return true;
         const mapped = ipv4FromMappedIpv6(value);
         return mapped ? isPrivateNetworkAddress(mapped) : false;
     }
@@ -1184,7 +1204,8 @@ async function assertPublicImageUrl(url) {
         throw clientInputError('Image URL must be a public HTTPS URL');
     }
     const hostname = imageLookupHostname(url.hostname);
-    if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
+    const bareHost = hostname.replace(/\.+$/, '');
+    if (!bareHost || bareHost === 'localhost' || bareHost.endsWith('.localhost') || bareHost.endsWith('.local')) {
         throw clientInputError('Image URL must be a public HTTPS URL');
     }
     let addresses;
@@ -1262,7 +1283,8 @@ async function fetchPublicImage(sourceUrl, index) {
             if (!location || redirect === MAX_IMAGE_REDIRECTS) {
                 throw clientInputError('Image URL has too many redirects');
             }
-            current = new URL(location, current);
+            try { current = new URL(location, current); }
+            catch (error) { throw clientInputError('Image URL is invalid'); }
             continue;
         }
         if (response.status < 200 || response.status >= 300) {
@@ -2025,7 +2047,7 @@ function parseJsonToolCandidate(raw, label = 'json', options = {}) {
             return tc;
         }
     } catch (e) {
-        console.log(`[parseToolCall] ${label} JSON.parse failed: ${e.message.substring(0, 100)}`);
+        console.log(`[parseToolCall] ${label} JSON.parse failed: ${scrubUpstreamText(e.message).substring(0, 100)}`);
     }
     return null;
 }
@@ -2182,7 +2204,7 @@ function parseDsmlInvoke(name, body) {
     const parameterTags = structuralTags.filter(tag => tag.name === 'parameter');
     if (structuralTags.some(tag => tag.name !== 'parameter')) return null;
 
-    const args = {};
+    const args = Object.create(null);
     let parameterCount = 0;
     const seenNames = new Set();
     let cursor = 0;
@@ -2479,7 +2501,7 @@ function parseToolCall(text) {
                         return tc;
                     }
                 } catch (e) {
-                    console.log(`[parseToolCall] legacy JSON.parse failed: ${e.message.substring(0,100)}`);
+                    console.log(`[parseToolCall] legacy JSON.parse failed: ${scrubUpstreamText(e.message).substring(0,100)}`);
                 }
             } else {
                 console.log(`[parseToolCall] TOOL_CALL:${name} found but JSON braces are unbalanced`);
@@ -3038,7 +3060,7 @@ function isPathInside(root, candidate) {
 // os.tmpdir(). Anything else is omitted, including a file that exists outside
 // the temp dir, so the reply does not confirm an arbitrary path.
 function deliverableScreenshotPath(filePath) {
-    if (typeof filePath !== 'string' || !filePath || /[\0\r\n]/.test(filePath)) return null;
+    if (typeof filePath !== 'string' || !filePath || /[\0\r\n]/.test(filePath) || !path.isAbsolute(filePath)) return null;
     if (!DELIVERABLE_IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return null;
 
     let tmpRoot;
@@ -3055,7 +3077,9 @@ function deliverableScreenshotPath(filePath) {
         return null;
     }
     // Reject paths that are already outside the temp dir before statting them.
-    if (!isPathInside(tmpRoot, lexical) && !isPathInside(tmpLexical, lexical)) return null;
+    const inRoot = isPathInside(tmpRoot, lexical);
+    const inLexical = isPathInside(tmpLexical, lexical);
+    if (!inRoot && !inLexical) return null;
 
     let listed;
     try {
@@ -3072,6 +3096,8 @@ function deliverableScreenshotPath(filePath) {
         return null;
     }
     if (!isPathInside(tmpRoot, real) || /[\0\r\n]/.test(real)) return null;
+    const expectedRel = inRoot ? path.relative(tmpRoot, lexical) : path.relative(tmpLexical, lexical);
+    if (path.relative(tmpRoot, real) !== expectedRel) return null;
     if (!DELIVERABLE_IMAGE_EXTENSIONS.has(path.extname(real).toLowerCase())) return null;
 
     let realListed;
@@ -3081,6 +3107,7 @@ function deliverableScreenshotPath(filePath) {
         return null;
     }
     if (realListed.isSymbolicLink() || !realListed.isFile()) return null;
+    if (typeof process.getuid === 'function' && realListed.uid !== process.getuid()) return null;
     return real;
 }
 
@@ -3392,7 +3419,13 @@ function resolveUpstreamPrompt(session, messages, tools, recoveryHistoryPrefix =
 // === Admin API and dashboard ===
 
 function hostHeaderHostname(host) {
-    try { return new URL(`http://${String(host || '').trim()}`).hostname; } catch (e) { return null; }
+    try {
+        const parsed = new URL(`http://${String(host || '').trim()}`);
+        if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return null;
+        return parsed.hostname;
+    } catch (e) {
+        return null;
+    }
 }
 // The global bearer gate already ran. Without a proxy key, the admin API is limited
 // to direct loopback clients: a request relayed by a local reverse proxy
@@ -3443,6 +3476,11 @@ function socketInodeFromLink(link) {
     const match = /^socket:\[(\d+)\]$/.exec(String(link || '').trim());
     return match ? match[1] : null;
 }
+function normalizeProcNetEndpoint(endpoint) {
+    const upper = String(endpoint || '').toUpperCase();
+    const mapped = /^0{16}(?:FFFF0000|0000FFFF)([0-9A-F]{8}:[0-9A-F]{4})$/.exec(upper);
+    return mapped ? mapped[1] : upper;
+}
 function procNetRows(text) {
     const rows = [];
     for (const line of String(text || '').split('\n')) {
@@ -3450,11 +3488,13 @@ function procNetRows(text) {
         if (parts.length < 10) continue;
         const uid = Number(parts[7]);
         if (!Number.isInteger(uid) || uid < 0) continue;
-        if (!/^[0-9A-Fa-f]+:[0-9A-Fa-f]+$/.test(parts[1]) || !/^[0-9A-Fa-f]+:[0-9A-Fa-f]+$/.test(parts[2])) continue;
-        if (!/^\d+$/.test(parts[9])) continue;
+        if (!/^(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{32}):[0-9A-Fa-f]{4}$/.test(parts[1])
+            || !/^(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{32}):[0-9A-Fa-f]{4}$/.test(parts[2])) continue;
+        // Kernel timewait/orphan sockets report inode 0 and hardcode uid 0.
+        if (!/^[1-9]\d*$/.test(parts[9])) continue;
         rows.push({
-            local: parts[1].toUpperCase(),
-            remote: parts[2].toUpperCase(),
+            local: normalizeProcNetEndpoint(parts[1]),
+            remote: normalizeProcNetEndpoint(parts[2]),
             state: String(parts[3] || '').toUpperCase(),
             uid,
             inode: parts[9],
@@ -3464,12 +3504,13 @@ function procNetRows(text) {
 }
 function peerUidForInode(texts, inode) {
     const wanted = String(inode || '');
-    if (!/^\d+$/.test(wanted)) return { inodeResolved: false, peerUid: null };
+    if (!/^[1-9]\d*$/.test(wanted)) return { inodeResolved: false, peerUid: null };
     const rows = [];
     for (const text of texts || []) rows.push(...procNetRows(text));
     const own = rows.find(row => row.inode === wanted);
     if (!own) return { inodeResolved: false, peerUid: null };
-    const peers = rows.filter(row => row.inode !== own.inode && row.local === own.remote && row.remote === own.local);
+    if (own.state === '0A') return { inodeResolved: true, peerUid: null };
+    const peers = rows.filter(row => row.inode !== own.inode && row.state !== '0A' && row.state !== '06' && row.local === own.remote && row.remote === own.local);
     const peer = peers.find(row => row.state === '01') || peers[0];
     return { inodeResolved: true, peerUid: peer ? peer.uid : null };
 }
@@ -3516,9 +3557,9 @@ function incomingPeerCred(socket) {
     return peerCredForSocket(socket);
 }
 // Without PROXY_API_KEY, 127.0.0.1 is shared by every account on the machine.
-// On Linux the peer uid has to be this process. An inode that cannot be read
-// does not fail open off loopback; loopback with an unreadable proc entry still
-// proceeds. Other platforms have no peer uid and keep the loopback requirement.
+// On Linux the peer uid has to be this process, and an unreadable or missing
+// proc entry fails closed instead of letting an unverified caller through.
+// Other platforms have no peer uid and keep the loopback requirement.
 function localCallerDecision({ remoteAddress, peerUid = null, inodeResolved = false, platform = process.platform, proxyKey = '', ownUid = null } = {}) {
     if (proxyKey) return { allowed: true };
     const forbidden = (message) => ({ allowed: false, status: 403, error: { message, type: 'local_caller_forbidden' } });
@@ -3527,8 +3568,7 @@ function localCallerDecision({ remoteAddress, peerUid = null, inodeResolved = fa
         return forbidden('This proxy has no PROXY_API_KEY and only accepts loopback clients on this platform. Set PROXY_API_KEY to accept other clients.');
     }
     if (!inodeResolved) {
-        if (isLoopbackHost(remoteAddress)) return { allowed: true };
-        return forbidden('This proxy has no PROXY_API_KEY and could not verify the local caller. Set PROXY_API_KEY or connect from loopback.');
+        return forbidden('This proxy has no PROXY_API_KEY and could not verify the local caller. Set PROXY_API_KEY to share it.');
     }
     if (!Number.isInteger(ownUid) || peerUid !== ownUid) {
         return forbidden('This proxy has no PROXY_API_KEY and only accepts connections from the user running it. Set PROXY_API_KEY to share it.');
@@ -3903,6 +3943,7 @@ function adminArchiveAccount(account) {
     const archived = `${file}.removed-${Date.now()}`;
     try {
         fs.renameSync(file, archived);
+        if (process.platform !== 'win32') fs.chmodSync(archived, 0o600);
     } catch (e) {
         throw new AdminHttpError(500, 'auth_file_write_failed', `Could not archive ${path.basename(file)}: ${e.code || 'error'}`);
     }
@@ -3937,6 +3978,7 @@ function adminRestoreAccount(body) {
     const before = new Set(accounts.map(a => a.id));
     try {
         fs.renameSync(archived, target);
+        if (process.platform !== 'win32') fs.chmodSync(target, 0o600);
     } catch (e) {
         throw new AdminHttpError(500, 'auth_file_write_failed', `Could not restore ${name}: ${e.code || 'error'}`);
     }
@@ -5603,7 +5645,7 @@ async function handleRequest(req, res) {
                 console.log(`${agentTag} Response ${apiMode} (tools=${executableCalls.length}, ${Date.now() - startTime}ms, ${fullContent.length} chars)`);
             }
         } catch (e) {
-            const publicErrorMessage = e instanceof SyntaxError ? e.message : (scrubLogText(e.message) ?? e.message);
+            const publicErrorMessage = e instanceof SyntaxError ? 'Request body is not valid JSON' : (scrubLogText(e.message) ?? e.message);
             console.log('[DS-API] Error:', publicErrorMessage);
             if (clientGone && !res.headersSent) {
                 logError(499, 'client_disconnected', `Client disconnected: ${publicErrorMessage}`);

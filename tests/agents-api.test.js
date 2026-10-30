@@ -1156,3 +1156,13 @@ test('audit tooling-5: mergeClaudeSettings rejects an env that is not an object'
     );
   }
 });
+
+test('inspectTarget does not pollute Object.prototype from [__proto__] in TOML or YAML', () => {
+  const home = tmpdir();
+  put(home, '.codex/config.toml', '[__proto__]\npolluted_toml = "yes"\n');
+  put(home, '.hermes/config.yaml', 'model:\n  __proto__: polluted\n  polluted_yaml: yes\n');
+  inspect('codex', home);
+  inspect('hermes', home);
+  assert.equal(({}).polluted_toml, undefined);
+  assert.equal(({}).polluted_yaml, undefined);
+});

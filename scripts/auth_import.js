@@ -35,34 +35,42 @@ function argValue(args, ...names) {
 function hasArg(args, ...names) { return args.some(a => names.includes(a)); }
 function readJson(file) {
   const raw = fs.readFileSync(file, 'utf8');
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    if (err instanceof SyntaxError) throw new SyntaxError('invalid JSON');
+    throw err;
+  }
+}
+function stripHeaderChars(value) {
+  return String(value || '').replace(/[\r\n\0]+/g, '').trim();
 }
 function cookieArrayToHeader(cookies) {
   return cookies
     .filter(c => c && c.name && c.value && /(^|\.)deepseek\.com$/i.test(String(c.domain || '').replace(/^\./, '')))
-    .map(c => `${String(c.name).trim()}=${String(c.value).trim()}`)
+    .map(c => `${stripHeaderChars(c.name)}=${stripHeaderChars(c.value)}`)
     .filter(Boolean)
     .join('; ');
 }
 function normalizeCookieInput(input) {
   if (!input) return '';
-  if (typeof input === 'string') return input.trim();
+  if (typeof input === 'string') return stripHeaderChars(input);
   if (Array.isArray(input)) return cookieArrayToHeader(input);
   if (Array.isArray(input.cookies)) return cookieArrayToHeader(input.cookies);
-  if (typeof input.cookie === 'string') return input.cookie.trim();
-  if (typeof input.cookies === 'string') return input.cookies.trim();
+  if (typeof input.cookie === 'string') return stripHeaderChars(input.cookie);
+  if (typeof input.cookies === 'string') return stripHeaderChars(input.cookies);
   return '';
 }
 // `useEnv: false` keeps DEEPSEEK_TOKEN out of the result: the dashboard import must
 // only store what the browser sent, never a token from the server's environment.
 function normalizeAuth(input, extra = {}, { useEnv = true } = {}) {
   const envToken = useEnv ? process.env.DEEPSEEK_TOKEN : '';
-  const token = String(input.token || input.access_token || input.accessToken || input.auth_token || extra.token || envToken || '').trim().replace(/^Bearer\s+/i, '');
-  const cookie = normalizeCookieInput(input) || extra.cookie || '';
+  const token = stripHeaderChars(input.token || input.access_token || input.accessToken || input.auth_token || extra.token || envToken || '').replace(/^Bearer\s+/i, '');
+  const cookie = normalizeCookieInput(input) || stripHeaderChars(extra.cookie);
   const auth = {
     token,
-    hif_dliq: String(input.hif_dliq || input['x-hif-dliq'] || extra.hif_dliq || ''),
-    hif_leim: String(input.hif_leim || input['x-hif-leim'] || extra.hif_leim || ''),
+    hif_dliq: stripHeaderChars(input.hif_dliq || input['x-hif-dliq'] || extra.hif_dliq || ''),
+    hif_leim: stripHeaderChars(input.hif_leim || input['x-hif-leim'] || extra.hif_leim || ''),
     cookie,
     wasmUrl: String(input.wasmUrl || input.wasm_url || extra.wasmUrl || DEFAULT_WASM),
   };
@@ -78,8 +86,15 @@ function validateAuth(auth) {
 }
 function secureWriteJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), { mode: 0o600 });
-  if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600, flag: 'wx' });
+    if (process.platform !== 'win32') fs.chmodSync(tmp, 0o600);
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
 }
 function importFromFile(inputPath, outputPath = DEFAULT_OUT) {
   const source = readJson(inputPath);

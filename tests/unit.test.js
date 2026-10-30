@@ -2228,6 +2228,20 @@ test('linux peer uid is the other end of a TCP connection', () => {
   assert.deepEqual(peerUidForInode([PROC_TCP], 'not-an-inode'), { inodeResolved: false, peerUid: null });
   // A same-direction TIME_WAIT row is not the peer. The swapped established row is.
   assert.deepEqual(peerUidForInode([PROC_TCP], '72'), { inodeResolved: true, peerUid: 8 });
+  // An orphan/timewait peer row (inode 0, kernel-hardcoded uid 0) or a TIME_WAIT row is never trusted as a peer.
+  const timewaitOnly = [
+    'sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode',
+    '   1: 0100007F:1111 0100007F:2222 08 00000000:00000000 00:00000000 00000000  1000        0 55555',
+    '   2: 0100007F:2222 0100007F:1111 05 00000000:00000000 03:0000176A 00000000     0        0 0',
+    '   3: 0100007F:2222 0100007F:1111 06 00000000:00000000 03:0000176A 00000000     0        0 55556',
+  ].join('\n');
+  assert.deepEqual(peerUidForInode([timewaitOnly], '55555'), { inodeResolved: true, peerUid: null });
+  assert.deepEqual(peerUidForInode([timewaitOnly], '0'), { inodeResolved: false, peerUid: null });
+  // Dual-stack: an IPv4 client in /proc/net/tcp matches an IPv4-mapped server socket in /proc/net/tcp6.
+  const dualStackTcp = '   1: 0100007F:95B2 0100007F:A13F 01 00000000:00000000 00:00000000 00000000  1001        0 116775';
+  const dualStackTcp6 = '   2: 0000000000000000FFFF00000100007F:A13F 0000000000000000FFFF00000100007F:95B2 01 00000000:00000000 00:00000000 00000000  1000        0 116776';
+  assert.deepEqual(peerUidForInode([dualStackTcp, dualStackTcp6], '116776'), { inodeResolved: true, peerUid: 1001 });
+  assert.deepEqual(peerUidForInode([dualStackTcp, dualStackTcp6], '116775'), { inodeResolved: true, peerUid: 1000 });
 
   const cred = peerCredForSocket({ _handle: { fd: 4 } }, {
     readlink(fd) {
@@ -2251,7 +2265,7 @@ test('linux peer uid is the other end of a TCP connection', () => {
   }), { inodeResolved: false, peerUid: null });
 });
 
-test('local caller decision rejects another uid and keeps loopback when proc cannot be read', () => {
+test('local caller decision rejects another uid and fails closed on linux when proc cannot be read', () => {
   const { localCallerDecision, requestLocalCallerDecision } = serverInternals;
   const foreign = localCallerDecision({
     remoteAddress: '127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: 1001, ownUid: 1000,
@@ -2282,7 +2296,9 @@ test('local caller decision rejects another uid and keeps loopback when proc can
   const unreadLoopback = localCallerDecision({
     remoteAddress: '::1', platform: 'linux', proxyKey: '', inodeResolved: false, peerUid: null, ownUid: 1000,
   });
-  assert.equal(unreadLoopback.allowed, true);
+  assert.equal(unreadLoopback.allowed, false);
+  assert.equal(unreadLoopback.status, 403);
+  assert.equal(unreadLoopback.error.type, 'local_caller_forbidden');
   const unreadRemote = localCallerDecision({
     remoteAddress: '198.51.100.4', platform: 'linux', proxyKey: '', inodeResolved: false, peerUid: null, ownUid: 1000,
   });
@@ -2317,7 +2333,7 @@ test('local caller decision rejects another uid and keeps loopback when proc can
   assert.equal(requestLocalCallerDecision(
     { socket: { remoteAddress: '127.0.0.1' } },
     { proxyKey: '', platform: 'linux', ownUid: 1000, peerCred: { inodeResolved: false, peerUid: null } },
-  ).allowed, true);
+  ).allowed, false);
   assert.equal(requestLocalCallerDecision(
     { socket: { remoteAddress: '198.51.100.4' } },
     { proxyKey: '', platform: 'linux', ownUid: 1000, peerCred: { inodeResolved: false, peerUid: null } },
@@ -2498,10 +2514,10 @@ test('sessions, health, and reset follow the admin rule and reset omits prompt t
 
   const restoreUnread = serverInternals.useLocalCallerPeerCred(() => ({ inodeResolved: false, peerUid: null }));
   try {
-    const open = await localHttp(port, 'GET', '/health');
-    assert.equal(open.status, 200, open.text);
-    assert.equal(open.json.status, 'ok');
-    assert.ok(Array.isArray(open.json.accounts));
+    const unread = await localHttp(port, 'GET', '/health');
+    assert.equal(unread.status, 403, unread.text);
+    assert.equal(unread.json.error.type, 'local_caller_forbidden');
+    assert.equal(unread.json.accounts, undefined);
   } finally {
     restoreUnread();
   }

@@ -615,17 +615,17 @@ function tomlScalar(raw) {
 }
 
 function readTomlInfo(text) {
-  const root = {};
-  const tables = {};
+  const root = Object.create(null);
+  const tables = Object.create(null);
   let current = root;
   for (const line of String(text || '').split('\n')) {
     const table = /^\s*\[([^[\]]+)\]\s*(?:#.*)?$/.exec(line);
     if (table) {
       const name = table[1].trim();
-      current = tables[name] = tables[name] || {};
+      current = tables[name] = tables[name] || Object.create(null);
       continue;
     }
-    if (/^\s*\[\[/.test(line)) { current = {}; continue; }
+    if (/^\s*\[\[/.test(line)) { current = Object.create(null); continue; }
     const kv = /^\s*("(?:[^"\\]|\\.)*"|[A-Za-z0-9_.-]+)\s*=\s*(.*)$/.exec(line);
     if (kv) current[kv[1].replace(/^"|"$/g, '')] = tomlScalar(kv[2]);
   }
@@ -652,7 +652,7 @@ function readYamlModelBlock(text) {
   const lines = m[0].split('\n');
   const head = yamlScalar(lines[0].slice('model:'.length));
   if (head) return { default: head };
-  const out = {};
+  const out = Object.create(null);
   for (const line of lines.slice(1)) {
     const kv = /^[ \t]+([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
     if (kv) out[kv[1]] = yamlScalar(kv[2]);
@@ -2301,8 +2301,8 @@ function restoreCli(ctx, dirArg) {
   for (const [name, dest] of Object.entries(map)) {
     const src = path.join(dir, name);
     if (!fs.existsSync(src)) continue;
-    ensureDir(path.dirname(dest));
-    fs.copyFileSync(src, dest);
+    const { real } = resolveRealPath(ctx, dest);
+    atomicWrite(real, fs.readFileSync(src), 0o600);
     console.log(`restored ${dest}`);
   }
   for (const name of fs.readdirSync(dir)) {

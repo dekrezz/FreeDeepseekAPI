@@ -107,6 +107,9 @@ test('dashboard Chinese covers every English string and translates the main navi
   localStorage.setItem('fdsa.lang', 'zh');
   assert.equal(t('Chat'), 'Chat', 'a missing Chinese string falls back to English');
   zh.Chat = saved;
+  assert.equal(Object.getPrototypeOf(en), null);
+  assert.equal(Object.getPrototypeOf(zh), null);
+  assert.equal(t('{toString} {constructor}', {}), '{toString} {constructor}');
 });
 
 test('agent rows carry no file/proxy/model chain; channel and mode choices read like the model picker', () => {

@@ -193,6 +193,7 @@ function writeCapturedAuth(outPath, auth) {
   const tmpPath = `${outPath}.${process.pid}.${Date.now()}.tmp`;
   try {
     fs.writeFileSync(tmpPath, JSON.stringify(stored, null, 2), { mode: 0o600, flag: 'wx' });
+    if (process.platform !== 'win32') fs.chmodSync(tmpPath, 0o600);
     fs.renameSync(tmpPath, outPath);
   } catch (err) {
     fs.rmSync(tmpPath, { force: true });
