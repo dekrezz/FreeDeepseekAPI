@@ -1869,3 +1869,83 @@ test('audit srv-tools-4: extractScreenshotPaths only reports paths from the curr
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+function directoryOutsideTmp() {
+  const tmpReal = fs.realpathSync(os.tmpdir());
+  const candidates = [os.homedir(), path.resolve('/workspace'), path.resolve('/var'), path.resolve('/home')];
+  for (const parent of candidates) {
+    if (!parent || !fs.existsSync(parent)) continue;
+    let real = parent;
+    try { real = fs.realpathSync(parent); } catch (e) { real = path.resolve(parent); }
+    const rel = path.relative(tmpReal, real);
+    if (rel && (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel))) return real;
+  }
+  throw new Error('could not find a directory outside os.tmpdir()');
+}
+
+test('audit srv-tools-4: extractScreenshotPaths keeps only a real image inside the temp dir', () => {
+  const { extractScreenshotPaths } = serverInternals;
+  const inside = fs.mkdtempSync(path.join(os.tmpdir(), 'fdsapi-media-'));
+  let outside;
+  try {
+    outside = fs.mkdtempSync(path.join(directoryOutsideTmp(), 'fdsapi-media-outside-'));
+    const outsideRel = path.relative(fs.realpathSync(os.tmpdir()), fs.realpathSync(outside));
+    assert.ok(outsideRel.startsWith('..') || path.isAbsolute(outsideRel), 'outside fixture must not live under the temp dir');
+
+    const png = fs.readFileSync(path.join(ROOT, 'public', 'dashboard', 'logo.png'));
+    assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+
+    const earlier = path.join(inside, 'earlier.png');
+    const good = path.join(inside, 'shot.png');
+    const also = path.join(inside, 'also.png');
+    const token = path.join(inside, 'token.json');
+    const bad = path.join(outside, 'secret.png');
+    const login = path.join(outside, 'login.json');
+    const link = path.join(inside, 'link.png');
+    const innerLink = path.join(inside, 'inner.png');
+    const escapeDir = path.join(inside, 'escape');
+    fs.writeFileSync(earlier, png);
+    fs.writeFileSync(good, png);
+    fs.writeFileSync(also, png);
+    fs.writeFileSync(bad, png);
+    fs.writeFileSync(login, '{"token":"not-real"}\n');
+    fs.writeFileSync(token, '{"token":"not-real"}\n');
+    fs.symlinkSync(bad, link);
+    fs.symlinkSync(good, innerLink);
+    fs.symlinkSync(outside, escapeDir);
+    const escaped = path.join(escapeDir, 'secret.png');
+
+    assert.equal(fs.existsSync(bad), true);
+    assert.equal(fs.existsSync(login), true);
+    assert.equal(fs.existsSync(link), true);
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true);
+    assert.equal(fs.existsSync(escaped), true);
+    assert.equal(fs.lstatSync(escaped).isSymbolicLink(), false);
+    assert.equal(fs.lstatSync(good).isSymbolicLink(), false);
+    assert.equal(fs.statSync(good).isFile(), true);
+
+    const result = extractScreenshotPaths([
+      { role: 'user', content: 'take a screenshot' },
+      { role: 'tool', tool_call_id: 'old', content: JSON.stringify({ screenshot_path: earlier }) },
+      { role: 'assistant', content: 'done' },
+      { role: 'user', content: 'look again' },
+      { role: 'tool', tool_call_id: 'c1', content: JSON.stringify({ screenshot_path: good }) },
+      { role: 'tool', tool_call_id: 'c2', content: JSON.stringify({ screenshot_path: bad }) },
+      { role: 'tool', tool_call_id: 'c3', content: `MEDIA:${also}` },
+      { role: 'tool', tool_call_id: 'c4', content: `MEDIA:${login}` },
+      { role: 'tool', tool_call_id: 'c5', content: `MEDIA:${link}` },
+      { role: 'tool', tool_call_id: 'c6', content: JSON.stringify({ path: escaped }) },
+      { role: 'tool', tool_call_id: 'c7', content: `MEDIA:${token}` },
+      { role: 'tool', tool_call_id: 'c8', content: `MEDIA:${innerLink}` },
+      { role: 'tool', tool_call_id: 'c9', content: 'MEDIA:/etc/does-not-exist-freedeepseek-47.png' },
+    ]);
+
+    assert.deepEqual(result, [
+      `MEDIA:${fs.realpathSync(good)}`,
+      `MEDIA:${fs.realpathSync(also)}`,
+    ], 'only a regular image inside the temp dir from this turn is deliverable');
+  } finally {
+    fs.rmSync(inside, { recursive: true, force: true });
+    if (outside) fs.rmSync(outside, { recursive: true, force: true });
+  }
+});

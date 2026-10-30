@@ -2909,31 +2909,87 @@ function currentTurnToolMessages(messages) {
     }
     return list.slice(lastUser + 1).filter(msg => msg?.role === 'tool');
 }
+
+const DELIVERABLE_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+
+// Strictly inside root: `/tmp-extra` is not inside `/tmp`, and `..` does not count.
+function isPathInside(root, candidate) {
+    const rel = path.relative(path.resolve(root), path.resolve(candidate));
+    if (!rel || rel === '.') return false;
+    if (path.isAbsolute(rel)) return false;
+    return !rel.split(path.sep).includes('..');
+}
+
+// Tool results are client-supplied. Keep a path only when it is a regular image
+// (png, jpg, jpeg, webp, gif), not a symlink, and its real path stays inside
+// os.tmpdir(). Anything else is omitted, including a file that exists outside
+// the temp dir, so the reply does not confirm an arbitrary path.
+function deliverableScreenshotPath(filePath) {
+    if (typeof filePath !== 'string' || !filePath || /[\0\r\n]/.test(filePath)) return null;
+    if (!DELIVERABLE_IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return null;
+
+    let tmpRoot;
+    try {
+        tmpRoot = fs.realpathSync(path.resolve(os.tmpdir()));
+    } catch (e) {
+        return null;
+    }
+    const tmpLexical = path.resolve(os.tmpdir());
+    let lexical;
+    try {
+        lexical = path.resolve(filePath);
+    } catch (e) {
+        return null;
+    }
+    // Reject paths that are already outside the temp dir before statting them.
+    if (!isPathInside(tmpRoot, lexical) && !isPathInside(tmpLexical, lexical)) return null;
+
+    let listed;
+    try {
+        listed = fs.lstatSync(lexical);
+    } catch (e) {
+        return null;
+    }
+    if (listed.isSymbolicLink() || !listed.isFile()) return null;
+
+    let real;
+    try {
+        real = fs.realpathSync(lexical);
+    } catch (e) {
+        return null;
+    }
+    if (!isPathInside(tmpRoot, real) || /[\0\r\n]/.test(real)) return null;
+    if (!DELIVERABLE_IMAGE_EXTENSIONS.has(path.extname(real).toLowerCase())) return null;
+
+    let realListed;
+    try {
+        realListed = fs.lstatSync(real);
+    } catch (e) {
+        return null;
+    }
+    if (realListed.isSymbolicLink() || !realListed.isFile()) return null;
+    return real;
+}
+
 function extractScreenshotPaths(messages) {
     const paths = [];
-    const fs = require('fs');
+    const seen = new Set();
+    const pushDeliverable = (filePath) => {
+        const canonical = deliverableScreenshotPath(filePath);
+        if (!canonical) return;
+        const tag = `MEDIA:${canonical}`;
+        if (seen.has(tag)) return;
+        seen.add(tag);
+        paths.push(tag);
+    };
     for (const msg of currentTurnToolMessages(messages)) {
         const text = normalizeMessageContent(msg.content);
-        if (text) {
-            // Look for screenshot_path or path fields in JSON tool results
-            // These come DIRECTLY from browser_vision — always the real path
-            const pngMatch = text.match(/["'](screenshot_path|path)["']\s*:\s*["']([^"']+\.(?:png|jpg|jpeg|webp|gif))["']/i);
-            if (pngMatch) {
-                const filePath = pngMatch[2];
-                if (filePath.startsWith('/') && fs.existsSync(filePath) && !paths.includes(`MEDIA:${filePath}`)) {
-                    paths.push(`MEDIA:${filePath}`);
-                }
-            }
-            // Also catch plain MEDIA: tags
-            const mediaMatch = text.match(/MEDIA:(\S+)/g);
-            if (mediaMatch) {
-                for (const tag of mediaMatch) {
-                    const extractedPath = tag.replace(/^MEDIA:/, '');
-                    if (fs.existsSync(extractedPath) && !paths.includes(tag)) {
-                        paths.push(tag);
-                    }
-                }
-            }
+        if (!text) continue;
+        const pngMatch = text.match(/["'](screenshot_path|path)["']\s*:\s*["']([^"']+\.(?:png|jpg|jpeg|webp|gif))["']/i);
+        if (pngMatch) pushDeliverable(pngMatch[2]);
+        const mediaMatch = text.match(/MEDIA:(\S+)/g);
+        if (mediaMatch) {
+            for (const tag of mediaMatch) pushDeliverable(tag.replace(/^MEDIA:/, ''));
         }
     }
     return paths;
@@ -5240,9 +5296,9 @@ const server = http.createServer(async (req, res) => {
                 return;
             }
             
-            // Check if any tool results in the current conversation contained a screenshot path.
-            // If so, and the response doesn't already have MEDIA:, inject it so the gateway
-            // delivers the file to Telegram.
+            // If this turn's tool results named a temp-dir screenshot and the reply
+            // does not already contain MEDIA:, append that path so the gateway can
+            // deliver the file (for example to Telegram). Other client paths are ignored.
             if (!fullContent.includes('MEDIA:')) {
                 const screenshotPaths = extractScreenshotPaths(messages);
                 if (screenshotPaths.length > 0) {
