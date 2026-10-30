@@ -291,6 +291,34 @@ test('applyPlan writes atomically, keeps modes, backs up changed files and lists
   assert.ok(!fs.readdirSync(path.join(home, '.config/opencode')).some(n => n.endsWith('.tmp')));
 });
 
+test('applyPlan sets mode 0600 when a 0644 file with no key receives a real proxy key', () => {
+  const home = tmpdir();
+  const key = 'fds-proxy-key-99';
+  put(home, '.claude/settings.json', '{"theme":"dark"}\n', 0o644);
+  put(home, '.config/opencode/opencode.json', '{"model":"openai/gpt"}\n', 0o644);
+  put(home, '.config/opencode/AGENTS.md', '# mine\n', 0o644);
+  A.applyPlans([
+    plan('claude-code', { mode: 'replace', apiKey: key }, home),
+    plan('opencode', { mode: 'add', apiKey: key }, home),
+  ], applyCtx(home), { source: 'dashboard', now: Date.now() });
+  const settings = path.join(home, '.claude/settings.json');
+  assert.ok(read(home, '.claude/settings.json').includes(key));
+  assert.equal((fs.statSync(settings).mode & 0o777), 0o600);
+  const config = path.join(home, '.config/opencode/opencode.json');
+  assert.ok(read(home, '.config/opencode/opencode.json').includes(key));
+  assert.equal((fs.statSync(config).mode & 0o777), 0o600);
+  const agents = path.join(home, '.config/opencode/AGENTS.md');
+  assert.equal(read(home, '.config/opencode/AGENTS.md').includes(key), false);
+  assert.equal((fs.statSync(agents).mode & 0o777), 0o644);
+
+  // Shorter than 8 characters: not treated as a real proxy key, so the old mode stays.
+  const loose = tmpdir();
+  put(loose, '.claude/settings.json', '{"theme":"dark"}\n', 0o644);
+  doApply('claude-code', { mode: 'replace', apiKey: '1234567' }, loose);
+  assert.ok(read(loose, '.claude/settings.json').includes('1234567'));
+  assert.equal((fs.statSync(path.join(loose, '.claude/settings.json')).mode & 0o777), 0o644);
+});
+
 test('applyPlan writes through a symlink inside HOME and refuses one that leaves HOME', () => {
   const home = tmpdir();
   put(home, 'dotfiles/opencode.json', '{}\n');
