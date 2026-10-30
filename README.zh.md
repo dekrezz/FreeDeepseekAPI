@@ -519,7 +519,7 @@ DeepSeek 会不时调整网页聊天，FreeDeepseekAPI 会跟着更新。请让�
 | `stable` | 经过检查后的版本。默认渠道，快速开始克隆的就是它。 |
 | `latest` | 每个版本一发布就到。 |
 
-**在面板中：** Settings → Updates。选好渠道，**Check for updates** 显示新内容，**Install** 把副本更新过去，**Restart now** 加载新版本。用 `npm start` 或 `npm run dashboard` 启动时会自动重启；否则请手动停止再启动。
+**在面板中：** Settings → Updates。选好渠道，**Check for updates** 显示新内容，**Install** 会先请你确认这些变更，然后才把副本更新过去，**Restart now** 加载新版本。用 `npm start` 或 `npm run dashboard` 启动时会自动重启；否则请手动停止再启动。未经这次确认不会安装。
 
 面板只会让副本向前走。如果文件夹里有未提交的已跟踪文件改动，或渠道分支上有你自己的提交，它会停下来并给出手动命令。容器镜像和下载的压缩包没有 git 历史：请拉取新镜像或下载新版本。
 
@@ -810,6 +810,7 @@ curl http://127.0.0.1:9655/v1/model-capabilities
 |---|---|---|
 | `HOST` | `127.0.0.1` | 绑定地址。绑到非 loopback 又没有代理密钥时会打印警告 |
 | `PORT` | `9655` | 端口 |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | 关闭 | PEM 证书和私钥。两者都设置且可读时，代理以 HTTPS 提供服务；未设置则保持 HTTP。loopback 不需要 TLS。绑到非 loopback 又没设置它们时，会警告登录导入和 Authorization 头是明文 |
 | `PROXY_API_KEY` | 关闭 | 设置后，`/v1/*` 和 `/admin/*` 必须带 bearer |
 | `REQUIRE_PROXY_API_KEY` | 关闭 | 没有密钥就拒绝启动。容器里是打开的 |
 | `PROXY_CORS_ORIGINS` | loopback | 额外允许的精确浏览器 origin |

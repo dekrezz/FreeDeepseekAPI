@@ -247,13 +247,43 @@
     renderUpdates();
   }
 
+  // What check() already reported, repeated on the confirm button before anything is merged.
+  function installConfirmText(c) {
+    const label = CHANNEL_LABEL[c.channel] || c.channel;
+    const version = c.available && c.available.version ? `v${c.available.version}` : '';
+    const commit = (c.available && c.available.commit) || '';
+    const id = [version, commit].filter(Boolean).join(' · ');
+    if (c.switchOnly) return `Switch to ${label}${id ? ` (${id})` : ''}? The code stays the same.`;
+    const changes = Array.isArray(c.changes) ? c.changes : [];
+    const subjects = changes.slice(0, 4).map(ch => ch && ch.subject).filter(Boolean);
+    const extra = changes.length - subjects.length;
+    const listed = subjects.length ? ` ${subjects.join('; ')}${extra > 0 ? `; and ${extra} more` : ''}.` : '';
+    return `Install ${id || 'this update'} on ${label}?${listed}`;
+  }
+
+  // Check is the first step. Install and Switch then ask again, with the same confirm popover as the rest of the page.
+  function confirmInstall(event) {
+    const u = st.update;
+    if (updateBusy(u) || !u.status || u.status.method !== 'git') return;
+    if (!u.check) { checkUpdate(); return; }
+    if (!u.check.canInstall) return;
+    const c = u.check;
+    F.confirm(event.currentTarget, {
+      text: installConfirmText(c),
+      confirmLabel: c.switchOnly ? 'Switch' : 'Install',
+      pendingLabel: c.switchOnly ? 'Switching…' : 'Installing…',
+      danger: false,
+      run: () => installUpdate(),
+    });
+  }
+
   async function installUpdate() {
     const u = st.update;
     if (updateBusy(u) || !u.check || !u.check.canInstall) return;
     u.phase = 'installing'; u.message = null;
     renderUpdates();
     try {
-      const res = await F.api('POST', '/admin/update/install', { body: { channel: u.channel }, timeout: 120000 });
+      const res = await F.api('POST', '/admin/update/install', { body: { channel: u.channel, confirm: true }, timeout: 120000 });
       u.installed = res;
       if (res.switched) {
         // Same code on a new branch: nothing to restart, just show where the copy is now.
@@ -355,7 +385,7 @@
     } else if (c && c.upToDate) {
       panel.append(h('div', { class: 'update-result' }, row(`You're on the newest ${CHANNEL_LABEL[c.channel]} release`, c.available.version ? `v${c.available.version} · ${c.available.commit}` : c.available.commit, null, null, 'success')));
     } else if (c && c.switchOnly) {
-      const switchBtn = F.btn(u.phase === 'installing' ? 'Switching…' : 'Switch', { kind: 'primary', icon: 'route', onclick: installUpdate });
+      const switchBtn = F.btn(u.phase === 'installing' ? 'Switching…' : 'Switch', { kind: 'primary', icon: 'route', onclick: confirmInstall });
       if (!c.canInstall || busy) switchBtn.setAttribute('aria-disabled', 'true');
       panel.append(h('div', { class: 'update-result' },
         row(`Switch to ${CHANNEL_LABEL[c.channel]}`, `You already run this version${c.available.version ? ` (v${c.available.version} · ${c.available.commit})` : ''}. Switching makes this copy follow ${CHANNEL_LABEL[c.channel]} and get its updates.`,
@@ -366,7 +396,7 @@
           manualSteps(c.manualCommand, false)));
       }
     } else if (c) {
-      const installBtn = F.btn(u.phase === 'installing' ? 'Installing…' : 'Install', { kind: 'primary', icon: 'download', onclick: installUpdate });
+      const installBtn = F.btn(u.phase === 'installing' ? 'Installing…' : 'Install', { kind: 'primary', icon: 'download', onclick: confirmInstall });
       if (!c.canInstall || busy) installBtn.setAttribute('aria-disabled', 'true');
       const changes = c.changes.slice(0, 8);
       panel.append(h('div', { class: 'update-result' },

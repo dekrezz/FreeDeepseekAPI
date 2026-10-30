@@ -40,7 +40,7 @@ A valid report is answered on the advisory. The fix lands as a normal commit on 
 
 ## Running it safely
 
-- Leave the bind at `127.0.0.1` unless you mean to share the port.
+- Leave the bind at `127.0.0.1` unless you mean to share the port. On any other bind, set `TLS_CERT_FILE` and `TLS_KEY_FILE` so the login import and the Authorization header are not clear text. Loopback does not need TLS.
 - Keep `deepseek-auth.json` and `accounts/*.json` out of git. `npm run auth` writes them mode `600`.
 - Set `PROXY_API_KEY` before the port is reachable past your own user.
 - One DeepSeek login serves one chat at a time. A second client on that same login waits.

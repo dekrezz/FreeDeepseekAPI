@@ -247,6 +247,7 @@ The full field list (`AgentSummary`, `FileMeta`) is in [`public/dashboard/API.md
 | Env | Default | |
 |---|---|---|
 | `HOST` / `PORT` | `127.0.0.1` / `9655` | Bind. Non-loopback without a proxy key prints a warning |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | off | PEM certificate and key. Both set and readable serves HTTPS; otherwise HTTP. Not required on loopback. A non-loopback bind without them warns that the login import and Authorization header are clear text |
 | `PROXY_API_KEY` / `REQUIRE_PROXY_API_KEY` | off | Protects `/v1/*` and `/admin/*` |
 | `PROXY_ADMIN_ALLOW_REMOTE` | off | If `1`, `/admin/*` answers non-loopback clients without `PROXY_API_KEY` |
 | `DEEPSEEK_AUTH_PATH` | `./deepseek-auth.json` | One file, or comma-separated list |
