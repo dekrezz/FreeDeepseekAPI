@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -1747,6 +1749,7 @@ test('resetting a client session keeps or drops server-side history on request',
   assert.equal(keptSession.messageCount, 0);
   assert.equal(keptSession.history.length, 2, 'plain reset keeps recovery history');
   assert.equal(kept.history_preserved, 2);
+  assert.deepEqual(kept, { status: 'session_reset', agent: 'keep-x', history_preserved: 2 });
 
   // An edited message must not reach DeepSeek next to the turns it replaced.
   sessions.set('drop-x', make());
@@ -1756,6 +1759,7 @@ test('resetting a client session keeps or drops server-side history on request',
   assert.deepEqual(droppedSession.history, []);
   assert.equal(droppedSession.sentSystemFingerprint, null);
   assert.equal(dropped.history_preserved, 0);
+  assert.deepEqual(dropped, { status: 'session_reset', agent: 'drop-x', history_preserved: 0 });
   assert.equal(serverInternals.buildRecoveryHistoryPrefix(droppedSession.history), '');
 
   assert.equal(resetAgentSession('missing-x'), null);
@@ -1851,6 +1855,318 @@ test('audit srv-tools-4: extractScreenshotPaths does not throw on tool messages 
     ]);
   });
   assert.deepEqual(result, []);
+});
+
+const PROC_TCP = [
+  'sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode',
+  '   4: 0100007F:A0C5 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 89343 1 00000000659b04b0 100 0 0 10 0',
+  '   7: 0100007F:BD74 0100007F:A0C5 01 00000000:00000000 00:00000000 00000000  1001        0 88408 1 0000000007c1999e 20 0 0 10 -1',
+  '  11: 0100007F:A0C5 0100007F:BD74 01 00000000:00000000 00:00000000 00000000  1000        0 89345 1 00000000fc3e3bda 20 4 30 10 -1',
+  '  12: 0100007f:00ab 0100007f:00cd 06 00000000:00000000 00:00000000 00000000  9 0 70',
+  '  13: 0100007f:00cd 0100007f:00ab 01 00000000:00000000 00:00000000 00000000  8 0 71',
+  '  14: 0100007f:00ab 0100007f:00cd 01 00000000:00000000 00:00000000 00000000  7 0 72',
+].join('\n');
+
+const PROC_TCP6 = [
+  'sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode',
+  '   0: 00000000000000000000000001000000:B073 00000000000000000000000001000000:CD68 01 00000000:00000000 00:00000000 00000000  1000        0 92895 1 00000000 20 0 0 10 -1',
+  '   1: 00000000000000000000000001000000:CD68 00000000000000000000000001000000:B073 01 00000000:00000000 00:00000000 00000000    42        0 92896 1 00000000 20 0 0 10 -1',
+].join('\n');
+
+test('linux peer uid is the other end of a TCP connection', () => {
+  const { socketInodeFromLink, peerUidForInode, peerCredForSocket } = serverInternals;
+  assert.equal(socketInodeFromLink('socket:[89345]'), '89345');
+  assert.equal(socketInodeFromLink('  socket:[12] '), '12');
+  assert.equal(socketInodeFromLink('socket:[12]extra'), null);
+  assert.equal(socketInodeFromLink('/proc/self/fd/anon'), null);
+  assert.equal(socketInodeFromLink(''), null);
+
+  // The accepted socket's own uid column is this process (1000). The caller is 1001.
+  assert.deepEqual(peerUidForInode([PROC_TCP, PROC_TCP6], '89345'), { inodeResolved: true, peerUid: 1001 });
+  assert.deepEqual(peerUidForInode([PROC_TCP], '88408'), { inodeResolved: true, peerUid: 1000 });
+  assert.deepEqual(peerUidForInode([PROC_TCP6, ''], '92895'), { inodeResolved: true, peerUid: 42 });
+  assert.deepEqual(peerUidForInode([PROC_TCP], '89343'), { inodeResolved: true, peerUid: null });
+  assert.deepEqual(peerUidForInode([PROC_TCP], '999'), { inodeResolved: false, peerUid: null });
+  assert.deepEqual(peerUidForInode([PROC_TCP], 'not-an-inode'), { inodeResolved: false, peerUid: null });
+  // A same-direction TIME_WAIT row is not the peer. The swapped established row is.
+  assert.deepEqual(peerUidForInode([PROC_TCP], '72'), { inodeResolved: true, peerUid: 8 });
+
+  const cred = peerCredForSocket({ _handle: { fd: 4 } }, {
+    readlink(fd) {
+      assert.equal(fd, 4);
+      return 'socket:[89345]';
+    },
+    readTables() { return [PROC_TCP, PROC_TCP6]; },
+  });
+  assert.deepEqual(cred, { inodeResolved: true, peerUid: 1001 });
+  assert.deepEqual(peerCredForSocket({ _handle: { fd: 4 } }, {
+    readlink() { return 'anon_inode:[eventpoll]'; },
+    readTables() { throw new Error('should not read proc'); },
+  }), { inodeResolved: false, peerUid: null });
+  assert.deepEqual(peerCredForSocket({ _handle: { fd: 4 } }, {
+    readlink() { return 'socket:[89345]'; },
+    readTables() { throw Object.assign(new Error('denied'), { code: 'EACCES' }); },
+  }), { inodeResolved: false, peerUid: null });
+  assert.deepEqual(peerCredForSocket(null), { inodeResolved: false, peerUid: null });
+  assert.deepEqual(peerCredForSocket({ _handle: { fd: -1 } }, {
+    readlink() { throw new Error('no'); },
+  }), { inodeResolved: false, peerUid: null });
+});
+
+test('local caller decision rejects another uid and keeps loopback when proc cannot be read', () => {
+  const { localCallerDecision, requestLocalCallerDecision } = serverInternals;
+  const foreign = localCallerDecision({
+    remoteAddress: '127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: 1001, ownUid: 1000,
+  });
+  assert.equal(foreign.allowed, false);
+  assert.equal(foreign.status, 403);
+  assert.equal(foreign.error.type, 'local_caller_forbidden');
+  assert.match(foreign.error.message, /PROXY_API_KEY/);
+
+  assert.equal(localCallerDecision({
+    remoteAddress: '::ffff:127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: 1000, ownUid: 1000,
+  }).allowed, true);
+  assert.equal(localCallerDecision({
+    remoteAddress: '203.0.113.5', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: 1000, ownUid: 1000,
+  }).allowed, true);
+  // Resolved inode with no local peer (a remote client, or a missing row) is not this user.
+  assert.equal(localCallerDecision({
+    remoteAddress: '127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: null, ownUid: 1000,
+  }).allowed, false);
+  // uid 0 is a real caller. A missing peer uid must not become 0.
+  assert.equal(localCallerDecision({
+    remoteAddress: '127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: 0, ownUid: 0,
+  }).allowed, true);
+  assert.equal(localCallerDecision({
+    remoteAddress: '127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: null, ownUid: 0,
+  }).allowed, false);
+
+  const unreadLoopback = localCallerDecision({
+    remoteAddress: '::1', platform: 'linux', proxyKey: '', inodeResolved: false, peerUid: null, ownUid: 1000,
+  });
+  assert.equal(unreadLoopback.allowed, true);
+  const unreadRemote = localCallerDecision({
+    remoteAddress: '198.51.100.4', platform: 'linux', proxyKey: '', inodeResolved: false, peerUid: null, ownUid: 1000,
+  });
+  assert.equal(unreadRemote.allowed, false);
+  assert.equal(unreadRemote.status, 403);
+  assert.equal(unreadRemote.error.type, 'local_caller_forbidden');
+
+  assert.equal(localCallerDecision({
+    remoteAddress: '10.1.2.3', platform: 'darwin', proxyKey: '', inodeResolved: false, ownUid: 1000,
+  }).allowed, false);
+  assert.equal(localCallerDecision({
+    remoteAddress: 'localhost', platform: 'win32', proxyKey: '', inodeResolved: false, ownUid: null,
+  }).allowed, true);
+  assert.equal(localCallerDecision({
+    remoteAddress: '10.1.2.3', platform: 'linux', proxyKey: 'secret', inodeResolved: true, peerUid: 1001, ownUid: 1000,
+  }).allowed, true);
+
+  assert.equal(requestLocalCallerDecision(
+    { socket: { remoteAddress: '203.0.113.8' } },
+    { proxyKey: 'secret', platform: 'linux', ownUid: 1, peerCred: { inodeResolved: true, peerUid: 2 } },
+  ).allowed, true);
+  assert.equal(requestLocalCallerDecision(
+    { socket: { remoteAddress: '::1' } },
+    { proxyKey: '', platform: 'darwin', ownUid: 1, peerCred: { inodeResolved: true, peerUid: 99 } },
+  ).allowed, true);
+  const viaCred = requestLocalCallerDecision(
+    { socket: { remoteAddress: '127.0.0.1' } },
+    { proxyKey: '', platform: 'linux', ownUid: 1000, peerCred: { inodeResolved: true, peerUid: 1001 } },
+  );
+  assert.equal(viaCred.allowed, false);
+  assert.equal(viaCred.error.type, 'local_caller_forbidden');
+  assert.equal(requestLocalCallerDecision(
+    { socket: { remoteAddress: '127.0.0.1' } },
+    { proxyKey: '', platform: 'linux', ownUid: 1000, peerCred: { inodeResolved: false, peerUid: null } },
+  ).allowed, true);
+  assert.equal(requestLocalCallerDecision(
+    { socket: { remoteAddress: '198.51.100.4' } },
+    { proxyKey: '', platform: 'linux', ownUid: 1000, peerCred: { inodeResolved: false, peerUid: null } },
+  ).allowed, false);
+});
+
+test('peerCredForSocket reads the uid on the other end of a live loopback socket', async () => {
+  if (process.platform !== 'linux') return;
+  const cred = await new Promise((resolve, reject) => {
+    const server = net.createServer((sock) => {
+      try {
+        resolve(serverInternals.peerCredForSocket(sock));
+      } catch (error) {
+        reject(error);
+      } finally {
+        sock.end();
+        server.close();
+      }
+    });
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const client = net.connect(server.address().port, '127.0.0.1');
+      client.on('error', reject);
+    });
+  });
+  assert.equal(cred.inodeResolved, true);
+  assert.equal(cred.peerUid, process.getuid());
+});
+
+function localHttp(port, method, pathName, { body, headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? null : JSON.stringify(body);
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      method,
+      path: pathName,
+      agent: false,
+      headers: {
+        ...(payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {}),
+        ...headers,
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        try { json = JSON.parse(text); } catch (e) { /* non-JSON body */ }
+        resolve({ status: res.statusCode, text, json });
+      });
+    });
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+test('sessions, health, and reset follow the admin rule and reset omits prompt text', async (t) => {
+  const SECRET = 'BOUNDARY_SECRET_PROMPT_9f3a';
+  const agent = 'boundary-agent';
+  const session = serverInternals.createSession();
+  Object.assign(session, { id: 'ds-boundary', accountId: 'acct', messageCount: 2, createdAt: Date.now() });
+  session.history = [{ user: SECRET, assistant: 'hidden answer' }];
+  serverInternals.sessions.set(agent, session);
+  t.after(() => {
+    serverInternals.sessions.delete(agent);
+    serverInternals.sessions.delete('open-webui-boundary');
+  });
+
+  const httpServer = serverInternals.server;
+  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => httpServer.close(resolve)));
+  const port = httpServer.address().port;
+
+  if (process.platform === 'linux') {
+    let seen = null;
+    const restoreSeen = serverInternals.useLocalCallerPeerCred((sock) => {
+      seen = serverInternals.peerCredForSocket(sock);
+      return seen;
+    });
+    try {
+      const probe = await localHttp(port, 'GET', '/health');
+      assert.equal(probe.status, 200, probe.text);
+      assert.equal(seen && seen.inodeResolved, true);
+      assert.equal(seen.peerUid, process.getuid());
+    } finally {
+      restoreSeen();
+    }
+  }
+
+  const otherOrigin = { origin: 'http://127.0.0.1:3000' };
+  const listedDenied = await localHttp(port, 'GET', '/v1/sessions', { headers: otherOrigin });
+  assert.equal(listedDenied.status, 403, listedDenied.text);
+  assert.equal(listedDenied.json.error.type, 'admin_forbidden');
+  assert.doesNotMatch(listedDenied.text, /BOUNDARY_SECRET_PROMPT_9f3a/);
+
+  const forwarded = await localHttp(port, 'GET', '/v1/sessions', { headers: { 'x-forwarded-for': '203.0.113.5' } });
+  assert.equal(forwarded.status, 403, forwarded.text);
+  assert.equal(forwarded.json.error.type, 'admin_forbidden');
+  const rebound = await localHttp(port, 'GET', '/v1/sessions', { headers: { host: 'evil.example:9655' } });
+  assert.equal(rebound.status, 403, rebound.text);
+  assert.equal(rebound.json.error.type, 'admin_forbidden');
+
+  const listed = await localHttp(port, 'GET', '/v1/sessions');
+  assert.equal(listed.status, 200, listed.text);
+  assert.equal(listed.json.agents.some((row) => row.agent === agent && row.session_id === 'ds-boundary'), true);
+  assert.doesNotMatch(listed.text, /BOUNDARY_SECRET_PROMPT_9f3a/);
+
+  const healthCross = await localHttp(port, 'GET', '/health', { headers: otherOrigin });
+  assert.equal(healthCross.status, 200, healthCross.text);
+  assert.equal(healthCross.json.status, 'ok');
+  assert.equal(healthCross.json.service, 'FreeDeepseekAPI');
+  assert.equal(healthCross.json.accounts, undefined);
+  assert.equal(healthCross.json.chat_locks, undefined);
+  assert.equal(healthCross.json.agents, undefined);
+  assert.equal(healthCross.json.models, undefined);
+
+  const healthProxied = await localHttp(port, 'GET', '/health', { headers: { 'x-real-ip': '203.0.113.5' } });
+  assert.equal(healthProxied.status, 200, healthProxied.text);
+  assert.equal(healthProxied.json.accounts, undefined);
+  assert.equal(healthProxied.json.chat_locks, undefined);
+
+  const health = await localHttp(port, 'GET', '/health');
+  assert.equal(health.status, 200, health.text);
+  assert.ok(Array.isArray(health.json.accounts));
+  assert.ok(Array.isArray(health.json.chat_locks));
+  assert.equal(typeof health.json.agents, 'number');
+
+  const resetDenied = await localHttp(port, 'POST', `/reset-session?agent=${agent}`, { headers: otherOrigin });
+  assert.equal(resetDenied.status, 403, resetDenied.text);
+  assert.equal(resetDenied.json.error.type, 'admin_forbidden');
+  assert.doesNotMatch(resetDenied.text, /BOUNDARY_SECRET_PROMPT_9f3a/);
+  assert.equal(serverInternals.sessions.get(agent).id, 'ds-boundary');
+
+  const resetProxied = await localHttp(port, 'POST', `/reset-session?agent=${agent}`, { headers: { forwarded: 'for=203.0.113.5' } });
+  assert.equal(resetProxied.status, 403, resetProxied.text);
+  assert.equal(serverInternals.sessions.get(agent).id, 'ds-boundary');
+
+  const reset = await localHttp(port, 'POST', `/reset-session?agent=${agent}`);
+  assert.equal(reset.status, 200, reset.text);
+  assert.deepEqual(reset.json, { status: 'session_reset', agent, history_preserved: 1 });
+  assert.doesNotMatch(reset.text, /BOUNDARY_SECRET_PROMPT_9f3a/);
+  assert.equal(serverInternals.sessions.get(agent).id, null);
+  assert.equal(serverInternals.sessions.get(agent).history.length, 1);
+  assert.equal(serverInternals.sessions.get(agent).history[0].user, SECRET);
+
+  const chat = await localHttp(port, 'POST', '/v1/chat/completions', {
+    headers: { origin: 'http://127.0.0.1:3000', 'x-agent-session': 'open-webui-boundary' },
+    body: { model: 'deepseek-v4-flash', messages: [{ role: 'user', content: '/new' }] },
+  });
+  assert.equal(chat.status, 200, chat.text);
+  assert.equal(chat.json.error, undefined);
+
+  const evil = await localHttp(port, 'GET', '/v1/sessions', { headers: { origin: 'https://evil.example' } });
+  assert.equal(evil.status, 403, evil.text);
+  assert.equal(evil.json.error.type, 'cors_error');
+
+  const ownUid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  const restoreForeign = serverInternals.useLocalCallerPeerCred(() => ({ inodeResolved: true, peerUid: ownUid + 1 }));
+  try {
+    for (const [method, pathName] of [['GET', '/v1/models'], ['GET', '/health'], ['GET', '/admin/accounts'], ['POST', '/reset-session?agent=boundary-agent']]) {
+      const blocked = await localHttp(port, method, pathName);
+      assert.equal(blocked.status, 403, `${method} ${pathName} ${blocked.text}`);
+      assert.equal(blocked.json.error.type, 'local_caller_forbidden');
+      assert.equal(blocked.json.accounts, undefined);
+      assert.doesNotMatch(blocked.text, /BOUNDARY_SECRET_PROMPT_9f3a/);
+    }
+    const chatBlocked = await localHttp(port, 'POST', '/v1/chat/completions', {
+      headers: { origin: 'http://127.0.0.1:3000' },
+      body: { model: 'deepseek-v4-flash', messages: [{ role: 'user', content: 'hello' }] },
+    });
+    assert.equal(chatBlocked.status, 403, chatBlocked.text);
+    assert.equal(chatBlocked.json.error.type, 'local_caller_forbidden');
+  } finally {
+    restoreForeign();
+  }
+
+  const restoreUnread = serverInternals.useLocalCallerPeerCred(() => ({ inodeResolved: false, peerUid: null }));
+  try {
+    const open = await localHttp(port, 'GET', '/health');
+    assert.equal(open.status, 200, open.text);
+    assert.equal(open.json.status, 'ok');
+    assert.ok(Array.isArray(open.json.accounts));
+  } finally {
+    restoreUnread();
+  }
 });
 
 test('audit srv-tools-4: extractScreenshotPaths only reports paths from the current turn', () => {

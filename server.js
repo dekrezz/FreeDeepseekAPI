@@ -794,15 +794,15 @@ function resetRemoteSession(session) {
 
 // POST /reset-session: the next request opens a new DeepSeek chat. Local history is
 // kept as a recovery hint unless the client drops it (it will send its own transcript,
-// e.g. after editing a message, and the replaced turns must not come back).
+// e.g. after editing a message, and the replaced turns must not come back). The
+// response counts that history and does not return the stored prompt text.
 function resetAgentSession(agentId, { dropHistory = false } = {}) {
     const session = sessions.get(agentId);
     if (!session) return null;
     if (dropHistory) session.history = [];
     const historyCount = session.history.length;
-    const historyPreview = session.history.map(e => String(e.user || '').substring(0, 40)).join(' | ');
     resetRemoteSession(session);
-    return { status: 'session_reset', agent: agentId, history_preserved: historyCount, history: historyPreview };
+    return { status: 'session_reset', agent: agentId, history_preserved: historyCount };
 }
 
 function prepareSessionForPrompt(session, now = Date.now()) {
@@ -3265,6 +3265,123 @@ function adminAccessDecision({ remoteAddress, headers = {} } = {}, { proxyKey = 
     return { allowed: true };
 }
 
+// SO_PEERCRED is AF_UNIX only. For a TCP accept, the peer uid is read from proc:
+// /proc/self/fd/<fd> is socket:[inode], that inode is this process's row in
+// /proc/net/tcp or /proc/net/tcp6, and the uid column on that row is this process.
+// The caller's uid is the other row of the same connection (addresses swapped).
+let localCallerPeerCred = null;
+function socketInodeFromLink(link) {
+    const match = /^socket:\[(\d+)\]$/.exec(String(link || '').trim());
+    return match ? match[1] : null;
+}
+function procNetRows(text) {
+    const rows = [];
+    for (const line of String(text || '').split('\n')) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 10) continue;
+        const uid = Number(parts[7]);
+        if (!Number.isInteger(uid) || uid < 0) continue;
+        if (!/^[0-9A-Fa-f]+:[0-9A-Fa-f]+$/.test(parts[1]) || !/^[0-9A-Fa-f]+:[0-9A-Fa-f]+$/.test(parts[2])) continue;
+        if (!/^\d+$/.test(parts[9])) continue;
+        rows.push({
+            local: parts[1].toUpperCase(),
+            remote: parts[2].toUpperCase(),
+            state: String(parts[3] || '').toUpperCase(),
+            uid,
+            inode: parts[9],
+        });
+    }
+    return rows;
+}
+function peerUidForInode(texts, inode) {
+    const wanted = String(inode || '');
+    if (!/^\d+$/.test(wanted)) return { inodeResolved: false, peerUid: null };
+    const rows = [];
+    for (const text of texts || []) rows.push(...procNetRows(text));
+    const own = rows.find(row => row.inode === wanted);
+    if (!own) return { inodeResolved: false, peerUid: null };
+    const peers = rows.filter(row => row.inode !== own.inode && row.local === own.remote && row.remote === own.local);
+    const peer = peers.find(row => row.state === '01') || peers[0];
+    return { inodeResolved: true, peerUid: peer ? peer.uid : null };
+}
+function readProcNetTables() {
+    const texts = [];
+    for (const file of ['/proc/net/tcp', '/proc/net/tcp6']) {
+        try {
+            texts.push(fs.readFileSync(file, 'utf8'));
+        } catch (error) {
+            if (error && error.code === 'ENOENT') continue;
+            throw error;
+        }
+    }
+    return texts;
+}
+function peerCredForSocket(socket, { readlink, readTables } = {}) {
+    let fd;
+    try {
+        fd = socket && socket._handle ? socket._handle.fd : undefined;
+    } catch (e) {
+        return { inodeResolved: false, peerUid: null };
+    }
+    if (!Number.isInteger(fd) || fd < 0) return { inodeResolved: false, peerUid: null };
+    const linkOf = readlink || ((n) => fs.readlinkSync(`/proc/self/fd/${n}`));
+    const tablesOf = readTables || readProcNetTables;
+    let link;
+    try {
+        link = linkOf(fd);
+    } catch (e) {
+        return { inodeResolved: false, peerUid: null };
+    }
+    const inode = socketInodeFromLink(link);
+    if (!inode) return { inodeResolved: false, peerUid: null };
+    let texts;
+    try {
+        texts = tablesOf();
+        return peerUidForInode(texts, inode);
+    } catch (e) {
+        return { inodeResolved: false, peerUid: null };
+    }
+}
+function incomingPeerCred(socket) {
+    if (typeof localCallerPeerCred === 'function') return localCallerPeerCred(socket);
+    return peerCredForSocket(socket);
+}
+// Without PROXY_API_KEY, 127.0.0.1 is shared by every account on the machine.
+// On Linux the peer uid has to be this process. An inode that cannot be read
+// does not fail open off loopback; loopback with an unreadable proc entry still
+// proceeds. Other platforms have no peer uid and keep the loopback requirement.
+function localCallerDecision({ remoteAddress, peerUid = null, inodeResolved = false, platform = process.platform, proxyKey = '', ownUid = null } = {}) {
+    if (proxyKey) return { allowed: true };
+    const forbidden = (message) => ({ allowed: false, status: 403, error: { message, type: 'local_caller_forbidden' } });
+    if (platform !== 'linux') {
+        if (isLoopbackHost(remoteAddress)) return { allowed: true };
+        return forbidden('This proxy has no PROXY_API_KEY and only accepts loopback clients on this platform. Set PROXY_API_KEY to accept other clients.');
+    }
+    if (!inodeResolved) {
+        if (isLoopbackHost(remoteAddress)) return { allowed: true };
+        return forbidden('This proxy has no PROXY_API_KEY and could not verify the local caller. Set PROXY_API_KEY or connect from loopback.');
+    }
+    if (!Number.isInteger(ownUid) || peerUid !== ownUid) {
+        return forbidden('This proxy has no PROXY_API_KEY and only accepts connections from the user running it. Set PROXY_API_KEY to share it.');
+    }
+    return { allowed: true };
+}
+function requestLocalCallerDecision(req, { proxyKey = PROXY_API_KEY, platform = process.platform, ownUid = typeof process.getuid === 'function' ? process.getuid() : null, peerCred = null } = {}) {
+    const remoteAddress = req && req.socket ? req.socket.remoteAddress : undefined;
+    if (proxyKey || platform !== 'linux') {
+        return localCallerDecision({ remoteAddress, platform, proxyKey, inodeResolved: false, peerUid: null, ownUid });
+    }
+    const cred = peerCred || incomingPeerCred(req && req.socket);
+    return localCallerDecision({
+        remoteAddress,
+        platform: 'linux',
+        proxyKey: '',
+        inodeResolved: Boolean(cred && cred.inodeResolved),
+        peerUid: cred && Number.isInteger(cred.peerUid) ? cred.peerUid : null,
+        ownUid,
+    });
+}
+
 function adminAccountStatus(account, now = Date.now()) {
     if (!accountHasCredentials(account)) return 'no_credentials';
     if (!isAccountEnabled(account)) return 'disabled';
@@ -4261,6 +4378,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (requestOrigin) res.setHeader('Access-Control-Allow-Origin', normalizeOrigin(requestOrigin));
     setCorsResponseHeaders(res);
+    const caller = requestLocalCallerDecision(req);
+    if (!caller.allowed) {
+        res.writeHead(caller.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: caller.error }));
+        return;
+    }
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -4298,7 +4421,13 @@ const server = http.createServer(async (req, res) => {
 
     // Health check
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-        const includePrivateStatus = !PROXY_API_KEY || isProxyAuthorized(req.headers.authorization);
+        // Private fields name accounts, locks, and agents. With no proxy key they
+        // follow the admin rule (loopback peer, no forwarding headers, loopback
+        // Host, Origin only when it is that Host). A set key still hides them
+        // until the request presents it.
+        const includePrivateStatus = PROXY_API_KEY
+            ? isProxyAuthorized(req.headers.authorization)
+            : adminAccessDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers }).allowed;
         const health = { status: 'ok', service: 'FreeDeepseekAPI' };
         if (includePrivateStatus) Object.assign(health, {
             models: SUPPORTED_MODEL_IDS,
@@ -4339,8 +4468,14 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // Sessions status
+    // Sessions status. With no proxy key this is an admin read: another loopback
+    // origin can still call chat (Open WebUI) but must not list sessions.
     if (req.method === 'GET' && url.pathname === '/v1/sessions') {
+        const access = adminAccessDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers });
+        if (!access.allowed) {
+            jsonResponse(res, access.status, { error: access.error });
+            return;
+        }
         const agentList = [];
         for (const [agentId, session] of sessions) {
             agentList.push({
@@ -4357,8 +4492,14 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // Reset session for a specific agent (or all if no agent specified)
+    // Reset session for a specific agent (or all if no agent specified).
+    // Same admin rule as GET /v1/sessions when no proxy key is set.
     if (req.method === 'POST' && url.pathname === '/reset-session') {
+        const access = adminAccessDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers });
+        if (!access.allowed) {
+            jsonResponse(res, access.status, { error: access.error });
+            return;
+        }
         const agentId = url.searchParams.get('agent') || 'default';
         if (agentId === 'all') {
             const count = sessions.size;
@@ -5613,6 +5754,13 @@ module.exports = {
         isLoopbackHost,
         normalizeOrigin,
         isBrowserOriginAllowed,
+        socketInodeFromLink,
+        procNetRows,
+        peerUidForInode,
+        peerCredForSocket,
+        localCallerDecision,
+        requestLocalCallerDecision,
+        useLocalCallerPeerCred(next) { const prev = localCallerPeerCred; localCallerPeerCred = next; return () => { localCallerPeerCred = prev; }; },
         DEFAULT_MODEL_ID,
         canonicalizeModelId,
         MODEL_CONFIGS,
