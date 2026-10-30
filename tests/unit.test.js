@@ -99,6 +99,142 @@ test('doctor reports auth problems without requiring Chrome or network', () => {
   assert.match(res.stdout + res.stderr, /cookie missing/i);
 });
 
+test('doctor reports invalid auth JSON without quoting the file', () => {
+  const dir = tmpdir();
+  const authPath = path.join(dir, 'broken-auth.json');
+  const raw = '{"token": super-secret}';
+  fs.writeFileSync(authPath, raw);
+  let parseMessage = '';
+  try { JSON.parse(raw); } catch (e) { parseMessage = e.message; }
+  assert.match(parseMessage, /Unexpected token/);
+
+  const doctor = require('../scripts/doctor.js');
+  const checked = doctor.checkAuthFile(authPath);
+  assert.equal(checked.ok, false);
+  assert.equal(checked.auth, null);
+  assert.deepEqual(checked.issues, ['invalid JSON']);
+
+  const res = runNode(['scripts/doctor.js', '--offline'], {
+    env: { DEEPSEEK_AUTH_PATH: authPath, DEEPSEEK_AUTH_DIR: '' },
+  });
+  assert.notEqual(res.status, 0);
+  const out = res.stdout + res.stderr;
+  assert.match(out, /❌ invalid JSON/);
+  assert.doesNotMatch(out, /invalid JSON:/);
+  assert.doesNotMatch(out, /Unexpected token/);
+  assert.doesNotMatch(out, /super-secret/);
+  assert.doesNotMatch(out, /super-secr/);
+  assert.doesNotMatch(out, new RegExp(parseMessage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});
+
+test('doctor checks accounts/*.json beside the repo and reports broken JSON without a parser snippet', () => {
+  const doctor = require('../scripts/doctor.js');
+  assert.deepEqual(doctor.authPaths(), serverInternals.discoverAuthPaths());
+
+  const dir = tmpdir();
+  const scriptsDir = path.join(dir, 'scripts');
+  const accounts = path.join(dir, 'accounts');
+  // doctor.js resolves the repo from __dirname, so run a copy inside the temp repo.
+  fs.mkdirSync(scriptsDir);
+  fs.mkdirSync(accounts);
+  fs.copyFileSync(path.join(ROOT, 'scripts', 'doctor.js'), path.join(scriptsDir, 'doctor.js'));
+  fs.writeFileSync(path.join(accounts, 'notes.txt'), 'not an auth file');
+  const auth = {
+    token: 'tok_work',
+    cookie: 'ds_session_id=abc',
+    wasmUrl: 'https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm',
+  };
+  const good = path.join(accounts, 'work.json');
+  fs.writeFileSync(good, JSON.stringify(auth));
+  if (process.platform !== 'win32') fs.chmodSync(good, 0o600);
+
+  const env = { ...process.env };
+  delete env.DEEPSEEK_AUTH_PATH;
+  delete env.DEEPSEEK_AUTH_DIR;
+  delete env.DOCTOR_OFFLINE;
+  const script = path.join(scriptsDir, 'doctor.js');
+  const run = (extraEnv = {}) => spawnSync(process.execPath, [script, '--offline'], {
+    cwd: dir,
+    encoding: 'utf8',
+    env: { ...env, ...extraEnv },
+  });
+
+  const ok = run();
+  const okOut = ok.stdout + ok.stderr;
+  assert.equal(ok.status, 0, okOut);
+  assert.match(okOut, /accounts\/work\.json|accounts\\work\.json/);
+  assert.doesNotMatch(okOut, /auth file missing/i);
+  assert.doesNotMatch(okOut, /notes\.txt/);
+
+  const explicitMissing = run({ DEEPSEEK_AUTH_PATH: path.join(dir, 'deepseek-auth.json') });
+  const explicitOut = explicitMissing.stdout + explicitMissing.stderr;
+  assert.equal(explicitMissing.status, 0, explicitOut);
+  assert.match(explicitOut, /work\.json/);
+  assert.doesNotMatch(explicitOut, /auth file missing/i);
+
+  const primary = path.join(dir, 'deepseek-auth.json');
+  fs.writeFileSync(primary, JSON.stringify(auth));
+  if (process.platform !== 'win32') fs.chmodSync(primary, 0o600);
+  const both = run();
+  const bothOut = both.stdout + both.stderr;
+  assert.equal(both.status, 0, bothOut);
+  assert.match(bothOut, /deepseek-auth\.json/);
+  assert.match(bothOut, /work\.json/);
+
+  const secret = 'zzsecret-token-fragment';
+  const broken = path.join(accounts, 'broken.json');
+  fs.writeFileSync(broken, `${secret} is not json`);
+  const parsed = doctor.checkAuthFile(broken);
+  assert.deepEqual(parsed.issues, ['invalid JSON']);
+  assert.equal(JSON.stringify(parsed).includes(secret), false);
+
+  const bad = run();
+  const badOut = bad.stdout + bad.stderr;
+  assert.equal(bad.status, 2, badOut);
+  assert.match(badOut, /❌ invalid JSON/);
+  assert.doesNotMatch(badOut, /invalid JSON:/);
+  assert.equal(badOut.includes(secret), false);
+  assert.doesNotMatch(badOut, /Unexpected token|is not valid JSON/);
+  assert.match(badOut, /work\.json/);
+  assert.match(badOut, /auth file looks OK/);
+
+  fs.writeFileSync(path.join(accounts, 'array.json'), '[]');
+  const arrayRun = run();
+  const arrayOut = arrayRun.stdout + arrayRun.stderr;
+  assert.equal(arrayRun.status, 2, arrayOut);
+  assert.match(arrayOut, /expected a JSON object/);
+
+  const listed = path.join(dir, 'listed.json');
+  const other = path.join(dir, 'other.json');
+  fs.writeFileSync(listed, JSON.stringify(auth));
+  fs.writeFileSync(other, JSON.stringify(auth));
+  if (process.platform !== 'win32') {
+    fs.chmodSync(listed, 0o600);
+    fs.chmodSync(other, 0o600);
+  }
+  const comma = run({ DEEPSEEK_AUTH_PATH: `${listed},${other}` });
+  const commaOut = comma.stdout + comma.stderr;
+  assert.equal(comma.status, 0, commaOut);
+  assert.match(commaOut, /listed\.json/);
+  assert.match(commaOut, /other\.json/);
+  assert.doesNotMatch(commaOut, /broken\.json/);
+  assert.doesNotMatch(commaOut, /work\.json/);
+  assert.doesNotMatch(commaOut, /invalid JSON/);
+
+  const empty = tmpdir();
+  const emptyScripts = path.join(empty, 'scripts');
+  fs.mkdirSync(emptyScripts);
+  fs.copyFileSync(script, path.join(emptyScripts, 'doctor.js'));
+  const missing = spawnSync(process.execPath, [path.join(emptyScripts, 'doctor.js'), '--offline'], {
+    cwd: empty,
+    encoding: 'utf8',
+    env,
+  });
+  const missingOut = missing.stdout + missing.stderr;
+  assert.equal(missing.status, 2, missingOut);
+  assert.match(missingOut, /auth file missing/i);
+});
+
 test('auth menu has no third-party Telegram watermark and accepts --lang', () => {
   const help = runNode(['scripts/auth.js', '--help', '--lang', 'en']);
   assert.equal(help.status, 0, help.stderr || help.stdout);
@@ -229,6 +365,71 @@ test('sweepIdleSessions evicts only idle entries', () => {
   assert.equal(serverInternals.sessions.has('stale-x'), false);
   assert.equal(serverInternals.sessions.has('fresh-x'), true);
   serverInternals.sessions.delete('fresh-x');
+});
+
+test('creating more sessions than the cap drops the oldest idle entries and keeps the newest', () => {
+  const { sessions, getOrCreateAgentSession, createSession, MAX_SESSIONS } = serverInternals;
+  const saved = [...sessions.entries()];
+  const realNow = Date.now;
+  const id = (i) => `session-cap-${i}`;
+  sessions.clear();
+  try {
+    assert.equal(MAX_SESSIONS, 200);
+
+    for (let i = 0; i < MAX_SESSIONS; i++) {
+      const session = getOrCreateAgentSession(id(i));
+      session.lastActivityAt = i + 1;
+    }
+    assert.equal(sessions.size, MAX_SESSIONS);
+
+    const extra = 3;
+    const created = [];
+    for (let n = 0; n < extra; n++) {
+      const session = getOrCreateAgentSession(id(MAX_SESSIONS + n));
+      session.lastActivityAt = MAX_SESSIONS + n + 1;
+      created.push(session);
+    }
+
+    assert.equal(sessions.size, MAX_SESSIONS);
+    for (let n = 0; n < extra; n++) {
+      assert.equal(sessions.has(id(n)), false, `oldest idle ${id(n)} is dropped`);
+      assert.equal(sessions.has(id(MAX_SESSIONS + n)), true, `newest ${id(MAX_SESSIONS + n)} stays`);
+      assert.equal(sessions.get(id(MAX_SESSIONS + n)), created[n]);
+    }
+    assert.equal(sessions.has(id(extra)), true, 'the next idle session stays');
+    assert.equal(sessions.has(id(MAX_SESSIONS - 1)), true, 'the newest of the original set stays');
+
+    // The id being created stays even when its timestamp is older than every other entry.
+    sessions.clear();
+    Date.now = () => 5000;
+    for (let i = 0; i < MAX_SESSIONS; i++) getOrCreateAgentSession(id(i));
+    Date.now = () => 1;
+    const createdOldest = getOrCreateAgentSession(id(MAX_SESSIONS));
+    assert.equal(sessions.size, MAX_SESSIONS);
+    assert.equal(sessions.get(id(MAX_SESSIONS)), createdOldest, 'the session created for this request is kept');
+    let dropped = 0;
+    for (let i = 0; i < MAX_SESSIONS; i++) if (!sessions.has(id(i))) dropped++;
+    assert.equal(dropped, 1, 'an idle entry is dropped instead of the session just created');
+
+    // Touching the current id must not evict it, even when that refresh is the oldest timestamp.
+    sessions.clear();
+    Date.now = () => 5000;
+    for (let i = 0; i < MAX_SESSIONS; i++) {
+      getOrCreateAgentSession(id(i)).lastActivityAt = 1000 + i;
+    }
+    const older = createSession();
+    older.lastActivityAt = 50;
+    sessions.set('session-cap-older', older);
+    Date.now = () => 10;
+    const touched = getOrCreateAgentSession(id(0));
+    assert.equal(sessions.get(id(0)), touched, 'the session touched for this request is kept');
+    assert.equal(sessions.has('session-cap-older'), false, 'a less recent idle entry is dropped instead');
+    assert.equal(sessions.size, MAX_SESSIONS);
+  } finally {
+    Date.now = realNow;
+    sessions.clear();
+    for (const [key, value] of saved) sessions.set(key, value);
+  }
 });
 
 test('proxy API key authentication is optional and uses exact bearer tokens', () => {

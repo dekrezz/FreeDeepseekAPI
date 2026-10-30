@@ -223,6 +223,53 @@ test('an HTTP 400 carrying a rate-limit message becomes a 429 rate_limit_error',
   assert.equal(plain.type, 'upstream_http_error');
 });
 
+test('upstream error text is scrubbed before lastError, cooldown logs, and Error.message', (t) => {
+  const token = `${'p'.repeat(310)}SECRET`;
+  const account = acct('ready', {
+    config: {
+      token,
+      cookie: 'ck_ready=CK-ready-SECRET',
+      hif_dliq: 'hifdliqSECRET',
+      hif_leim: 'hifleimSECRET',
+    },
+  });
+  useAccounts(t, [account]);
+  const lines = [];
+  const originalLog = console.log;
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  t.after(() => { console.log = originalLog; });
+
+  const leaked = `${token} CK-ready-SECRET hifdliqSECRET hifleimSECRET Bearer other-bearer-SECRET`;
+  S.markAccountRateLimited(account, `${leaked} too frequent`, '9', 429, 'completion');
+  assert.equal(account.lastError.kind, 'rate_limit');
+  assert.equal(account.lastError.status, 429);
+  assert.match(account.lastError.message, /too frequent/);
+  assert.match(account.lastError.message, /\[redacted\]/);
+  assert.match(account.lastError.message, /Bearer \[redacted\]/);
+  assert.doesNotMatch(account.lastError.message, /SECRET/);
+  assert.doesNotMatch(account.lastError.message, /p{20}/);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /cooldown for 9s/);
+  assert.match(lines[0], /\[redacted\]/);
+  assert.doesNotMatch(lines[0], /SECRET/);
+  assert.doesNotMatch(lines[0], /p{20}/);
+
+  const error = S.createUpstreamHttpError(502, `gateway ${leaked}`);
+  assert.equal(error.status, 502);
+  assert.equal(error.type, 'upstream_http_error');
+  assert.match(error.message, /gateway/);
+  assert.match(error.message, /Bearer \[redacted\]/);
+  assert.doesNotMatch(error.message, /SECRET/);
+  assert.doesNotMatch(error.message, /p{20}/);
+
+  const mixed = S.createUpstreamHttpError(400, `${RATE_TEXT} ${token} CK-ready-SECRET`);
+  assert.equal(mixed.status, 429);
+  assert.equal(mixed.type, 'rate_limit_error');
+  assert.match(mixed.message, /Слишком частые/);
+  assert.doesNotMatch(mixed.message, /SECRET/);
+  assert.doesNotMatch(mixed.message, /p{20}/);
+});
+
 test('markAccountFailure cools down on rate-limit text with Retry-After, but not on a plain 400', () => {
   const now = Date.now();
   const limited = acct('limited');
@@ -1021,6 +1068,122 @@ test('the request log is capped at 400 rows and error text is scrubbed of creden
   assert.doesNotMatch(res.text, /SECRET/);
   assert.match(res.json.requests[0].error_message, /\[redacted\]/);
   assert.ok(res.json.requests[0].error_message.length <= 300, 'error text is clipped');
+});
+
+test('GET /admin/accounts scrubs credentials stored on lastError', async (t) => {
+  const token = `${'p'.repeat(40)}SECRET`;
+  const account = acct('ready', {
+    config: {
+      token,
+      cookie: 'ck_ready=CK-ready-SECRET',
+      hif_dliq: 'hifdliqSECRET',
+      hif_leim: 'hifleimSECRET',
+    },
+    lastError: {
+      kind: 'upstream',
+      status: 502,
+      message: `boom ${token} CK-ready-SECRET hifdliqSECRET hifleimSECRET Bearer ${token}`,
+      at: Date.now(),
+    },
+  });
+  useAccounts(t, [account]);
+  const port = await startServer(t);
+
+  const res = await request(port, 'GET', '/admin/accounts');
+
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.accounts[0].id, 'ready');
+  assert.match(res.json.accounts[0].last_error.message, /boom/);
+  assert.match(res.json.accounts[0].last_error.message, /\[redacted\]/);
+  assert.match(res.json.accounts[0].last_error.message, /Bearer \[redacted\]/);
+  assert.doesNotMatch(res.text, /SECRET/);
+  assert.doesNotMatch(res.text, /p{20}/);
+});
+
+function captureLogs(t) {
+  const lines = [];
+  const originalLog = console.log;
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  t.after(() => { console.log = originalLog; });
+  return lines;
+}
+
+test('non-JSON upstream bodies are scrubbed before the client, lastError, and logs', async (t) => {
+  const token = `${'p'.repeat(130)}SECRET`;
+  const account = acct('ready', {
+    config: {
+      token,
+      cookie: 'ck_ready=CK-ready-SECRET',
+      hif_dliq: 'hifdliqSECRET',
+      hif_leim: 'hifleimSECRET',
+    },
+  });
+  useAccounts(t, [account]);
+  const body = `${token} CK-ready-SECRET hifdliqSECRET hifleimSECRET Authorization: Bearer ${token}`;
+  installUpstream(t, {
+    sessionCreate: () => new Response(body, { status: 502, headers: { 'content-type': 'text/html' } }),
+  });
+  const lines = captureLogs(t);
+  t.after(() => S.sessions.delete('scrub-nonjson'));
+  const port = await startServer(t);
+
+  const res = await chat(port, 'scrub-nonjson', [{ role: 'user', content: 'hi' }]);
+
+  assert.equal(res.status, 500, res.text);
+  assert.match(res.json.error.message, /non-JSON/);
+  assert.match(res.json.error.message, /\[redacted\]/);
+  assert.doesNotMatch(res.text, /SECRET/);
+  assert.doesNotMatch(res.text, /p{20}/);
+  assert.doesNotMatch(account.lastError.message, /SECRET/);
+  assert.doesNotMatch(account.lastError.message, /p{20}/);
+  assert.match(account.lastError.message, /\[redacted\]/);
+  assert.equal(account.lastError.kind, 'upstream');
+  const admin = await request(port, 'GET', '/admin/accounts');
+  assert.equal(admin.status, 200, admin.text);
+  assert.doesNotMatch(admin.text, /SECRET/);
+  assert.doesNotMatch(admin.text, /p{20}/);
+  assert.match(admin.json.accounts[0].last_error.message, /\[redacted\]/);
+  assert.doesNotMatch(lines.join('\n'), /SECRET/);
+  assert.doesNotMatch(lines.join('\n'), /p{20}/);
+});
+
+test('completion errors scrub upstream secrets before the client and the session log', async (t) => {
+  const token = `${'p'.repeat(130)}SECRET`;
+  const account = acct('ready', {
+    config: {
+      token,
+      cookie: 'ck_ready=CK-ready-SECRET',
+      hif_dliq: 'hifdliqSECRET',
+      hif_leim: 'hifleimSECRET',
+    },
+  });
+  useAccounts(t, [account]);
+  const body = `${token} backend-failure CK-ready-SECRET hifdliqSECRET hifleimSECRET Bearer ${token}`;
+  installUpstream(t, {
+    completion: {
+      ready: [() => new Response(body, { status: 502, headers: { 'content-type': 'text/plain' } })],
+    },
+  });
+  const lines = captureLogs(t);
+  t.after(() => S.sessions.delete('scrub-http502'));
+  const port = await startServer(t);
+
+  const res = await chat(port, 'scrub-http502', [{ role: 'user', content: 'hi' }]);
+
+  assert.equal(res.status, 502, res.text);
+  assert.match(res.json.error.message, /backend-failure/);
+  assert.match(res.json.error.message, /\[redacted\]/);
+  assert.match(res.json.error.message, /Bearer \[redacted\]/);
+  assert.doesNotMatch(res.text, /SECRET/);
+  assert.doesNotMatch(res.text, /p{20}/);
+  assert.doesNotMatch(account.lastError.message, /SECRET/);
+  assert.doesNotMatch(account.lastError.message, /p{20}/);
+  assert.match(account.lastError.message, /backend-failure/);
+  const logged = lines.join('\n');
+  assert.match(logged, /Session error \(502\)/);
+  assert.match(logged, /\[DS-API\] Error:/);
+  assert.doesNotMatch(logged, /SECRET/);
+  assert.doesNotMatch(logged, /p{20}/);
 });
 
 test('GET /admin/usage aggregates estimated tokens by account, model, endpoint, agent, and time', async (t) => {
