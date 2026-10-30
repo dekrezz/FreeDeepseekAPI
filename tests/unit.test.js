@@ -1312,7 +1312,17 @@ test('abandoned tool-loop detector retries short stops after a tool result', () 
   ];
   assert.equal(serverInternals.lastTurnIsToolResult(afterTool), true);
   assert.equal(serverInternals.looksLikeAbandonedToolLoop('ok', afterTool), true);
+  assert.equal(serverInternals.looksLikeAbandonedToolLoop('working', afterTool), true);
+  assert.equal(serverInternals.looksLikeAbandonedToolLoop('unfixed', afterTool), true);
   assert.equal(serverInternals.looksLikeAbandonedToolLoop('Done. The player controller is finished.', afterTool), false);
+  assert.equal(serverInternals.looksLikeAbandonedToolLoop('Готово.', afterTool), false);
+  assert.equal(serverInternals.looksLikeAbandonedToolLoop('Сделано, всё работает.', afterTool), false);
+  assert.equal(serverInternals.looksLikeAbandonedToolLoop('완료했습니다.', afterTool), false);
+  assert.equal(serverInternals.looksLikeAbandonedToolLoop('The service is running.', afterTool), false);
+  assert.equal(serverInternals.looksLikeAbandonedToolLoop(
+    '`freedeepseek.service`는 FreeDeepseekAPI 프록시를 127.0.0.1:9655에 띄우는 유닛이고(재시도 0, on-failure 재시작), `systemctl --user is-active` 결과는 `active`입니다.\n\n**결론**: 유닛 파일대로 설정돼 있고 서비스는 현재 실행 중입니다.',
+    afterTool,
+  ), false);
   assert.equal(serverInternals.looksLikeAbandonedToolLoop('ok', [{ role: 'user', content: 'hello' }]), false);
 });
 
