@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
+const https = require('node:https');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -16,6 +19,7 @@ function runNode(args, opts = {}) {
   return spawnSync(process.execPath, args, {
     cwd: ROOT,
     encoding: 'utf8',
+    timeout: opts.timeout,
     env: { ...process.env, ...opts.env },
   });
 }
@@ -97,6 +101,142 @@ test('doctor reports auth problems without requiring Chrome or network', () => {
   assert.notEqual(res.status, 0);
   assert.match(res.stdout + res.stderr, /token missing/i);
   assert.match(res.stdout + res.stderr, /cookie missing/i);
+});
+
+test('doctor reports invalid auth JSON without quoting the file', () => {
+  const dir = tmpdir();
+  const authPath = path.join(dir, 'broken-auth.json');
+  const raw = '{"token": super-secret}';
+  fs.writeFileSync(authPath, raw);
+  let parseMessage = '';
+  try { JSON.parse(raw); } catch (e) { parseMessage = e.message; }
+  assert.match(parseMessage, /Unexpected token/);
+
+  const doctor = require('../scripts/doctor.js');
+  const checked = doctor.checkAuthFile(authPath);
+  assert.equal(checked.ok, false);
+  assert.equal(checked.auth, null);
+  assert.deepEqual(checked.issues, ['invalid JSON']);
+
+  const res = runNode(['scripts/doctor.js', '--offline'], {
+    env: { DEEPSEEK_AUTH_PATH: authPath, DEEPSEEK_AUTH_DIR: '' },
+  });
+  assert.notEqual(res.status, 0);
+  const out = res.stdout + res.stderr;
+  assert.match(out, /❌ invalid JSON/);
+  assert.doesNotMatch(out, /invalid JSON:/);
+  assert.doesNotMatch(out, /Unexpected token/);
+  assert.doesNotMatch(out, /super-secret/);
+  assert.doesNotMatch(out, /super-secr/);
+  assert.doesNotMatch(out, new RegExp(parseMessage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});
+
+test('doctor checks accounts/*.json beside the repo and reports broken JSON without a parser snippet', () => {
+  const doctor = require('../scripts/doctor.js');
+  assert.deepEqual(doctor.authPaths(), serverInternals.discoverAuthPaths());
+
+  const dir = tmpdir();
+  const scriptsDir = path.join(dir, 'scripts');
+  const accounts = path.join(dir, 'accounts');
+  // doctor.js resolves the repo from __dirname, so run a copy inside the temp repo.
+  fs.mkdirSync(scriptsDir);
+  fs.mkdirSync(accounts);
+  fs.copyFileSync(path.join(ROOT, 'scripts', 'doctor.js'), path.join(scriptsDir, 'doctor.js'));
+  fs.writeFileSync(path.join(accounts, 'notes.txt'), 'not an auth file');
+  const auth = {
+    token: 'tok_work',
+    cookie: 'ds_session_id=abc',
+    wasmUrl: 'https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm',
+  };
+  const good = path.join(accounts, 'work.json');
+  fs.writeFileSync(good, JSON.stringify(auth));
+  if (process.platform !== 'win32') fs.chmodSync(good, 0o600);
+
+  const env = { ...process.env };
+  delete env.DEEPSEEK_AUTH_PATH;
+  delete env.DEEPSEEK_AUTH_DIR;
+  delete env.DOCTOR_OFFLINE;
+  const script = path.join(scriptsDir, 'doctor.js');
+  const run = (extraEnv = {}) => spawnSync(process.execPath, [script, '--offline'], {
+    cwd: dir,
+    encoding: 'utf8',
+    env: { ...env, ...extraEnv },
+  });
+
+  const ok = run();
+  const okOut = ok.stdout + ok.stderr;
+  assert.equal(ok.status, 0, okOut);
+  assert.match(okOut, /accounts\/work\.json|accounts\\work\.json/);
+  assert.doesNotMatch(okOut, /auth file missing/i);
+  assert.doesNotMatch(okOut, /notes\.txt/);
+
+  const explicitMissing = run({ DEEPSEEK_AUTH_PATH: path.join(dir, 'deepseek-auth.json') });
+  const explicitOut = explicitMissing.stdout + explicitMissing.stderr;
+  assert.equal(explicitMissing.status, 0, explicitOut);
+  assert.match(explicitOut, /work\.json/);
+  assert.doesNotMatch(explicitOut, /auth file missing/i);
+
+  const primary = path.join(dir, 'deepseek-auth.json');
+  fs.writeFileSync(primary, JSON.stringify(auth));
+  if (process.platform !== 'win32') fs.chmodSync(primary, 0o600);
+  const both = run();
+  const bothOut = both.stdout + both.stderr;
+  assert.equal(both.status, 0, bothOut);
+  assert.match(bothOut, /deepseek-auth\.json/);
+  assert.match(bothOut, /work\.json/);
+
+  const secret = 'zzsecret-token-fragment';
+  const broken = path.join(accounts, 'broken.json');
+  fs.writeFileSync(broken, `${secret} is not json`);
+  const parsed = doctor.checkAuthFile(broken);
+  assert.deepEqual(parsed.issues, ['invalid JSON']);
+  assert.equal(JSON.stringify(parsed).includes(secret), false);
+
+  const bad = run();
+  const badOut = bad.stdout + bad.stderr;
+  assert.equal(bad.status, 2, badOut);
+  assert.match(badOut, /❌ invalid JSON/);
+  assert.doesNotMatch(badOut, /invalid JSON:/);
+  assert.equal(badOut.includes(secret), false);
+  assert.doesNotMatch(badOut, /Unexpected token|is not valid JSON/);
+  assert.match(badOut, /work\.json/);
+  assert.match(badOut, /auth file looks OK/);
+
+  fs.writeFileSync(path.join(accounts, 'array.json'), '[]');
+  const arrayRun = run();
+  const arrayOut = arrayRun.stdout + arrayRun.stderr;
+  assert.equal(arrayRun.status, 2, arrayOut);
+  assert.match(arrayOut, /expected a JSON object/);
+
+  const listed = path.join(dir, 'listed.json');
+  const other = path.join(dir, 'other.json');
+  fs.writeFileSync(listed, JSON.stringify(auth));
+  fs.writeFileSync(other, JSON.stringify(auth));
+  if (process.platform !== 'win32') {
+    fs.chmodSync(listed, 0o600);
+    fs.chmodSync(other, 0o600);
+  }
+  const comma = run({ DEEPSEEK_AUTH_PATH: `${listed},${other}` });
+  const commaOut = comma.stdout + comma.stderr;
+  assert.equal(comma.status, 0, commaOut);
+  assert.match(commaOut, /listed\.json/);
+  assert.match(commaOut, /other\.json/);
+  assert.doesNotMatch(commaOut, /broken\.json/);
+  assert.doesNotMatch(commaOut, /work\.json/);
+  assert.doesNotMatch(commaOut, /invalid JSON/);
+
+  const empty = tmpdir();
+  const emptyScripts = path.join(empty, 'scripts');
+  fs.mkdirSync(emptyScripts);
+  fs.copyFileSync(script, path.join(emptyScripts, 'doctor.js'));
+  const missing = spawnSync(process.execPath, [path.join(emptyScripts, 'doctor.js'), '--offline'], {
+    cwd: empty,
+    encoding: 'utf8',
+    env,
+  });
+  const missingOut = missing.stdout + missing.stderr;
+  assert.equal(missing.status, 2, missingOut);
+  assert.match(missingOut, /auth file missing/i);
 });
 
 test('auth menu has no third-party Telegram watermark and accepts --lang', () => {
@@ -231,6 +371,71 @@ test('sweepIdleSessions evicts only idle entries', () => {
   serverInternals.sessions.delete('fresh-x');
 });
 
+test('creating more sessions than the cap drops the oldest idle entries and keeps the newest', () => {
+  const { sessions, getOrCreateAgentSession, createSession, MAX_SESSIONS } = serverInternals;
+  const saved = [...sessions.entries()];
+  const realNow = Date.now;
+  const id = (i) => `session-cap-${i}`;
+  sessions.clear();
+  try {
+    assert.equal(MAX_SESSIONS, 200);
+
+    for (let i = 0; i < MAX_SESSIONS; i++) {
+      const session = getOrCreateAgentSession(id(i));
+      session.lastActivityAt = i + 1;
+    }
+    assert.equal(sessions.size, MAX_SESSIONS);
+
+    const extra = 3;
+    const created = [];
+    for (let n = 0; n < extra; n++) {
+      const session = getOrCreateAgentSession(id(MAX_SESSIONS + n));
+      session.lastActivityAt = MAX_SESSIONS + n + 1;
+      created.push(session);
+    }
+
+    assert.equal(sessions.size, MAX_SESSIONS);
+    for (let n = 0; n < extra; n++) {
+      assert.equal(sessions.has(id(n)), false, `oldest idle ${id(n)} is dropped`);
+      assert.equal(sessions.has(id(MAX_SESSIONS + n)), true, `newest ${id(MAX_SESSIONS + n)} stays`);
+      assert.equal(sessions.get(id(MAX_SESSIONS + n)), created[n]);
+    }
+    assert.equal(sessions.has(id(extra)), true, 'the next idle session stays');
+    assert.equal(sessions.has(id(MAX_SESSIONS - 1)), true, 'the newest of the original set stays');
+
+    // The id being created stays even when its timestamp is older than every other entry.
+    sessions.clear();
+    Date.now = () => 5000;
+    for (let i = 0; i < MAX_SESSIONS; i++) getOrCreateAgentSession(id(i));
+    Date.now = () => 1;
+    const createdOldest = getOrCreateAgentSession(id(MAX_SESSIONS));
+    assert.equal(sessions.size, MAX_SESSIONS);
+    assert.equal(sessions.get(id(MAX_SESSIONS)), createdOldest, 'the session created for this request is kept');
+    let dropped = 0;
+    for (let i = 0; i < MAX_SESSIONS; i++) if (!sessions.has(id(i))) dropped++;
+    assert.equal(dropped, 1, 'an idle entry is dropped instead of the session just created');
+
+    // Touching the current id must not evict it, even when that refresh is the oldest timestamp.
+    sessions.clear();
+    Date.now = () => 5000;
+    for (let i = 0; i < MAX_SESSIONS; i++) {
+      getOrCreateAgentSession(id(i)).lastActivityAt = 1000 + i;
+    }
+    const older = createSession();
+    older.lastActivityAt = 50;
+    sessions.set('session-cap-older', older);
+    Date.now = () => 10;
+    const touched = getOrCreateAgentSession(id(0));
+    assert.equal(sessions.get(id(0)), touched, 'the session touched for this request is kept');
+    assert.equal(sessions.has('session-cap-older'), false, 'a less recent idle entry is dropped instead');
+    assert.equal(sessions.size, MAX_SESSIONS);
+  } finally {
+    Date.now = realNow;
+    sessions.clear();
+    for (const [key, value] of saved) sessions.set(key, value);
+  }
+});
+
 test('proxy API key authentication is optional and uses exact bearer tokens', () => {
   assert.equal(serverInternals.isProxyAuthorized(undefined, ''), true);
   assert.equal(serverInternals.isProxyAuthorized('Bearer secret', 'secret'), true);
@@ -333,6 +538,141 @@ test('loopback host detection covers supported local bind addresses', () => {
   assert.equal(serverInternals.isLoopbackHost('::ffff:127.0.0.1'), true);
   assert.equal(serverInternals.isLoopbackHost('localhost'), true);
   assert.equal(serverInternals.isLoopbackHost('0.0.0.0'), false);
+});
+
+function writePemPair(dir) {
+  const cert = path.join(dir, 'cert.pem');
+  const key = path.join(dir, 'key.pem');
+  const made = spawnSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-keyout', key, '-out', cert, '-days', '1', '-nodes', '-subj', '/CN=localhost'], { encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stderr);
+  return { cert, key };
+}
+
+test('TLS stays off unless both PEM files are set and readable, including off loopback', () => {
+  const { readTlsCredentials, server } = serverInternals;
+  assert.equal(readTlsCredentials({}), null);
+  assert.equal(readTlsCredentials({ TLS_CERT_FILE: '  ', TLS_KEY_FILE: '' }), null);
+  assert.equal(server instanceof http.Server, true);
+  assert.equal(server instanceof https.Server, false);
+  assert.equal(serverInternals.publicScheme(), 'http');
+
+  const half = runNode(['-e', 'require("./server.js")'], { env: { HOST: '0.0.0.0', TLS_CERT_FILE: '/tmp/only-cert.pem', TLS_KEY_FILE: '' } });
+  assert.notEqual(half.status, 0);
+  assert.match(half.stderr, /TLS_CERT_FILE and TLS_KEY_FILE must both be set/);
+
+  const missing = runNode(['-e', 'require("./server.js")'], { env: { HOST: '127.0.0.1', TLS_CERT_FILE: '/no/such/cert.pem', TLS_KEY_FILE: '/no/such/key.pem' } });
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /Could not read TLS_CERT_FILE/);
+
+  const plain = runNode(['-e', 'const http=require("http"); const https=require("https"); const s=require("./server.js").__test.server; if(!(s instanceof http.Server)||s instanceof https.Server) process.exit(2);'], {
+    env: { HOST: '0.0.0.0', TLS_CERT_FILE: '', TLS_KEY_FILE: '' },
+  });
+  assert.equal(plain.status, 0, plain.stderr);
+
+  const dir = tmpdir();
+  const unread = path.join(dir, 'unread.pem');
+  fs.writeFileSync(unread, 'not empty');
+  fs.chmodSync(unread, 0);
+  const denied = runNode(['-e', 'require("./server.js")'], { env: { TLS_CERT_FILE: unread, TLS_KEY_FILE: unread } });
+  assert.notEqual(denied.status, 0);
+  assert.match(denied.stderr, /Could not read TLS_CERT_FILE/);
+
+  const garbage = path.join(dir, 'garbage.pem');
+  fs.writeFileSync(garbage, 'not a pem');
+  const bad = runNode(['-e', 'require("./server.js")'], { env: { TLS_CERT_FILE: garbage, TLS_KEY_FILE: garbage } });
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /not a usable PEM certificate and key/);
+});
+
+test('a non-loopback bind without TLS warns that the login import and Authorization header are clear text', () => {
+  const { cleartextStartupWarning } = serverInternals;
+  assert.equal(cleartextStartupWarning('127.0.0.1', false), null);
+  assert.equal(cleartextStartupWarning('localhost', false), null);
+  assert.equal(cleartextStartupWarning('[::1]', false), null);
+  assert.equal(cleartextStartupWarning('0.0.0.0', true), null);
+  const warning = cleartextStartupWarning('0.0.0.0', false);
+  assert.match(warning, /HOST=0\.0\.0\.0 is not loopback and TLS is off/);
+  assert.match(warning, /login import/);
+  assert.match(warning, /Authorization header are clear text/);
+
+  const emptyAuth = fs.mkdtempSync(path.join(os.tmpdir(), 'fdsa-no-auth-'));
+  const base = {
+    PORT: '0', NON_INTERACTIVE: '1', PROXY_API_KEY: 'test-key', OPEN_DASHBOARD: '',
+    DEEPSEEK_AUTH_DIR: emptyAuth, DEEPSEEK_AUTH_PATH: path.join(emptyAuth, 'missing.json'),
+  };
+  const noisy = runNode(['server.js'], { env: { ...base, HOST: '0.0.0.0' }, timeout: 8000 });
+  assert.equal(noisy.signal, null);
+  assert.match(noisy.stderr, /login import and the Authorization header are clear text/);
+  assert.doesNotMatch(noisy.stderr, /exposes the proxy without authentication/);
+  const quiet = runNode(['server.js'], { env: { ...base, HOST: '127.0.0.1' }, timeout: 8000 });
+  assert.doesNotMatch(quiet.stderr, /clear text/);
+  assert.equal(quiet.signal, null);
+});
+
+test('readable TLS_CERT_FILE and TLS_KEY_FILE serve the same handler over HTTPS', async () => {
+  const dir = tmpdir();
+  const { cert, key } = writePemPair(dir);
+  const script = path.join(dir, 'serve.js');
+  fs.writeFileSync(script, `
+    const https = require('https');
+    const http = require('http');
+    const S = require(${JSON.stringify(path.join(ROOT, 'server.js'))}).__test;
+    if (!(S.server instanceof https.Server)) process.exit(2);
+    if (S.server instanceof http.Server) process.exit(3);
+    if (S.publicScheme() !== 'https') process.exit(4);
+    S.server.listen(0, '127.0.0.1', () => {
+      const port = S.server.address().port;
+      const req = https.get({ host: '127.0.0.1', port, path: '/health', rejectUnauthorized: false, servername: 'localhost' }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          const json = JSON.parse(body);
+          if (res.statusCode !== 200 || json.status !== 'ok' || json.service !== 'FreeDeepseekAPI') process.exit(5);
+          S.server.close(() => process.exit(0));
+        });
+      });
+      req.on('error', () => process.exit(6));
+    });
+  `);
+  const run = runNode([script], { env: { HOST: '127.0.0.1', TLS_CERT_FILE: cert, TLS_KEY_FILE: key } });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+});
+
+test('HTTPS on a non-loopback bind does not warn, and the listen line says https', async () => {
+  const { spawn } = require('node:child_process');
+  const dir = tmpdir();
+  const { cert, key } = writePemPair(dir);
+  const authDir = path.join(dir, 'accounts');
+  fs.mkdirSync(authDir);
+  fs.writeFileSync(path.join(authDir, 'login.json'), JSON.stringify({ token: 'tok', cookie: 'sid=1' }));
+  const child = spawn(process.execPath, ['server.js'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOST: '0.0.0.0', PORT: '0', NON_INTERACTIVE: '1', OPEN_DASHBOARD: '', PROXY_API_KEY: 'test-key',
+      DEEPSEEK_AUTH_DIR: authDir, TLS_CERT_FILE: cert, TLS_KEY_FILE: key,
+    },
+  });
+  let stdout = '';
+  let stderr = '';
+  const result = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve('timeout'), 8000);
+    const onData = () => {
+      if (stdout.includes('Server on https://')) { clearTimeout(timer); resolve('ready'); }
+    };
+    child.stdout.on('data', (chunk) => { stdout += chunk; onData(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk; onData(); });
+    child.on('exit', () => { clearTimeout(timer); resolve('exit'); });
+  });
+  if (child.exitCode === null) child.kill('SIGTERM');
+  await new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve();
+    const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 1500);
+    child.on('exit', () => { clearTimeout(timer); resolve(); });
+  });
+  assert.equal(result, 'ready', `${stdout}\n${stderr}`);
+  assert.match(stdout, /Server on https:\/\/0\.0\.0\.0:0 /);
+  assert.doesNotMatch(`${stdout}\n${stderr}`, /clear text/);
 });
 
 test('browser origin guard allows local UIs and exact configured origins only', () => {
@@ -1747,6 +2087,7 @@ test('resetting a client session keeps or drops server-side history on request',
   assert.equal(keptSession.messageCount, 0);
   assert.equal(keptSession.history.length, 2, 'plain reset keeps recovery history');
   assert.equal(kept.history_preserved, 2);
+  assert.deepEqual(kept, { status: 'session_reset', agent: 'keep-x', history_preserved: 2 });
 
   // An edited message must not reach DeepSeek next to the turns it replaced.
   sessions.set('drop-x', make());
@@ -1756,6 +2097,7 @@ test('resetting a client session keeps or drops server-side history on request',
   assert.deepEqual(droppedSession.history, []);
   assert.equal(droppedSession.sentSystemFingerprint, null);
   assert.equal(dropped.history_preserved, 0);
+  assert.deepEqual(dropped, { status: 'session_reset', agent: 'drop-x', history_preserved: 0 });
   assert.equal(serverInternals.buildRecoveryHistoryPrefix(droppedSession.history), '');
 
   assert.equal(resetAgentSession('missing-x'), null);
@@ -1853,6 +2195,318 @@ test('audit srv-tools-4: extractScreenshotPaths does not throw on tool messages 
   assert.deepEqual(result, []);
 });
 
+const PROC_TCP = [
+  'sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode',
+  '   4: 0100007F:A0C5 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 89343 1 00000000659b04b0 100 0 0 10 0',
+  '   7: 0100007F:BD74 0100007F:A0C5 01 00000000:00000000 00:00000000 00000000  1001        0 88408 1 0000000007c1999e 20 0 0 10 -1',
+  '  11: 0100007F:A0C5 0100007F:BD74 01 00000000:00000000 00:00000000 00000000  1000        0 89345 1 00000000fc3e3bda 20 4 30 10 -1',
+  '  12: 0100007f:00ab 0100007f:00cd 06 00000000:00000000 00:00000000 00000000  9 0 70',
+  '  13: 0100007f:00cd 0100007f:00ab 01 00000000:00000000 00:00000000 00000000  8 0 71',
+  '  14: 0100007f:00ab 0100007f:00cd 01 00000000:00000000 00:00000000 00000000  7 0 72',
+].join('\n');
+
+const PROC_TCP6 = [
+  'sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode',
+  '   0: 00000000000000000000000001000000:B073 00000000000000000000000001000000:CD68 01 00000000:00000000 00:00000000 00000000  1000        0 92895 1 00000000 20 0 0 10 -1',
+  '   1: 00000000000000000000000001000000:CD68 00000000000000000000000001000000:B073 01 00000000:00000000 00:00000000 00000000    42        0 92896 1 00000000 20 0 0 10 -1',
+].join('\n');
+
+test('linux peer uid is the other end of a TCP connection', () => {
+  const { socketInodeFromLink, peerUidForInode, peerCredForSocket } = serverInternals;
+  assert.equal(socketInodeFromLink('socket:[89345]'), '89345');
+  assert.equal(socketInodeFromLink('  socket:[12] '), '12');
+  assert.equal(socketInodeFromLink('socket:[12]extra'), null);
+  assert.equal(socketInodeFromLink('/proc/self/fd/anon'), null);
+  assert.equal(socketInodeFromLink(''), null);
+
+  // The accepted socket's own uid column is this process (1000). The caller is 1001.
+  assert.deepEqual(peerUidForInode([PROC_TCP, PROC_TCP6], '89345'), { inodeResolved: true, peerUid: 1001 });
+  assert.deepEqual(peerUidForInode([PROC_TCP], '88408'), { inodeResolved: true, peerUid: 1000 });
+  assert.deepEqual(peerUidForInode([PROC_TCP6, ''], '92895'), { inodeResolved: true, peerUid: 42 });
+  assert.deepEqual(peerUidForInode([PROC_TCP], '89343'), { inodeResolved: true, peerUid: null });
+  assert.deepEqual(peerUidForInode([PROC_TCP], '999'), { inodeResolved: false, peerUid: null });
+  assert.deepEqual(peerUidForInode([PROC_TCP], 'not-an-inode'), { inodeResolved: false, peerUid: null });
+  // A same-direction TIME_WAIT row is not the peer. The swapped established row is.
+  assert.deepEqual(peerUidForInode([PROC_TCP], '72'), { inodeResolved: true, peerUid: 8 });
+
+  const cred = peerCredForSocket({ _handle: { fd: 4 } }, {
+    readlink(fd) {
+      assert.equal(fd, 4);
+      return 'socket:[89345]';
+    },
+    readTables() { return [PROC_TCP, PROC_TCP6]; },
+  });
+  assert.deepEqual(cred, { inodeResolved: true, peerUid: 1001 });
+  assert.deepEqual(peerCredForSocket({ _handle: { fd: 4 } }, {
+    readlink() { return 'anon_inode:[eventpoll]'; },
+    readTables() { throw new Error('should not read proc'); },
+  }), { inodeResolved: false, peerUid: null });
+  assert.deepEqual(peerCredForSocket({ _handle: { fd: 4 } }, {
+    readlink() { return 'socket:[89345]'; },
+    readTables() { throw Object.assign(new Error('denied'), { code: 'EACCES' }); },
+  }), { inodeResolved: false, peerUid: null });
+  assert.deepEqual(peerCredForSocket(null), { inodeResolved: false, peerUid: null });
+  assert.deepEqual(peerCredForSocket({ _handle: { fd: -1 } }, {
+    readlink() { throw new Error('no'); },
+  }), { inodeResolved: false, peerUid: null });
+});
+
+test('local caller decision rejects another uid and keeps loopback when proc cannot be read', () => {
+  const { localCallerDecision, requestLocalCallerDecision } = serverInternals;
+  const foreign = localCallerDecision({
+    remoteAddress: '127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: 1001, ownUid: 1000,
+  });
+  assert.equal(foreign.allowed, false);
+  assert.equal(foreign.status, 403);
+  assert.equal(foreign.error.type, 'local_caller_forbidden');
+  assert.match(foreign.error.message, /PROXY_API_KEY/);
+
+  assert.equal(localCallerDecision({
+    remoteAddress: '::ffff:127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: 1000, ownUid: 1000,
+  }).allowed, true);
+  assert.equal(localCallerDecision({
+    remoteAddress: '203.0.113.5', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: 1000, ownUid: 1000,
+  }).allowed, true);
+  // Resolved inode with no local peer (a remote client, or a missing row) is not this user.
+  assert.equal(localCallerDecision({
+    remoteAddress: '127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: null, ownUid: 1000,
+  }).allowed, false);
+  // uid 0 is a real caller. A missing peer uid must not become 0.
+  assert.equal(localCallerDecision({
+    remoteAddress: '127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: 0, ownUid: 0,
+  }).allowed, true);
+  assert.equal(localCallerDecision({
+    remoteAddress: '127.0.0.1', platform: 'linux', proxyKey: '', inodeResolved: true, peerUid: null, ownUid: 0,
+  }).allowed, false);
+
+  const unreadLoopback = localCallerDecision({
+    remoteAddress: '::1', platform: 'linux', proxyKey: '', inodeResolved: false, peerUid: null, ownUid: 1000,
+  });
+  assert.equal(unreadLoopback.allowed, true);
+  const unreadRemote = localCallerDecision({
+    remoteAddress: '198.51.100.4', platform: 'linux', proxyKey: '', inodeResolved: false, peerUid: null, ownUid: 1000,
+  });
+  assert.equal(unreadRemote.allowed, false);
+  assert.equal(unreadRemote.status, 403);
+  assert.equal(unreadRemote.error.type, 'local_caller_forbidden');
+
+  assert.equal(localCallerDecision({
+    remoteAddress: '10.1.2.3', platform: 'darwin', proxyKey: '', inodeResolved: false, ownUid: 1000,
+  }).allowed, false);
+  assert.equal(localCallerDecision({
+    remoteAddress: 'localhost', platform: 'win32', proxyKey: '', inodeResolved: false, ownUid: null,
+  }).allowed, true);
+  assert.equal(localCallerDecision({
+    remoteAddress: '10.1.2.3', platform: 'linux', proxyKey: 'secret', inodeResolved: true, peerUid: 1001, ownUid: 1000,
+  }).allowed, true);
+
+  assert.equal(requestLocalCallerDecision(
+    { socket: { remoteAddress: '203.0.113.8' } },
+    { proxyKey: 'secret', platform: 'linux', ownUid: 1, peerCred: { inodeResolved: true, peerUid: 2 } },
+  ).allowed, true);
+  assert.equal(requestLocalCallerDecision(
+    { socket: { remoteAddress: '::1' } },
+    { proxyKey: '', platform: 'darwin', ownUid: 1, peerCred: { inodeResolved: true, peerUid: 99 } },
+  ).allowed, true);
+  const viaCred = requestLocalCallerDecision(
+    { socket: { remoteAddress: '127.0.0.1' } },
+    { proxyKey: '', platform: 'linux', ownUid: 1000, peerCred: { inodeResolved: true, peerUid: 1001 } },
+  );
+  assert.equal(viaCred.allowed, false);
+  assert.equal(viaCred.error.type, 'local_caller_forbidden');
+  assert.equal(requestLocalCallerDecision(
+    { socket: { remoteAddress: '127.0.0.1' } },
+    { proxyKey: '', platform: 'linux', ownUid: 1000, peerCred: { inodeResolved: false, peerUid: null } },
+  ).allowed, true);
+  assert.equal(requestLocalCallerDecision(
+    { socket: { remoteAddress: '198.51.100.4' } },
+    { proxyKey: '', platform: 'linux', ownUid: 1000, peerCred: { inodeResolved: false, peerUid: null } },
+  ).allowed, false);
+});
+
+test('peerCredForSocket reads the uid on the other end of a live loopback socket', async () => {
+  if (process.platform !== 'linux') return;
+  const cred = await new Promise((resolve, reject) => {
+    const server = net.createServer((sock) => {
+      try {
+        resolve(serverInternals.peerCredForSocket(sock));
+      } catch (error) {
+        reject(error);
+      } finally {
+        sock.end();
+        server.close();
+      }
+    });
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const client = net.connect(server.address().port, '127.0.0.1');
+      client.on('error', reject);
+    });
+  });
+  assert.equal(cred.inodeResolved, true);
+  assert.equal(cred.peerUid, process.getuid());
+});
+
+function localHttp(port, method, pathName, { body, headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? null : JSON.stringify(body);
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      method,
+      path: pathName,
+      agent: false,
+      headers: {
+        ...(payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {}),
+        ...headers,
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        try { json = JSON.parse(text); } catch (e) { /* non-JSON body */ }
+        resolve({ status: res.statusCode, text, json });
+      });
+    });
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+test('sessions, health, and reset follow the admin rule and reset omits prompt text', async (t) => {
+  const SECRET = 'BOUNDARY_SECRET_PROMPT_9f3a';
+  const agent = 'boundary-agent';
+  const session = serverInternals.createSession();
+  Object.assign(session, { id: 'ds-boundary', accountId: 'acct', messageCount: 2, createdAt: Date.now() });
+  session.history = [{ user: SECRET, assistant: 'hidden answer' }];
+  serverInternals.sessions.set(agent, session);
+  t.after(() => {
+    serverInternals.sessions.delete(agent);
+    serverInternals.sessions.delete('open-webui-boundary');
+  });
+
+  const httpServer = serverInternals.server;
+  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => httpServer.close(resolve)));
+  const port = httpServer.address().port;
+
+  if (process.platform === 'linux') {
+    let seen = null;
+    const restoreSeen = serverInternals.useLocalCallerPeerCred((sock) => {
+      seen = serverInternals.peerCredForSocket(sock);
+      return seen;
+    });
+    try {
+      const probe = await localHttp(port, 'GET', '/health');
+      assert.equal(probe.status, 200, probe.text);
+      assert.equal(seen && seen.inodeResolved, true);
+      assert.equal(seen.peerUid, process.getuid());
+    } finally {
+      restoreSeen();
+    }
+  }
+
+  const otherOrigin = { origin: 'http://127.0.0.1:3000' };
+  const listedDenied = await localHttp(port, 'GET', '/v1/sessions', { headers: otherOrigin });
+  assert.equal(listedDenied.status, 403, listedDenied.text);
+  assert.equal(listedDenied.json.error.type, 'admin_forbidden');
+  assert.doesNotMatch(listedDenied.text, /BOUNDARY_SECRET_PROMPT_9f3a/);
+
+  const forwarded = await localHttp(port, 'GET', '/v1/sessions', { headers: { 'x-forwarded-for': '203.0.113.5' } });
+  assert.equal(forwarded.status, 403, forwarded.text);
+  assert.equal(forwarded.json.error.type, 'admin_forbidden');
+  const rebound = await localHttp(port, 'GET', '/v1/sessions', { headers: { host: 'evil.example:9655' } });
+  assert.equal(rebound.status, 403, rebound.text);
+  assert.equal(rebound.json.error.type, 'admin_forbidden');
+
+  const listed = await localHttp(port, 'GET', '/v1/sessions');
+  assert.equal(listed.status, 200, listed.text);
+  assert.equal(listed.json.agents.some((row) => row.agent === agent && row.session_id === 'ds-boundary'), true);
+  assert.doesNotMatch(listed.text, /BOUNDARY_SECRET_PROMPT_9f3a/);
+
+  const healthCross = await localHttp(port, 'GET', '/health', { headers: otherOrigin });
+  assert.equal(healthCross.status, 200, healthCross.text);
+  assert.equal(healthCross.json.status, 'ok');
+  assert.equal(healthCross.json.service, 'FreeDeepseekAPI');
+  assert.equal(healthCross.json.accounts, undefined);
+  assert.equal(healthCross.json.chat_locks, undefined);
+  assert.equal(healthCross.json.agents, undefined);
+  assert.equal(healthCross.json.models, undefined);
+
+  const healthProxied = await localHttp(port, 'GET', '/health', { headers: { 'x-real-ip': '203.0.113.5' } });
+  assert.equal(healthProxied.status, 200, healthProxied.text);
+  assert.equal(healthProxied.json.accounts, undefined);
+  assert.equal(healthProxied.json.chat_locks, undefined);
+
+  const health = await localHttp(port, 'GET', '/health');
+  assert.equal(health.status, 200, health.text);
+  assert.ok(Array.isArray(health.json.accounts));
+  assert.ok(Array.isArray(health.json.chat_locks));
+  assert.equal(typeof health.json.agents, 'number');
+
+  const resetDenied = await localHttp(port, 'POST', `/reset-session?agent=${agent}`, { headers: otherOrigin });
+  assert.equal(resetDenied.status, 403, resetDenied.text);
+  assert.equal(resetDenied.json.error.type, 'admin_forbidden');
+  assert.doesNotMatch(resetDenied.text, /BOUNDARY_SECRET_PROMPT_9f3a/);
+  assert.equal(serverInternals.sessions.get(agent).id, 'ds-boundary');
+
+  const resetProxied = await localHttp(port, 'POST', `/reset-session?agent=${agent}`, { headers: { forwarded: 'for=203.0.113.5' } });
+  assert.equal(resetProxied.status, 403, resetProxied.text);
+  assert.equal(serverInternals.sessions.get(agent).id, 'ds-boundary');
+
+  const reset = await localHttp(port, 'POST', `/reset-session?agent=${agent}`);
+  assert.equal(reset.status, 200, reset.text);
+  assert.deepEqual(reset.json, { status: 'session_reset', agent, history_preserved: 1 });
+  assert.doesNotMatch(reset.text, /BOUNDARY_SECRET_PROMPT_9f3a/);
+  assert.equal(serverInternals.sessions.get(agent).id, null);
+  assert.equal(serverInternals.sessions.get(agent).history.length, 1);
+  assert.equal(serverInternals.sessions.get(agent).history[0].user, SECRET);
+
+  const chat = await localHttp(port, 'POST', '/v1/chat/completions', {
+    headers: { origin: 'http://127.0.0.1:3000', 'x-agent-session': 'open-webui-boundary' },
+    body: { model: 'deepseek-v4-flash', messages: [{ role: 'user', content: '/new' }] },
+  });
+  assert.equal(chat.status, 200, chat.text);
+  assert.equal(chat.json.error, undefined);
+
+  const evil = await localHttp(port, 'GET', '/v1/sessions', { headers: { origin: 'https://evil.example' } });
+  assert.equal(evil.status, 403, evil.text);
+  assert.equal(evil.json.error.type, 'cors_error');
+
+  const ownUid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  const restoreForeign = serverInternals.useLocalCallerPeerCred(() => ({ inodeResolved: true, peerUid: ownUid + 1 }));
+  try {
+    for (const [method, pathName] of [['GET', '/v1/models'], ['GET', '/health'], ['GET', '/admin/accounts'], ['POST', '/reset-session?agent=boundary-agent']]) {
+      const blocked = await localHttp(port, method, pathName);
+      assert.equal(blocked.status, 403, `${method} ${pathName} ${blocked.text}`);
+      assert.equal(blocked.json.error.type, 'local_caller_forbidden');
+      assert.equal(blocked.json.accounts, undefined);
+      assert.doesNotMatch(blocked.text, /BOUNDARY_SECRET_PROMPT_9f3a/);
+    }
+    const chatBlocked = await localHttp(port, 'POST', '/v1/chat/completions', {
+      headers: { origin: 'http://127.0.0.1:3000' },
+      body: { model: 'deepseek-v4-flash', messages: [{ role: 'user', content: 'hello' }] },
+    });
+    assert.equal(chatBlocked.status, 403, chatBlocked.text);
+    assert.equal(chatBlocked.json.error.type, 'local_caller_forbidden');
+  } finally {
+    restoreForeign();
+  }
+
+  const restoreUnread = serverInternals.useLocalCallerPeerCred(() => ({ inodeResolved: false, peerUid: null }));
+  try {
+    const open = await localHttp(port, 'GET', '/health');
+    assert.equal(open.status, 200, open.text);
+    assert.equal(open.json.status, 'ok');
+    assert.ok(Array.isArray(open.json.accounts));
+  } finally {
+    restoreUnread();
+  }
+});
+
 test('audit srv-tools-4: extractScreenshotPaths only reports paths from the current turn', () => {
   const { extractScreenshotPaths } = serverInternals;
   const dir = tmpdir();
@@ -1867,5 +2521,85 @@ test('audit srv-tools-4: extractScreenshotPaths only reports paths from the curr
     assert.deepEqual(result, [], 'a path mentioned before the last assistant turn must not be re-injected');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function directoryOutsideTmp() {
+  const tmpReal = fs.realpathSync(os.tmpdir());
+  const candidates = [os.homedir(), path.resolve('/workspace'), path.resolve('/var'), path.resolve('/home')];
+  for (const parent of candidates) {
+    if (!parent || !fs.existsSync(parent)) continue;
+    let real = parent;
+    try { real = fs.realpathSync(parent); } catch (e) { real = path.resolve(parent); }
+    const rel = path.relative(tmpReal, real);
+    if (rel && (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel))) return real;
+  }
+  throw new Error('could not find a directory outside os.tmpdir()');
+}
+
+test('audit srv-tools-4: extractScreenshotPaths keeps only a real image inside the temp dir', () => {
+  const { extractScreenshotPaths } = serverInternals;
+  const inside = fs.mkdtempSync(path.join(os.tmpdir(), 'fdsapi-media-'));
+  let outside;
+  try {
+    outside = fs.mkdtempSync(path.join(directoryOutsideTmp(), 'fdsapi-media-outside-'));
+    const outsideRel = path.relative(fs.realpathSync(os.tmpdir()), fs.realpathSync(outside));
+    assert.ok(outsideRel.startsWith('..') || path.isAbsolute(outsideRel), 'outside fixture must not live under the temp dir');
+
+    const png = fs.readFileSync(path.join(ROOT, 'public', 'dashboard', 'logo.png'));
+    assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+
+    const earlier = path.join(inside, 'earlier.png');
+    const good = path.join(inside, 'shot.png');
+    const also = path.join(inside, 'also.png');
+    const token = path.join(inside, 'token.json');
+    const bad = path.join(outside, 'secret.png');
+    const login = path.join(outside, 'login.json');
+    const link = path.join(inside, 'link.png');
+    const innerLink = path.join(inside, 'inner.png');
+    const escapeDir = path.join(inside, 'escape');
+    fs.writeFileSync(earlier, png);
+    fs.writeFileSync(good, png);
+    fs.writeFileSync(also, png);
+    fs.writeFileSync(bad, png);
+    fs.writeFileSync(login, '{"token":"not-real"}\n');
+    fs.writeFileSync(token, '{"token":"not-real"}\n');
+    fs.symlinkSync(bad, link);
+    fs.symlinkSync(good, innerLink);
+    fs.symlinkSync(outside, escapeDir);
+    const escaped = path.join(escapeDir, 'secret.png');
+
+    assert.equal(fs.existsSync(bad), true);
+    assert.equal(fs.existsSync(login), true);
+    assert.equal(fs.existsSync(link), true);
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true);
+    assert.equal(fs.existsSync(escaped), true);
+    assert.equal(fs.lstatSync(escaped).isSymbolicLink(), false);
+    assert.equal(fs.lstatSync(good).isSymbolicLink(), false);
+    assert.equal(fs.statSync(good).isFile(), true);
+
+    const result = extractScreenshotPaths([
+      { role: 'user', content: 'take a screenshot' },
+      { role: 'tool', tool_call_id: 'old', content: JSON.stringify({ screenshot_path: earlier }) },
+      { role: 'assistant', content: 'done' },
+      { role: 'user', content: 'look again' },
+      { role: 'tool', tool_call_id: 'c1', content: JSON.stringify({ screenshot_path: good }) },
+      { role: 'tool', tool_call_id: 'c2', content: JSON.stringify({ screenshot_path: bad }) },
+      { role: 'tool', tool_call_id: 'c3', content: `MEDIA:${also}` },
+      { role: 'tool', tool_call_id: 'c4', content: `MEDIA:${login}` },
+      { role: 'tool', tool_call_id: 'c5', content: `MEDIA:${link}` },
+      { role: 'tool', tool_call_id: 'c6', content: JSON.stringify({ path: escaped }) },
+      { role: 'tool', tool_call_id: 'c7', content: `MEDIA:${token}` },
+      { role: 'tool', tool_call_id: 'c8', content: `MEDIA:${innerLink}` },
+      { role: 'tool', tool_call_id: 'c9', content: 'MEDIA:/etc/does-not-exist-freedeepseek-47.png' },
+    ]);
+
+    assert.deepEqual(result, [
+      `MEDIA:${fs.realpathSync(good)}`,
+      `MEDIA:${fs.realpathSync(also)}`,
+    ], 'only a regular image inside the temp dir from this turn is deliverable');
+  } finally {
+    fs.rmSync(inside, { recursive: true, force: true });
+    if (outside) fs.rmSync(outside, { recursive: true, force: true });
   }
 });

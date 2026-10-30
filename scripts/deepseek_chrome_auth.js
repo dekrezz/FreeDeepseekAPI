@@ -18,7 +18,6 @@
 */
 const { spawn } = require('child_process');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { t, loadUiLang, saveUiLang, pick, runProgress, browserOpenCommand, visibleWidth, C } = require('./lib/tui-menu');
 const {
@@ -28,11 +27,13 @@ const {
     brewInstallCommand,
     writeCapturedAuth,
     capturedWasmUrl,
+    signInChromeArgs,
+    ensurePrivateProfileDir,
+    removeProfileSafely,
 } = require('./lib/chrome-setup');
 const { resolveAuthOutPath } = require('./auth_import');
 
 const repoRoot = path.resolve(__dirname, '..');
-const qwenRepoRoot = path.resolve(repoRoot, '..', 'FreeQwenApi');
 const profileDir =
     process.env.DEEPSEEK_CHROME_PROFILE ||
     path.join(repoRoot, '.chrome-for-testing-profile-deepseek');
@@ -47,65 +48,17 @@ const keepProfile = /^(1|true|yes|on)$/i.test(
     process.env.DEEPSEEK_KEEP_CHROME_PROFILE || '',
 );
 
-function sleepSync(ms) {
-    try {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-    } catch {}
-}
-
-function removeProfileSafely(dir) {
-    if (!fs.existsSync(dir)) return;
-    for (let i = 0; i < 5; i++) {
-        try {
-            fs.rmSync(dir, {
-                recursive: true,
-                force: true,
-                maxRetries: 5,
-                retryDelay: 250,
-            });
-            if (!fs.existsSync(dir)) return;
-        } catch (e) {
-            if (i === 4) {
-                // Outside the repo, so a leftover copy of the logged-in cookies can never be committed.
-                const staleDir = path.join(os.tmpdir(), `${path.basename(dir)}.stale-${Date.now()}`);
-                try {
-                    fs.renameSync(dir, staleDir);
-                } catch (renameErr) {
-                    throw new Error(
-                        `Cannot remove the old auth Chrome profile ${dir} (${e.code || e.message}) or move it to ${staleDir} (${renameErr.code || renameErr.message}). Close the DeepSeek auth Chrome window and retry.`,
-                    );
-                }
-                try {
-                    fs.rmSync(staleDir, {
-                        recursive: true,
-                        force: true,
-                        maxRetries: 3,
-                        retryDelay: 250,
-                    });
-                } catch {}
-                console.log(
-                    `[auth] Old profile was busy; moved it aside: ${staleDir}`,
-                );
-                return;
-            }
-        }
-        sleepSync(300);
-    }
-}
-
-// Puppeteer's bundled "Google Chrome for Testing", when puppeteer is installed here or
-// next to FreeQwenApi. The rest of the search lives in lib/chrome-setup.js.
+// Puppeteer's bundled "Google Chrome for Testing", when puppeteer is installed in this
+// repo. The rest of the search lives in lib/chrome-setup.js.
 function puppeteerExecutables() {
     const found = [];
-    for (const base of [repoRoot, qwenRepoRoot]) {
-        try {
-            const puppeteer = require(require.resolve('puppeteer', { paths: [base] }));
-            if (typeof puppeteer.executablePath === 'function') {
-                const p = puppeteer.executablePath();
-                if (p) found.push(p);
-            }
-        } catch {}
-    }
+    try {
+        const puppeteer = require(require.resolve('puppeteer', { paths: [repoRoot] }));
+        if (typeof puppeteer.executablePath === 'function') {
+            const p = puppeteer.executablePath();
+            if (p) found.push(p);
+        }
+    } catch {}
     return found;
 }
 
@@ -529,25 +482,12 @@ async function main() {
                     removeProfileSafely(profileDir);
                 }
             }
-            fs.mkdirSync(profileDir, { recursive: true });
+            ensurePrivateProfileDir(profileDir);
 
             if (!(reuseChrome && (await devtoolsReady()))) {
                 const chrome = spawn(
                     chromePath,
-                    [
-                        `--user-data-dir=${profileDir}`,
-                        `--remote-debugging-port=${port}`,
-                        '--use-mock-keychain',
-                        '--password-store=basic',
-                        '--disable-sync',
-                        '--disable-extensions',
-                        '--disable-component-extensions-with-background-pages',
-                        '--disable-features=AutofillServerCommunication,OptimizationHints,MediaRouter,InterestFeedContentSuggestions,Translate',
-                        '--no-first-run',
-                        '--no-default-browser-check',
-                        '--disable-infobars',
-                        url,
-                    ],
+                    signInChromeArgs(profileDir, port, url),
                     { stdio: 'ignore', detached: true },
                 );
                 chrome.unref();

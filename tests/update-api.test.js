@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const http = require('node:http');
 
 const S = require('../server.js').__test;
@@ -70,7 +72,7 @@ test('the dashboard can read, check and install updates through the admin API', 
   assert.equal(res.status, 400);
   assert.equal(res.json.error.type, 'invalid_channel');
 
-  res = await request(port, 'POST', '/admin/update/install', { body: { channel: 'latest' } });
+  res = await request(port, 'POST', '/admin/update/install', { body: { channel: 'latest', confirm: true } });
   assert.equal(res.status, 200);
   assert.equal(res.json.installed.version, '0.3.0');
   assert.deepEqual(updater.seen.at(-1), ['install', 'latest']);
@@ -83,7 +85,7 @@ test('install errors reach the dashboard with their own status and type', async 
   const err = Object.assign(new Error('This copy has uncommitted changes'), { status: 409, type: 'local_changes' });
   t.after(S.useUpdater(fakeUpdater({ installError: err })));
   const port = await startServer(t);
-  const res = await request(port, 'POST', '/admin/update/install', { body: { channel: 'stable' } });
+  const res = await request(port, 'POST', '/admin/update/install', { body: { channel: 'stable', confirm: true } });
   assert.equal(res.status, 409);
   assert.equal(res.json.error.type, 'local_changes');
   assert.match(res.json.error.message, /uncommitted/);
@@ -110,7 +112,57 @@ test('another website cannot make the proxy install an update', async (t) => {
   const updater = fakeUpdater();
   t.after(S.useUpdater(updater));
   const port = await startServer(t);
-  const res = await request(port, 'POST', '/admin/update/install', { body: { channel: 'latest' }, headers: { origin: 'https://evil.example' } });
+  const res = await request(port, 'POST', '/admin/update/install', { body: { channel: 'latest', confirm: true }, headers: { origin: 'https://evil.example' } });
   assert.equal(res.status, 403);
   assert.equal(updater.seen.length, 0);
+});
+
+test('install does not merge until confirm is true, and the 409 is the check summary', async (t) => {
+  const updater = fakeUpdater();
+  t.after(S.useUpdater(updater));
+  const port = await startServer(t);
+  const summary = {
+    channel: 'latest',
+    upToDate: false,
+    available: { version: '0.3.0', commit: 'bbbbbbb' },
+    changes: [{ commit: 'bbbbbbb', subject: 'Safer retries' }],
+    canInstall: true,
+    blockedReason: null,
+    restart: 'auto',
+  };
+
+  for (const body of [
+    { channel: 'latest' },
+    { channel: 'latest', confirm: false },
+    { channel: 'latest', confirm: 'true' },
+    { channel: 'latest', confirm: 1 },
+  ]) {
+    const res = await request(port, 'POST', '/admin/update/install', { body });
+    assert.equal(res.status, 409, JSON.stringify(body));
+    assert.deepEqual(res.json, summary);
+  }
+  assert.deepEqual(updater.seen.filter(call => call[0] === 'install'), []);
+  assert.equal(updater.seen.filter(call => call[0] === 'check').length, 4);
+
+  const missing = await request(port, 'POST', '/admin/update/install', { body: {} });
+  assert.equal(missing.status, 400);
+  assert.equal(missing.json.error.type, 'invalid_channel');
+  assert.deepEqual(updater.seen.filter(call => call[0] === 'install'), []);
+
+  const installed = await request(port, 'POST', '/admin/update/install', { body: { channel: 'latest', confirm: true } });
+  assert.equal(installed.status, 200);
+  assert.equal(installed.json.installed.commit, 'bbbbbbb');
+  assert.deepEqual(updater.seen.at(-1), ['install', 'latest']);
+  assert.equal(updater.seen.filter(call => call[0] === 'install').length, 1);
+});
+
+test('the updates control checks first and confirms before it posts confirm:true', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'dashboard', 'settings.js'), 'utf8');
+  const update = src.slice(src.indexOf('// ---------------------------------------------------------------- updates'), src.indexOf('function renderAppearance'));
+  assert.match(update, /function confirmInstall/);
+  assert.match(update, /if \(!u\.check\) \{ checkUpdate\(\); return; \}/);
+  assert.match(update, /F\.confirm\(event\.currentTarget/);
+  assert.match(update, /confirm:\s*true/);
+  assert.match(update, /installConfirmText\(c\)/);
+  assert.doesNotMatch(update, /onclick: installUpdate/);
 });

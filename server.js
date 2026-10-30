@@ -7,7 +7,8 @@
  * 
  * Per-agent sessions: each unique `user` field gets its own DeepSeek web session.
  * Auto-reset: sessions reset when message chain reaches 100 messages or age > 2 hours.
- * Listens on 127.0.0.1:9655 by default (HOST is configurable)
+ * Listens on 127.0.0.1:9655 by default (HOST is configurable).
+ * HTTP unless both TLS_CERT_FILE and TLS_KEY_FILE are set and readable.
  */
 
 const http = require('http');
@@ -137,6 +138,34 @@ function isLoopbackHost(host) {
         || normalized === 'localhost';
 }
 
+// Optional TLS. Unset keeps today's HTTP server, including on loopback.
+// One file without the other, or a file that cannot be read, fails closed:
+// falling back to HTTP would send the login import and Authorization header in clear text.
+function readTlsCredentials(env = process.env) {
+    const certFile = typeof env.TLS_CERT_FILE === 'string' ? env.TLS_CERT_FILE.trim() : '';
+    const keyFile = typeof env.TLS_KEY_FILE === 'string' ? env.TLS_KEY_FILE.trim() : '';
+    if (!certFile && !keyFile) return null;
+    if (!certFile || !keyFile) {
+        throw new Error('TLS_CERT_FILE and TLS_KEY_FILE must both be set to serve HTTPS. Leave both unset to keep HTTP.');
+    }
+    const readPem = (name, file) => {
+        try {
+            fs.accessSync(file, fs.constants.R_OK);
+            const pem = fs.readFileSync(file);
+            if (!pem.length) throw Object.assign(new Error('file is empty'), { code: 'EINVAL' });
+            return pem;
+        } catch (error) {
+            throw new Error(`Could not read ${name} (${file}): ${error.message}`);
+        }
+    };
+    return { cert: readPem('TLS_CERT_FILE', certFile), key: readPem('TLS_KEY_FILE', keyFile) };
+}
+
+function cleartextStartupWarning(host, tlsEnabled) {
+    if (tlsEnabled || isLoopbackHost(host)) return null;
+    return `[DS-API] WARNING: HOST=${host} is not loopback and TLS is off. The login import and the Authorization header are clear text. Set TLS_CERT_FILE and TLS_KEY_FILE, or bind to 127.0.0.1.`;
+}
+
 function normalizeOrigin(origin) {
     const value = String(origin || '').trim().replace(/\/+$/, '');
     if (!value) return '';
@@ -194,6 +223,9 @@ const MAX_HISTORY_LENGTH = 15;
 const MAX_HISTORY_CHARS = 10000;
 const MAX_MESSAGE_DEPTH = 100;  // auto-reset after this many messages
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;  // 2 hours
+// A minted x-agent-session (or user/session, or the unkeyed address hash) otherwise
+// holds a chat id, history, and system fingerprint until the idle sweep. 200 is enough.
+const MAX_SESSIONS = 200;
 
 // === DeepSeek Web API Config — loaded from external config file ===
 const DS_CONFIG_PATH = process.env.DEEPSEEK_AUTH_PATH || path.join(__dirname, 'deepseek-auth.json');
@@ -610,6 +642,11 @@ function scrubLogText(text) {
     out = out.replace(/\bBearer\s+(?!\[redacted\])[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]');
     return out.length > LOG_TEXT_MAX_CHARS ? `${out.slice(0, LOG_TEXT_MAX_CHARS - 1)}…` : out;
 }
+// Upstream bodies can echo a token, cookie, hif_* value, or bearer header.
+// Scrub the whole string before any shorter clip, or a cut secret leaks its prefix.
+function scrubUpstreamText(text) {
+    return scrubLogText(text) || '';
+}
 function addUsageToMinute(entry) {
     const now = Date.now();
     const ts = Number(entry.ts) || now;
@@ -675,7 +712,7 @@ function clipText(value, max = 200) {
 function countAccountFailure(account, kind, status, detail) {
     account.failures = (account.failures || 0) + 1;
     account.totalFailures = (account.totalFailures || 0) + 1;
-    account.lastError = { kind, status: Number(status) || null, message: clipText(detail), at: Date.now() };
+    account.lastError = { kind, status: Number(status) || null, message: clipText(scrubUpstreamText(detail)), at: Date.now() };
 }
 // Put a login on cooldown after DeepSeek throttled it (HTTP 429, a "too frequent"
 // message in any HTTP/JSON body, or an in-stream hint with rate_limit_reached).
@@ -687,7 +724,7 @@ function markAccountRateLimited(account, detail = '', retryAfterRaw = null, stat
     account.cooldownUntil = Math.max(account.cooldownUntil || 0, Date.now() + cooldownMs);
     account.cooldownReason = 'rate_limit';
     countAccountFailure(account, 'rate_limit', status, detail);
-    console.log(`[account:${account.id}] rate-limited${reason ? ` (${reason})` : ''}: cooldown for ${Math.round(cooldownMs / 1000)}s${retryMs != null ? ' (Retry-After)' : ''} after HTTP ${status}: ${clipText(detail, 120)}`);
+    console.log(`[account:${account.id}] rate-limited${reason ? ` (${reason})` : ''}: cooldown for ${Math.round(cooldownMs / 1000)}s${retryMs != null ? ' (Retry-After)' : ''} after HTTP ${status}: ${clipText(scrubUpstreamText(detail), 120)}`);
     return cooldownMs;
 }
 function markAccountFailure(account, status, reason = '', retryAfterRaw = null, detail = '') {
@@ -751,7 +788,7 @@ async function readDeepSeekJsonResponse(resp, label, account) {
                 throw accountRateLimitError(account, text, retryAfter, label, resp.status);
             }
             markAccountFailure(account, resp.status, label, retryAfter, text);
-            throw new Error(`DeepSeek returned non-JSON ${label} response (HTTP ${resp.status}). Run npm run doctor. First chars: ${text.substring(0, 120)}`);
+            throw new Error(`DeepSeek returned non-JSON ${label} response (HTTP ${resp.status}). Run npm run doctor. First chars: ${scrubUpstreamText(text).substring(0, 120)}`);
         }
     }
     const message = deepSeekJsonMessage(json);
@@ -797,15 +834,15 @@ function resetRemoteSession(session) {
 
 // POST /reset-session: the next request opens a new DeepSeek chat. Local history is
 // kept as a recovery hint unless the client drops it (it will send its own transcript,
-// e.g. after editing a message, and the replaced turns must not come back).
+// e.g. after editing a message, and the replaced turns must not come back). The
+// response counts that history and does not return the stored prompt text.
 function resetAgentSession(agentId, { dropHistory = false } = {}) {
     const session = sessions.get(agentId);
     if (!session) return null;
     if (dropHistory) session.history = [];
     const historyCount = session.history.length;
-    const historyPreview = session.history.map(e => String(e.user || '').substring(0, 40)).join(' | ');
     resetRemoteSession(session);
-    return { status: 'session_reset', agent: agentId, history_preserved: historyCount, history: historyPreview };
+    return { status: 'session_reset', agent: agentId, history_preserved: historyCount };
 }
 
 function prepareSessionForPrompt(session, now = Date.now()) {
@@ -817,12 +854,32 @@ function prepareSessionForPrompt(session, now = Date.now()) {
     return { reason, ...resetRemoteSession(session) };
 }
 
+// Drop least-recently-used sessions until the map fits MAX_SESSIONS.
+// protectedAgentId is the one this request is creating or touching, so it stays.
+function evictLeastRecentlyUsedSessions(protectedAgentId) {
+    while (sessions.size > MAX_SESSIONS) {
+        let oldestId = null;
+        let oldestAt = Infinity;
+        for (const [agentId, session] of sessions) {
+            if (agentId === protectedAgentId) continue;
+            const at = session.lastActivityAt || 0;
+            if (oldestId === null || at < oldestAt) {
+                oldestId = agentId;
+                oldestAt = at;
+            }
+        }
+        if (oldestId === null) break;
+        sessions.delete(oldestId);
+    }
+}
+
 function getOrCreateAgentSession(agentId) {
     if (!sessions.has(agentId)) {
         sessions.set(agentId, createSession());
     }
     const session = sessions.get(agentId);
     session.lastActivityAt = Date.now();
+    evictLeastRecentlyUsedSessions(agentId);
     return session;
 }
 
@@ -838,8 +895,8 @@ function sweepIdleSessions(maxIdleMs = SESSION_TTL_MS * 2) {
     return removed;
 }
 
-// solvePOW() lives in lib/pow (compiled-module cache + WASM-fetch timeout),
-// shared with client.js. Called as solvePOW(challenge, wasmUrl).
+// solvePOW() lives in lib/pow (compiled-module cache + WASM-fetch timeout).
+// Called as solvePOW(challenge, wasmUrl).
 
 // DeepSeek Web as of 2026-09-20: Instant/Expert/Pro UI gone. One weight: V4.1-Flash.
 // Official paid ID: deepseek-flash. Web model_type is always `default`.
@@ -923,16 +980,18 @@ function isRateLimitSignal(signal) {
 }
 
 function createUpstreamHttpError(status, body = '', retryAfter = null) {
-    const detail = String(body || '').replace(/\s+/g, ' ').trim().substring(0, 300);
+    const normalized = String(body || '').replace(/\s+/g, ' ').trim();
+    const detail = normalized.substring(0, 300);
+    const safeDetail = scrubUpstreamText(normalized);
     if (Number(status) === 429 || isRateLimitSignal(detail)) {
-        const error = new Error(`DeepSeek rate limit (upstream HTTP ${Number(status) || 429})${detail ? `: ${detail}` : ''}`);
+        const error = new Error(`DeepSeek rate limit (upstream HTTP ${Number(status) || 429})${safeDetail ? `: ${safeDetail}` : ''}`);
         error.status = 429;
         error.type = 'rate_limit_error';
         if (retryAfter) error.retryAfter = retryAfter;
         return error;
     }
     if (isContextTooLongError(detail)) {
-        const error = new Error(detail || 'DeepSeek prompt is too long');
+        const error = new Error(safeDetail || 'DeepSeek prompt is too long');
         error.status = 400;
         error.type = 'context_length_exceeded';
         if (retryAfter) error.retryAfter = retryAfter;
@@ -940,7 +999,7 @@ function createUpstreamHttpError(status, body = '', retryAfter = null) {
     }
     const code = Number(status) || 502;
     const type = (code === 401 || code === 403) ? 'authentication_error' : 'upstream_http_error';
-    const error = new Error(`DeepSeek upstream HTTP ${code}${detail ? `: ${detail}` : ''}`);
+    const error = new Error(`DeepSeek upstream HTTP ${code}${safeDetail ? `: ${safeDetail}` : ''}`);
     error.status = code;
     error.type = type;
     if (retryAfter) error.retryAfter = retryAfter;
@@ -1044,6 +1103,49 @@ function imageExtension(mediaType) {
     }[mediaType] || '';
 }
 
+// Every textual form of an IPv4-mapped address (::ffff:0:0/96), not only
+// ::ffff:a.b.c.d. dns.lookup returns hex (::ffff:7f00:1) and uncompressed
+// (0:0:0:0:0:ffff:127.0.0.1) literals unchanged, and both open TCP to the embedded IPv4.
+function ipv4FromMappedIpv6(address) {
+    let text = address;
+    const colon = text.lastIndexOf(':');
+    const tail = colon === -1 ? text : text.slice(colon + 1);
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(tail)) {
+        const octets = tail.split('.').map(Number);
+        if (octets.some(octet => octet > 255)) return '';
+        const hi = (octets[0] << 8) | octets[1];
+        const lo = (octets[2] << 8) | octets[3];
+        text = `${text.slice(0, colon + 1)}${hi.toString(16)}:${lo.toString(16)}`;
+    } else if (text.includes('.')) {
+        return '';
+    }
+    const halves = text.split('::');
+    if (halves.length > 2) return '';
+    const parseHalf = (half) => {
+        if (half === '') return [];
+        const parts = half.split(':');
+        if (parts.some(part => !/^[0-9a-f]{1,4}$/.test(part))) return null;
+        return parts.map(part => parseInt(part, 16));
+    };
+    const head = parseHalf(halves[0]);
+    if (head === null) return '';
+    let groups = head;
+    if (halves.length === 2) {
+        const rest = parseHalf(halves[1]);
+        if (rest === null) return '';
+        const missing = 8 - head.length - rest.length;
+        if (missing < 1) return '';
+        groups = head.concat(Array(missing).fill(0), rest);
+    }
+    if (groups.length !== 8) return '';
+    const mapped = groups[0] === 0 && groups[1] === 0 && groups[2] === 0
+        && groups[3] === 0 && groups[4] === 0 && groups[5] === 0xffff;
+    if (!mapped) return '';
+    const hi = groups[6];
+    const lo = groups[7];
+    return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+}
+
 function isPrivateNetworkAddress(address) {
     const value = String(address || '').toLowerCase().split('%', 1)[0];
     if (net.isIPv4(value)) {
@@ -1063,17 +1165,25 @@ function isPrivateNetworkAddress(address) {
         if (value === '::' || value === '::1') return true;
         if (value.startsWith('fc') || value.startsWith('fd')) return true;
         if (/^fe[89ab]/.test(value)) return true;
-        const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-        return mapped ? isPrivateNetworkAddress(mapped[1]) : false;
+        const mapped = ipv4FromMappedIpv6(value);
+        return mapped ? isPrivateNetworkAddress(mapped) : false;
     }
     return true;
+}
+
+// Node 22 keeps one pair of brackets on an IPv6 URL hostname. dns.lookup rejects them.
+function imageLookupHostname(hostname) {
+    const value = String(hostname || '').toLowerCase();
+    const bracketed = value.match(/^\[([^\[\]]+)\]$/);
+    if (bracketed && net.isIPv6(bracketed[1])) return bracketed[1];
+    return value;
 }
 
 async function assertPublicImageUrl(url) {
     if (url.protocol !== 'https:') {
         throw clientInputError('Image URL must be a public HTTPS URL');
     }
-    const hostname = url.hostname.toLowerCase();
+    const hostname = imageLookupHostname(url.hostname);
     if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
         throw clientInputError('Image URL must be a public HTTPS URL');
     }
@@ -1219,7 +1329,7 @@ async function createDeepSeekPowHeader(account, targetPath) {
     try { payload = JSON.parse(text); }
     catch (error) {
         if (isRateLimitSignal(text)) throw accountRateLimitError(account, text, retryAfter, label, response.status);
-        throw new Error(`DeepSeek returned non-JSON PoW response for ${targetPath}. First chars: ${text.substring(0, 120)}`);
+        throw new Error(`DeepSeek returned non-JSON PoW response for ${targetPath}. First chars: ${scrubUpstreamText(text).substring(0, 120)}`);
     }
     const challenge = payload?.data?.biz_data?.challenge;
     if (!challenge && isRateLimitSignal(deepSeekJsonMessage(payload))) {
@@ -1230,7 +1340,7 @@ async function createDeepSeekPowHeader(account, targetPath) {
     }
     if (!challenge) {
         markAccountFailure(account, 502, label, null, text);
-        throw createUpstreamHttpError(502, `DeepSeek PoW response has no challenge for ${targetPath}. Run npm run doctor, then npm run auth. First chars: ${text.substring(0, 120)}`);
+        throw createUpstreamHttpError(502, `DeepSeek PoW response has no challenge for ${targetPath}. Run npm run doctor, then npm run auth. First chars: ${scrubUpstreamText(text).substring(0, 120)}`);
     }
     const answer = await pow.solvePOW(challenge, account.config.wasmUrl);
     return Buffer.from(JSON.stringify({
@@ -1262,7 +1372,7 @@ async function waitForDeepSeekFile(account, uploadedFile) {
         let payload;
         try { payload = JSON.parse(text); }
         catch (error) {
-            throw new Error(`DeepSeek returned non-JSON file status response. First chars: ${text.substring(0, 120)}`);
+            throw new Error(`DeepSeek returned non-JSON file status response. First chars: ${scrubUpstreamText(text).substring(0, 120)}`);
         }
         if (isDeepSeekAuthCode(payload)) throw accountAuthError(account, deepSeekJsonMessage(payload) || text, 'image status');
         const files = payload?.data?.biz_data?.files;
@@ -1304,7 +1414,7 @@ async function uploadDeepSeekImage(account, modelCfg, input, index) {
         if (response.status === 429 || isRateLimitSignal(text)) {
             throw accountRateLimitError(account, text, retryAfter, 'image upload', response.status);
         }
-        throw new Error(`DeepSeek returned non-JSON image upload response. First chars: ${text.substring(0, 120)}`);
+        throw new Error(`DeepSeek returned non-JSON image upload response. First chars: ${scrubUpstreamText(text).substring(0, 120)}`);
     }
     if (isDeepSeekAuthCode(payload)) throw accountAuthError(account, deepSeekJsonMessage(payload) || text, 'image upload');
     const file = payload?.data?.biz_data;
@@ -1553,7 +1663,7 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
         const { json: sessionData, text: sessionText } = await readDeepSeekJsonResponse(sr, 'session create', account);
         const createdSessionId = sessionData?.data?.biz_data?.chat_session?.id || sessionData?.data?.biz_data?.id;
         if (!sr.ok || !createdSessionId) {
-            throw createUpstreamHttpError(sr.ok ? 502 : sr.status, `Could not create DeepSeek chat session (HTTP ${sr.status}). Auth may be expired/captcha-blocked. Run npm run doctor, then npm run auth. First chars: ${String(sessionText || '').substring(0, 120)}`);
+            throw createUpstreamHttpError(sr.ok ? 502 : sr.status, `Could not create DeepSeek chat session (HTTP ${sr.status}). Auth may be expired/captcha-blocked. Run npm run doctor, then npm run auth. First chars: ${scrubUpstreamText(sessionText).substring(0, 120)}`);
         }
         session.id = createdSessionId;
         createdChatId = createdSessionId;
@@ -1594,7 +1704,7 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
             const { errText, retryAfter } = failure;
             // A JSON business error on HTTP 200 surfaces as 502 if it is not recovered.
             const failureStatus = resp.status === 200 ? 502 : resp.status;
-            console.log(`${agentTag} Session error (${resp.status}): ${errText.substring(0, 100)}`);
+            console.log(`${agentTag} Session error (${resp.status}): ${scrubUpstreamText(errText).substring(0, 100)}`);
             if (isContextTooLongError(errText)) {
                 throw createUpstreamHttpError(failureStatus, errText, retryAfter);
             }
@@ -1608,7 +1718,7 @@ async function askDeepSeekStream(prompt, agentId, model = DEFAULT_MODEL_ID, fres
                 const { json: sessionData2, text: sessionText2 } = await readDeepSeekJsonResponse(sr2, 'session recreate', account);
                 const createdSessionId2 = sessionData2?.data?.biz_data?.chat_session?.id || sessionData2?.data?.biz_data?.id;
                 if (!sr2.ok || !createdSessionId2) {
-                    throw createUpstreamHttpError(sr2.ok ? 502 : sr2.status, `Could not recreate DeepSeek chat session (HTTP ${sr2.status}). Run npm run doctor, then npm run auth. First chars: ${String(sessionText2 || '').substring(0, 120)}`);
+                    throw createUpstreamHttpError(sr2.ok ? 502 : sr2.status, `Could not recreate DeepSeek chat session (HTTP ${sr2.status}). Run npm run doctor, then npm run auth. First chars: ${scrubUpstreamText(sessionText2).substring(0, 120)}`);
                 }
                 session.id = createdSessionId2;
                 createdChatId = createdSessionId2;
@@ -2912,31 +3022,87 @@ function currentTurnToolMessages(messages) {
     }
     return list.slice(lastUser + 1).filter(msg => msg?.role === 'tool');
 }
+
+const DELIVERABLE_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+
+// Strictly inside root: `/tmp-extra` is not inside `/tmp`, and `..` does not count.
+function isPathInside(root, candidate) {
+    const rel = path.relative(path.resolve(root), path.resolve(candidate));
+    if (!rel || rel === '.') return false;
+    if (path.isAbsolute(rel)) return false;
+    return !rel.split(path.sep).includes('..');
+}
+
+// Tool results are client-supplied. Keep a path only when it is a regular image
+// (png, jpg, jpeg, webp, gif), not a symlink, and its real path stays inside
+// os.tmpdir(). Anything else is omitted, including a file that exists outside
+// the temp dir, so the reply does not confirm an arbitrary path.
+function deliverableScreenshotPath(filePath) {
+    if (typeof filePath !== 'string' || !filePath || /[\0\r\n]/.test(filePath)) return null;
+    if (!DELIVERABLE_IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return null;
+
+    let tmpRoot;
+    try {
+        tmpRoot = fs.realpathSync(path.resolve(os.tmpdir()));
+    } catch (e) {
+        return null;
+    }
+    const tmpLexical = path.resolve(os.tmpdir());
+    let lexical;
+    try {
+        lexical = path.resolve(filePath);
+    } catch (e) {
+        return null;
+    }
+    // Reject paths that are already outside the temp dir before statting them.
+    if (!isPathInside(tmpRoot, lexical) && !isPathInside(tmpLexical, lexical)) return null;
+
+    let listed;
+    try {
+        listed = fs.lstatSync(lexical);
+    } catch (e) {
+        return null;
+    }
+    if (listed.isSymbolicLink() || !listed.isFile()) return null;
+
+    let real;
+    try {
+        real = fs.realpathSync(lexical);
+    } catch (e) {
+        return null;
+    }
+    if (!isPathInside(tmpRoot, real) || /[\0\r\n]/.test(real)) return null;
+    if (!DELIVERABLE_IMAGE_EXTENSIONS.has(path.extname(real).toLowerCase())) return null;
+
+    let realListed;
+    try {
+        realListed = fs.lstatSync(real);
+    } catch (e) {
+        return null;
+    }
+    if (realListed.isSymbolicLink() || !realListed.isFile()) return null;
+    return real;
+}
+
 function extractScreenshotPaths(messages) {
     const paths = [];
-    const fs = require('fs');
+    const seen = new Set();
+    const pushDeliverable = (filePath) => {
+        const canonical = deliverableScreenshotPath(filePath);
+        if (!canonical) return;
+        const tag = `MEDIA:${canonical}`;
+        if (seen.has(tag)) return;
+        seen.add(tag);
+        paths.push(tag);
+    };
     for (const msg of currentTurnToolMessages(messages)) {
         const text = normalizeMessageContent(msg.content);
-        if (text) {
-            // Look for screenshot_path or path fields in JSON tool results
-            // These come DIRECTLY from browser_vision — always the real path
-            const pngMatch = text.match(/["'](screenshot_path|path)["']\s*:\s*["']([^"']+\.(?:png|jpg|jpeg|webp|gif))["']/i);
-            if (pngMatch) {
-                const filePath = pngMatch[2];
-                if (filePath.startsWith('/') && fs.existsSync(filePath) && !paths.includes(`MEDIA:${filePath}`)) {
-                    paths.push(`MEDIA:${filePath}`);
-                }
-            }
-            // Also catch plain MEDIA: tags
-            const mediaMatch = text.match(/MEDIA:(\S+)/g);
-            if (mediaMatch) {
-                for (const tag of mediaMatch) {
-                    const extractedPath = tag.replace(/^MEDIA:/, '');
-                    if (fs.existsSync(extractedPath) && !paths.includes(tag)) {
-                        paths.push(tag);
-                    }
-                }
-            }
+        if (!text) continue;
+        const pngMatch = text.match(/["'](screenshot_path|path)["']\s*:\s*["']([^"']+\.(?:png|jpg|jpeg|webp|gif))["']/i);
+        if (pngMatch) pushDeliverable(pngMatch[2]);
+        const mediaMatch = text.match(/MEDIA:(\S+)/g);
+        if (mediaMatch) {
+            for (const tag of mediaMatch) pushDeliverable(tag.replace(/^MEDIA:/, ''));
         }
     }
     return paths;
@@ -3268,6 +3434,123 @@ function adminAccessDecision({ remoteAddress, headers = {} } = {}, { proxyKey = 
     return { allowed: true };
 }
 
+// SO_PEERCRED is AF_UNIX only. For a TCP accept, the peer uid is read from proc:
+// /proc/self/fd/<fd> is socket:[inode], that inode is this process's row in
+// /proc/net/tcp or /proc/net/tcp6, and the uid column on that row is this process.
+// The caller's uid is the other row of the same connection (addresses swapped).
+let localCallerPeerCred = null;
+function socketInodeFromLink(link) {
+    const match = /^socket:\[(\d+)\]$/.exec(String(link || '').trim());
+    return match ? match[1] : null;
+}
+function procNetRows(text) {
+    const rows = [];
+    for (const line of String(text || '').split('\n')) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 10) continue;
+        const uid = Number(parts[7]);
+        if (!Number.isInteger(uid) || uid < 0) continue;
+        if (!/^[0-9A-Fa-f]+:[0-9A-Fa-f]+$/.test(parts[1]) || !/^[0-9A-Fa-f]+:[0-9A-Fa-f]+$/.test(parts[2])) continue;
+        if (!/^\d+$/.test(parts[9])) continue;
+        rows.push({
+            local: parts[1].toUpperCase(),
+            remote: parts[2].toUpperCase(),
+            state: String(parts[3] || '').toUpperCase(),
+            uid,
+            inode: parts[9],
+        });
+    }
+    return rows;
+}
+function peerUidForInode(texts, inode) {
+    const wanted = String(inode || '');
+    if (!/^\d+$/.test(wanted)) return { inodeResolved: false, peerUid: null };
+    const rows = [];
+    for (const text of texts || []) rows.push(...procNetRows(text));
+    const own = rows.find(row => row.inode === wanted);
+    if (!own) return { inodeResolved: false, peerUid: null };
+    const peers = rows.filter(row => row.inode !== own.inode && row.local === own.remote && row.remote === own.local);
+    const peer = peers.find(row => row.state === '01') || peers[0];
+    return { inodeResolved: true, peerUid: peer ? peer.uid : null };
+}
+function readProcNetTables() {
+    const texts = [];
+    for (const file of ['/proc/net/tcp', '/proc/net/tcp6']) {
+        try {
+            texts.push(fs.readFileSync(file, 'utf8'));
+        } catch (error) {
+            if (error && error.code === 'ENOENT') continue;
+            throw error;
+        }
+    }
+    return texts;
+}
+function peerCredForSocket(socket, { readlink, readTables } = {}) {
+    let fd;
+    try {
+        fd = socket && socket._handle ? socket._handle.fd : undefined;
+    } catch (e) {
+        return { inodeResolved: false, peerUid: null };
+    }
+    if (!Number.isInteger(fd) || fd < 0) return { inodeResolved: false, peerUid: null };
+    const linkOf = readlink || ((n) => fs.readlinkSync(`/proc/self/fd/${n}`));
+    const tablesOf = readTables || readProcNetTables;
+    let link;
+    try {
+        link = linkOf(fd);
+    } catch (e) {
+        return { inodeResolved: false, peerUid: null };
+    }
+    const inode = socketInodeFromLink(link);
+    if (!inode) return { inodeResolved: false, peerUid: null };
+    let texts;
+    try {
+        texts = tablesOf();
+        return peerUidForInode(texts, inode);
+    } catch (e) {
+        return { inodeResolved: false, peerUid: null };
+    }
+}
+function incomingPeerCred(socket) {
+    if (typeof localCallerPeerCred === 'function') return localCallerPeerCred(socket);
+    return peerCredForSocket(socket);
+}
+// Without PROXY_API_KEY, 127.0.0.1 is shared by every account on the machine.
+// On Linux the peer uid has to be this process. An inode that cannot be read
+// does not fail open off loopback; loopback with an unreadable proc entry still
+// proceeds. Other platforms have no peer uid and keep the loopback requirement.
+function localCallerDecision({ remoteAddress, peerUid = null, inodeResolved = false, platform = process.platform, proxyKey = '', ownUid = null } = {}) {
+    if (proxyKey) return { allowed: true };
+    const forbidden = (message) => ({ allowed: false, status: 403, error: { message, type: 'local_caller_forbidden' } });
+    if (platform !== 'linux') {
+        if (isLoopbackHost(remoteAddress)) return { allowed: true };
+        return forbidden('This proxy has no PROXY_API_KEY and only accepts loopback clients on this platform. Set PROXY_API_KEY to accept other clients.');
+    }
+    if (!inodeResolved) {
+        if (isLoopbackHost(remoteAddress)) return { allowed: true };
+        return forbidden('This proxy has no PROXY_API_KEY and could not verify the local caller. Set PROXY_API_KEY or connect from loopback.');
+    }
+    if (!Number.isInteger(ownUid) || peerUid !== ownUid) {
+        return forbidden('This proxy has no PROXY_API_KEY and only accepts connections from the user running it. Set PROXY_API_KEY to share it.');
+    }
+    return { allowed: true };
+}
+function requestLocalCallerDecision(req, { proxyKey = PROXY_API_KEY, platform = process.platform, ownUid = typeof process.getuid === 'function' ? process.getuid() : null, peerCred = null } = {}) {
+    const remoteAddress = req && req.socket ? req.socket.remoteAddress : undefined;
+    if (proxyKey || platform !== 'linux') {
+        return localCallerDecision({ remoteAddress, platform, proxyKey, inodeResolved: false, peerUid: null, ownUid });
+    }
+    const cred = peerCred || incomingPeerCred(req && req.socket);
+    return localCallerDecision({
+        remoteAddress,
+        platform: 'linux',
+        proxyKey: '',
+        inodeResolved: Boolean(cred && cred.inodeResolved),
+        peerUid: cred && Number.isInteger(cred.peerUid) ? cred.peerUid : null,
+        ownUid,
+    });
+}
+
 function adminAccountStatus(account, now = Date.now()) {
     if (!accountHasCredentials(account)) return 'no_credentials';
     if (!isAccountEnabled(account)) return 'disabled';
@@ -3303,7 +3586,7 @@ function adminAccountView(account, now = Date.now()) {
         busy_since: lock?.since || null,
         failures: account.failures || 0,
         total_failures: account.totalFailures || 0,
-        last_error: account.lastError ? { ...account.lastError } : null,
+        last_error: account.lastError ? { ...account.lastError, message: scrubLogText(account.lastError.message) ?? account.lastError.message } : null,
         last_success_at: account.lastSuccessAt || null,
         last_used_at: account.lastUsedAt || null,
         usage: {
@@ -3704,6 +3987,8 @@ async function handleUpdateRequest(req, res, parts) {
             const body = await readAdminJsonBody(req);
             const channel = body && typeof body.channel === 'string' ? body.channel : undefined;
             if (parts[2] === 'check') return adminJson(res, 200, await updater.check(channel));
+            // The summary is the one check() already builds. Nothing is merged until confirm:true.
+            if (body.confirm !== true) return adminJson(res, 409, await updater.check(channel));
             if (updateBusy) return adminError(res, 409, 'update_in_progress', 'An update is already being installed.');
             updateBusy = true;
             try {
@@ -3767,7 +4052,7 @@ function agentsLocalDecision({ remoteAddress, headers = {} } = {}, { port = PORT
     return {
         allowed: false,
         status: 403,
-        error: { type: 'agents_local_only', message: `Agent config files are only shown to a browser on the machine running the proxy. Open the dashboard at http://127.0.0.1:${port}/dashboard on that machine.` },
+        error: { type: 'agents_local_only', message: `Agent config files are only shown to a browser on the machine running the proxy. Open the dashboard at ${publicScheme()}://127.0.0.1:${port}/dashboard on that machine.` },
     };
 }
 
@@ -3783,7 +4068,7 @@ function agentProxyFacts(mod) {
         let host = String(HOST || '').trim().replace(/^\[|\]$/g, '');
         if (!host || host === '0.0.0.0' || host === '::') host = '127.0.0.1';
         if (net.isIPv6(host)) host = `[${host}]`;
-        return `http://${host}:${agentListenPort()}`;
+        return `${publicScheme()}://${host}:${agentListenPort()}`;
     };
     let baseUrl;
     let baseSource;
@@ -4254,7 +4539,8 @@ async function serveDashboard(req, res, pathname) {
 }
 
 // === HTTP Server ===
-const server = http.createServer(async (req, res) => {
+// The same handler serves HTTP, or HTTPS when both PEM files are set and readable.
+async function handleRequest(req, res) {
     const requestOrigin = req.headers.origin;
     res.setHeader('Vary', 'Origin');
     if (!isBrowserOriginAllowed(requestOrigin)) {
@@ -4264,6 +4550,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (requestOrigin) res.setHeader('Access-Control-Allow-Origin', normalizeOrigin(requestOrigin));
     setCorsResponseHeaders(res);
+    const caller = requestLocalCallerDecision(req);
+    if (!caller.allowed) {
+        res.writeHead(caller.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: caller.error }));
+        return;
+    }
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -4301,7 +4593,13 @@ const server = http.createServer(async (req, res) => {
 
     // Health check
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-        const includePrivateStatus = !PROXY_API_KEY || isProxyAuthorized(req.headers.authorization);
+        // Private fields name accounts, locks, and agents. With no proxy key they
+        // follow the admin rule (loopback peer, no forwarding headers, loopback
+        // Host, Origin only when it is that Host). A set key still hides them
+        // until the request presents it.
+        const includePrivateStatus = PROXY_API_KEY
+            ? isProxyAuthorized(req.headers.authorization)
+            : adminAccessDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers }).allowed;
         const health = { status: 'ok', service: 'FreeDeepseekAPI' };
         if (includePrivateStatus) Object.assign(health, {
             models: SUPPORTED_MODEL_IDS,
@@ -4342,8 +4640,14 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // Sessions status
+    // Sessions status. With no proxy key this is an admin read: another loopback
+    // origin can still call chat (Open WebUI) but must not list sessions.
     if (req.method === 'GET' && url.pathname === '/v1/sessions') {
+        const access = adminAccessDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers });
+        if (!access.allowed) {
+            jsonResponse(res, access.status, { error: access.error });
+            return;
+        }
         const agentList = [];
         for (const [agentId, session] of sessions) {
             agentList.push({
@@ -4360,8 +4664,14 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // Reset session for a specific agent (or all if no agent specified)
+    // Reset session for a specific agent (or all if no agent specified).
+    // Same admin rule as GET /v1/sessions when no proxy key is set.
     if (req.method === 'POST' && url.pathname === '/reset-session') {
+        const access = adminAccessDecision({ remoteAddress: req.socket.remoteAddress, headers: req.headers });
+        if (!access.allowed) {
+            jsonResponse(res, access.status, { error: access.error });
+            return;
+        }
         const agentId = url.searchParams.get('agent') || 'default';
         if (agentId === 'all') {
             const count = sessions.size;
@@ -4527,6 +4837,7 @@ const server = http.createServer(async (req, res) => {
                 const existing = sessions.get(agentId);
                 const historyCount = existing ? existing.history.length : 0;
                 sessions.set(agentId, createSession());
+                evictLeastRecentlyUsedSessions(agentId);
                 console.log(`${agentTag} /new received — session reset (history cleared: ${historyCount})`);
                 const confirmation = buildTextResponse('Started a new chat. Session and history have been reset.', '/new', requestedModel);
                 logRow.status = 200;
@@ -4924,7 +5235,7 @@ const server = http.createServer(async (req, res) => {
                 res.writeHead(failureClass.status, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     error: {
-                        message: errorMessage,
+                        message: scrubLogText(errorMessage) ?? errorMessage,
                         type: errorType,
                         agent: agentId,
                         failed_session_id: failure.failedSessionId,
@@ -5243,9 +5554,9 @@ const server = http.createServer(async (req, res) => {
                 return;
             }
             
-            // Check if any tool results in the current conversation contained a screenshot path.
-            // If so, and the response doesn't already have MEDIA:, inject it so the gateway
-            // delivers the file to Telegram.
+            // If this turn's tool results named a temp-dir screenshot and the reply
+            // does not already contain MEDIA:, append that path so the gateway can
+            // deliver the file (for example to Telegram). Other client paths are ignored.
             if (!fullContent.includes('MEDIA:')) {
                 const screenshotPaths = extractScreenshotPaths(messages);
                 if (screenshotPaths.length > 0) {
@@ -5292,14 +5603,15 @@ const server = http.createServer(async (req, res) => {
                 console.log(`${agentTag} Response ${apiMode} (tools=${executableCalls.length}, ${Date.now() - startTime}ms, ${fullContent.length} chars)`);
             }
         } catch (e) {
-            console.log('[DS-API] Error:', e.message);
+            const publicErrorMessage = e instanceof SyntaxError ? e.message : (scrubLogText(e.message) ?? e.message);
+            console.log('[DS-API] Error:', publicErrorMessage);
             if (clientGone && !res.headersSent) {
-                logError(499, 'client_disconnected', `Client disconnected: ${e.message}`);
+                logError(499, 'client_disconnected', `Client disconnected: ${publicErrorMessage}`);
                 return;
             }
             if (res.headersSent) {
                 logRow.error_type = logRow.error_type || e.type || 'server_error';
-                logRow.error_message = logRow.error_message || e.message;
+                logRow.error_message = logRow.error_message || publicErrorMessage;
                 return;
             }
             // Pool exhaustion / no-auth carry an explicit status so integrators see
@@ -5309,7 +5621,7 @@ const server = http.createServer(async (req, res) => {
             const status = e.status || (overflowError ? 400 : (timedOut ? 504 : 500));
             const errorType = e.type || (overflowError ? 'context_length_exceeded' : (timedOut ? 'request_timeout' : 'server_error'));
             // A body that is not JSON surfaces as a SyntaxError whose text quotes the body.
-            logError(status, errorType, e instanceof SyntaxError ? 'Request body is not valid JSON' : e.message);
+            logError(status, errorType, e instanceof SyntaxError ? 'Request body is not valid JSON' : publicErrorMessage);
             logRow.account = activeSession?.accountId || null;
             const headers = { 'Content-Type': 'application/json' };
             if (status === 429 && e.retryAfter) headers['Retry-After'] = String(e.retryAfter);
@@ -5319,7 +5631,7 @@ const server = http.createServer(async (req, res) => {
                 : null;
             if (timedOut && activeSession?.id) console.log(`[${activeAgentId}] Keeping chat ${activeSession.id} after timeout.`);
             res.end(JSON.stringify({ error: {
-                message: e.message,
+                message: publicErrorMessage,
                 type: errorType,
                 ...(failure ? {
                     agent: activeAgentId,
@@ -5338,7 +5650,21 @@ const server = http.createServer(async (req, res) => {
             releaseSlot();
         }
     });
-});
+}
+
+const tlsCredentials = readTlsCredentials();
+function publicScheme() {
+    return tlsCredentials ? 'https' : 'http';
+}
+function createListenServer(handler) {
+    if (!tlsCredentials) return http.createServer(handler);
+    try {
+        return https.createServer({ cert: tlsCredentials.cert, key: tlsCredentials.key }, handler);
+    } catch (error) {
+        throw new Error(`TLS_CERT_FILE and TLS_KEY_FILE are not a usable PEM certificate and key: ${error.message}`);
+    }
+}
+const server = createListenServer(handleRequest);
 
 async function runAuthScript() {
     const script = path.join(__dirname, 'scripts', 'deepseek_chrome_auth.js');
@@ -5388,7 +5714,7 @@ function dashboardUrl(host, port) {
     const h = String(host || '127.0.0.1');
     // A wildcard bind address is not something a browser can open.
     const target = (h === '0.0.0.0' || h === '::' || h === '') ? '127.0.0.1' : h;
-    return `http://${target.includes(':') ? `[${target}]` : target}:${port}/dashboard`;
+    return `${publicScheme()}://${target.includes(':') ? `[${target}]` : target}:${port}/dashboard`;
 }
 function openDashboardInBrowser(url) {
     const { cmd, args } = browserOpenCommand(process.platform, url);
@@ -5456,6 +5782,8 @@ async function main() {
             console.warn('[DS-API] WARNING: PROXY_ADMIN_ALLOW_REMOTE=1 without PROXY_API_KEY lets anyone on the network pause, resume, and reload your DeepSeek accounts.');
         }
     }
+    const cleartextWarning = cleartextStartupWarning(HOST, Boolean(tlsCredentials));
+    if (cleartextWarning) console.warn(cleartextWarning);
     const startup = await showStartupMenu();
     if (!startup.start) process.exit(0);
     server.on('error', (err) => {
@@ -5466,7 +5794,7 @@ async function main() {
     // Periodically evict idle sessions (unref'd so it never keeps the process alive).
     setInterval(sweepIdleSessions, 10 * 60 * 1000).unref();
     server.listen(PORT, HOST, () => {
-        console.log(`[DS-API] Server on http://${HOST}:${PORT} (multi-agent sessions enabled)`);
+        console.log(`[DS-API] Server on ${publicScheme()}://${HOST}:${PORT} (multi-agent sessions enabled)`);
         console.log('[DS-API] POST /v1/chat/completions (OpenAI Chat Completions, stream=true|false)');
         console.log('[DS-API] POST /v1/messages — Anthropic Messages shim for Claude Code');
         console.log('[DS-API] POST /v1/responses — OpenAI Responses API shim');
@@ -5593,6 +5921,8 @@ module.exports = {
         prepareSessionForPrompt,
         sweepIdleSessions,
         sessions,
+        MAX_SESSIONS,
+        getOrCreateAgentSession,
         accounts,
         selectAccountForSession,
         dashboardUrl,
@@ -5614,8 +5944,20 @@ module.exports = {
         loadProxyApiKey,
         requireProxyApiKey,
         isLoopbackHost,
+        readTlsCredentials,
+        cleartextStartupWarning,
+        publicScheme,
+        isPrivateNetworkAddress,
+        assertPublicImageUrl,
         normalizeOrigin,
         isBrowserOriginAllowed,
+        socketInodeFromLink,
+        procNetRows,
+        peerUidForInode,
+        peerCredForSocket,
+        localCallerDecision,
+        requestLocalCallerDecision,
+        useLocalCallerPeerCred(next) { const prev = localCallerPeerCred; localCallerPeerCred = next; return () => { localCallerPeerCred = prev; }; },
         DEFAULT_MODEL_ID,
         canonicalizeModelId,
         MODEL_CONFIGS,
