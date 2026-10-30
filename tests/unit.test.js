@@ -99,6 +99,114 @@ test('doctor reports auth problems without requiring Chrome or network', () => {
   assert.match(res.stdout + res.stderr, /cookie missing/i);
 });
 
+test('doctor checks accounts/*.json beside the repo and reports broken JSON without a parser snippet', () => {
+  const doctor = require('../scripts/doctor.js');
+  assert.deepEqual(doctor.authPaths(), serverInternals.discoverAuthPaths());
+
+  const dir = tmpdir();
+  const scriptsDir = path.join(dir, 'scripts');
+  const accounts = path.join(dir, 'accounts');
+  // doctor.js resolves the repo from __dirname, so run a copy inside the temp repo.
+  fs.mkdirSync(scriptsDir);
+  fs.mkdirSync(accounts);
+  fs.copyFileSync(path.join(ROOT, 'scripts', 'doctor.js'), path.join(scriptsDir, 'doctor.js'));
+  fs.writeFileSync(path.join(accounts, 'notes.txt'), 'not an auth file');
+  const auth = {
+    token: 'tok_work',
+    cookie: 'ds_session_id=abc',
+    wasmUrl: 'https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm',
+  };
+  const good = path.join(accounts, 'work.json');
+  fs.writeFileSync(good, JSON.stringify(auth));
+  if (process.platform !== 'win32') fs.chmodSync(good, 0o600);
+
+  const env = { ...process.env };
+  delete env.DEEPSEEK_AUTH_PATH;
+  delete env.DEEPSEEK_AUTH_DIR;
+  delete env.DOCTOR_OFFLINE;
+  const script = path.join(scriptsDir, 'doctor.js');
+  const run = (extraEnv = {}) => spawnSync(process.execPath, [script, '--offline'], {
+    cwd: dir,
+    encoding: 'utf8',
+    env: { ...env, ...extraEnv },
+  });
+
+  const ok = run();
+  const okOut = ok.stdout + ok.stderr;
+  assert.equal(ok.status, 0, okOut);
+  assert.match(okOut, /accounts\/work\.json|accounts\\work\.json/);
+  assert.doesNotMatch(okOut, /auth file missing/i);
+  assert.doesNotMatch(okOut, /notes\.txt/);
+
+  const explicitMissing = run({ DEEPSEEK_AUTH_PATH: path.join(dir, 'deepseek-auth.json') });
+  const explicitOut = explicitMissing.stdout + explicitMissing.stderr;
+  assert.equal(explicitMissing.status, 0, explicitOut);
+  assert.match(explicitOut, /work\.json/);
+  assert.doesNotMatch(explicitOut, /auth file missing/i);
+
+  const primary = path.join(dir, 'deepseek-auth.json');
+  fs.writeFileSync(primary, JSON.stringify(auth));
+  if (process.platform !== 'win32') fs.chmodSync(primary, 0o600);
+  const both = run();
+  const bothOut = both.stdout + both.stderr;
+  assert.equal(both.status, 0, bothOut);
+  assert.match(bothOut, /deepseek-auth\.json/);
+  assert.match(bothOut, /work\.json/);
+
+  const secret = 'zzsecret-token-fragment';
+  const broken = path.join(accounts, 'broken.json');
+  fs.writeFileSync(broken, `${secret} is not json`);
+  const parsed = doctor.checkAuthFile(broken);
+  assert.deepEqual(parsed.issues, ['invalid JSON']);
+  assert.equal(JSON.stringify(parsed).includes(secret), false);
+
+  const bad = run();
+  const badOut = bad.stdout + bad.stderr;
+  assert.equal(bad.status, 2, badOut);
+  assert.match(badOut, /❌ invalid JSON/);
+  assert.doesNotMatch(badOut, /invalid JSON:/);
+  assert.equal(badOut.includes(secret), false);
+  assert.doesNotMatch(badOut, /Unexpected token|is not valid JSON/);
+  assert.match(badOut, /work\.json/);
+  assert.match(badOut, /auth file looks OK/);
+
+  fs.writeFileSync(path.join(accounts, 'array.json'), '[]');
+  const arrayRun = run();
+  const arrayOut = arrayRun.stdout + arrayRun.stderr;
+  assert.equal(arrayRun.status, 2, arrayOut);
+  assert.match(arrayOut, /expected a JSON object/);
+
+  const listed = path.join(dir, 'listed.json');
+  const other = path.join(dir, 'other.json');
+  fs.writeFileSync(listed, JSON.stringify(auth));
+  fs.writeFileSync(other, JSON.stringify(auth));
+  if (process.platform !== 'win32') {
+    fs.chmodSync(listed, 0o600);
+    fs.chmodSync(other, 0o600);
+  }
+  const comma = run({ DEEPSEEK_AUTH_PATH: `${listed},${other}` });
+  const commaOut = comma.stdout + comma.stderr;
+  assert.equal(comma.status, 0, commaOut);
+  assert.match(commaOut, /listed\.json/);
+  assert.match(commaOut, /other\.json/);
+  assert.doesNotMatch(commaOut, /broken\.json/);
+  assert.doesNotMatch(commaOut, /work\.json/);
+  assert.doesNotMatch(commaOut, /invalid JSON/);
+
+  const empty = tmpdir();
+  const emptyScripts = path.join(empty, 'scripts');
+  fs.mkdirSync(emptyScripts);
+  fs.copyFileSync(script, path.join(emptyScripts, 'doctor.js'));
+  const missing = spawnSync(process.execPath, [path.join(emptyScripts, 'doctor.js'), '--offline'], {
+    cwd: empty,
+    encoding: 'utf8',
+    env,
+  });
+  const missingOut = missing.stdout + missing.stderr;
+  assert.equal(missing.status, 2, missingOut);
+  assert.match(missingOut, /auth file missing/i);
+});
+
 test('auth menu has no third-party Telegram watermark and accepts --lang', () => {
   const help = runNode(['scripts/auth.js', '--help', '--lang', 'en']);
   assert.equal(help.status, 0, help.stderr || help.stdout);
