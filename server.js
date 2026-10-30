@@ -835,8 +835,8 @@ function sweepIdleSessions(maxIdleMs = SESSION_TTL_MS * 2) {
     return removed;
 }
 
-// solvePOW() lives in lib/pow (compiled-module cache + WASM-fetch timeout),
-// shared with client.js. Called as solvePOW(challenge, wasmUrl).
+// solvePOW() lives in lib/pow (compiled-module cache + WASM-fetch timeout).
+// Called as solvePOW(challenge, wasmUrl).
 
 // DeepSeek Web as of 2026-09-20: Instant/Expert/Pro UI gone. One weight: V4.1-Flash.
 // Official paid ID: deepseek-flash. Web model_type is always `default`.

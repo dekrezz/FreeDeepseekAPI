@@ -31,7 +31,6 @@ const {
 const { resolveAuthOutPath } = require('./auth_import');
 
 const repoRoot = path.resolve(__dirname, '..');
-const qwenRepoRoot = path.resolve(repoRoot, '..', 'FreeQwenApi');
 const profileDir =
     process.env.DEEPSEEK_CHROME_PROFILE ||
     path.join(repoRoot, '.chrome-for-testing-profile-deepseek');
@@ -92,19 +91,17 @@ function removeProfileSafely(dir) {
     }
 }
 
-// Puppeteer's bundled "Google Chrome for Testing", when puppeteer is installed here or
-// next to FreeQwenApi. The rest of the search lives in lib/chrome-setup.js.
+// Puppeteer's bundled "Google Chrome for Testing", when puppeteer is installed in this
+// repo. The rest of the search lives in lib/chrome-setup.js.
 function puppeteerExecutables() {
     const found = [];
-    for (const base of [repoRoot, qwenRepoRoot]) {
-        try {
-            const puppeteer = require(require.resolve('puppeteer', { paths: [base] }));
-            if (typeof puppeteer.executablePath === 'function') {
-                const p = puppeteer.executablePath();
-                if (p) found.push(p);
-            }
-        } catch {}
-    }
+    try {
+        const puppeteer = require(require.resolve('puppeteer', { paths: [repoRoot] }));
+        if (typeof puppeteer.executablePath === 'function') {
+            const p = puppeteer.executablePath();
+            if (p) found.push(p);
+        }
+    } catch {}
     return found;
 }
 
