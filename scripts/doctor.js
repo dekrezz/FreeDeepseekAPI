@@ -7,6 +7,8 @@ const DEFAULT_AUTH = process.env.DEEPSEEK_AUTH_PATH || path.join(ROOT, 'deepseek
 
 function isTruthy(v) { return /^(1|true|yes|on)$/i.test(String(v || '')); }
 function argHas(args, ...names) { return args.some(a => names.includes(a)); }
+// Same file set as server.js discoverAuthPaths. Do not require server.js here:
+// loading it pulls the whole proxy into the doctor process.
 function authPaths() {
   if (process.env.DEEPSEEK_AUTH_DIR) {
     return fs.readdirSync(process.env.DEEPSEEK_AUTH_DIR)
@@ -17,14 +19,38 @@ function authPaths() {
   if (process.env.DEEPSEEK_AUTH_PATH && process.env.DEEPSEEK_AUTH_PATH.includes(',')) {
     return process.env.DEEPSEEK_AUTH_PATH.split(',').map(s => s.trim()).filter(Boolean);
   }
-  return [DEFAULT_AUTH];
+  const files = [];
+  if (fs.existsSync(DEFAULT_AUTH)) files.push(path.resolve(DEFAULT_AUTH));
+  const accountsDir = path.join(ROOT, 'accounts');
+  try {
+    if (fs.existsSync(accountsDir) && fs.statSync(accountsDir).isDirectory()) {
+      for (const name of fs.readdirSync(accountsDir).filter(f => f.endsWith('.json')).sort()) {
+        files.push(path.resolve(accountsDir, name));
+      }
+    }
+  } catch (e) {
+    console.error(`[doctor] Could not read accounts dir: ${e.message}`);
+  }
+  return files.length ? [...new Set(files)] : [DEFAULT_AUTH];
+}
+// Never echo JSON.parse snippets; they can contain token or cookie fragments.
+function describeAuthFileError(error) {
+  if (error instanceof SyntaxError) return 'invalid JSON';
+  if (error?.code) return `could not read file (${error.code})`;
+  return String(error?.message || 'could not load file');
 }
 function checkAuthFile(file) {
   const issues = [];
   let auth = null;
   if (!fs.existsSync(file)) return { file, ok: false, issues: ['auth file missing'], auth: null };
-  try { auth = JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch (e) { return { file, ok: false, issues: [`invalid JSON: ${e.message}`], auth: null }; }
+  try {
+    auth = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!auth || typeof auth !== 'object' || Array.isArray(auth)) {
+      throw new Error('expected a JSON object');
+    }
+  } catch (e) {
+    return { file, ok: false, issues: [describeAuthFileError(e)], auth: null };
+  }
   if (!auth.token) issues.push('token missing');
   if (!auth.cookie) issues.push('cookie missing');
   if (!auth.wasmUrl) issues.push('wasmUrl missing');
