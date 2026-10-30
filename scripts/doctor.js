@@ -24,7 +24,11 @@ function checkAuthFile(file) {
   let auth = null;
   if (!fs.existsSync(file)) return { file, ok: false, issues: ['auth file missing'], auth: null };
   try { auth = JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch (e) { return { file, ok: false, issues: [`invalid JSON: ${e.message}`], auth: null }; }
+  catch (e) {
+    // Parser text can quote token or cookie bytes. Same rule as describeAuthFileError.
+    if (e instanceof SyntaxError) return { file, ok: false, issues: ['invalid JSON'], auth: null };
+    return { file, ok: false, issues: [`invalid JSON: ${e.message}`], auth: null };
+  }
   if (!auth.token) issues.push('token missing');
   if (!auth.cookie) issues.push('cookie missing');
   if (!auth.wasmUrl) issues.push('wasmUrl missing');
@@ -90,6 +94,9 @@ async function main(args = process.argv.slice(2)) {
   return ok ? 0 : 2;
 }
 if (require.main === module) {
-  main().then(code => process.exit(code)).catch(e => { console.error('[doctor] ERROR:', e.message); process.exit(1); });
+  main().then(code => process.exit(code)).catch(e => {
+    console.error('[doctor] ERROR:', e instanceof SyntaxError ? 'invalid JSON' : e.message);
+    process.exit(1);
+  });
 }
 module.exports = { checkAuthFile, authPaths };

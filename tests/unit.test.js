@@ -99,6 +99,34 @@ test('doctor reports auth problems without requiring Chrome or network', () => {
   assert.match(res.stdout + res.stderr, /cookie missing/i);
 });
 
+test('doctor reports invalid auth JSON without quoting the file', () => {
+  const dir = tmpdir();
+  const authPath = path.join(dir, 'broken-auth.json');
+  const raw = '{"token": super-secret}';
+  fs.writeFileSync(authPath, raw);
+  let parseMessage = '';
+  try { JSON.parse(raw); } catch (e) { parseMessage = e.message; }
+  assert.match(parseMessage, /Unexpected token/);
+
+  const doctor = require('../scripts/doctor.js');
+  const checked = doctor.checkAuthFile(authPath);
+  assert.equal(checked.ok, false);
+  assert.equal(checked.auth, null);
+  assert.deepEqual(checked.issues, ['invalid JSON']);
+
+  const res = runNode(['scripts/doctor.js', '--offline'], {
+    env: { DEEPSEEK_AUTH_PATH: authPath, DEEPSEEK_AUTH_DIR: '' },
+  });
+  assert.notEqual(res.status, 0);
+  const out = res.stdout + res.stderr;
+  assert.match(out, /❌ invalid JSON/);
+  assert.doesNotMatch(out, /invalid JSON:/);
+  assert.doesNotMatch(out, /Unexpected token/);
+  assert.doesNotMatch(out, /super-secret/);
+  assert.doesNotMatch(out, /super-secr/);
+  assert.doesNotMatch(out, new RegExp(parseMessage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});
+
 test('auth menu has no third-party Telegram watermark and accepts --lang', () => {
   const help = runNode(['scripts/auth.js', '--help', '--lang', 'en']);
   assert.equal(help.status, 0, help.stderr || help.stdout);
