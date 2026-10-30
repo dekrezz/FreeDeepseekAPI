@@ -2431,18 +2431,85 @@ function collectJsonToolCalls(text) {
     return calls;
 }
 
+// DeepSeek Web garbles the delimiters themselves: <｜ဉDSML｜ဉ calls>, <｜토큰｜|DSML｜| invoke>.
+// Restore the canonical <｜｜DSML｜｜ tool_calls> prefix so detection and parsing see one form.
+function normalizeGarbledDsmlDelimiters(text) {
+    return text.replace(/([<＜]\s*\/?\s*)[|｜][^\s<>/A-Za-z]{0,4}DSML[^\s<>/A-Za-z]{0,4}\s*(calls\b)?/gi,
+        (whole, open, calls) => `${open.replace('＜', '<')}｜｜DSML｜｜ ${calls ? 'tool_calls' : ''}`);
+}
+
+// Rebuild closers from a tag stack: repeated </parameter>, nameless </｜｜DSML｜｜>, a bare <invoke> or a
+// second <tool_calls> used as a closer, and an invoke left open before the next one.
+// Only used after the strict parse found nothing; the result still goes through the strict parser.
+function repairGarbledDsmlStructure(text) {
+    const stack = [];
+    const closeTo = (name) => {
+        let out = '';
+        while (stack.length) {
+            const top = stack.pop();
+            out += `</｜｜DSML｜｜ ${top}>`;
+            if (top === name) break;
+        }
+        return out;
+    };
+    return text.replace(/<(\/?)｜｜DSML｜｜ (?:(tool_calls|invoke|parameter)(?![\w-]))?([^<>]*)>/g, (whole, slash, name, attrs) => {
+        if (slash) {
+            if (!name) return stack.length ? closeTo(stack[stack.length - 1]) : '';
+            return stack.includes(name) ? closeTo(name) : '';
+        }
+        if (!name) return whole;
+        if (name === 'tool_calls' && stack.includes('tool_calls')) return closeTo('tool_calls');
+        if (name === 'invoke' && !attrs.trim()) return stack.includes('invoke') ? closeTo('invoke') : '';
+        let prefix = '';
+        if (name === 'invoke' && stack.includes('invoke')) prefix = closeTo('invoke');
+        if (name === 'parameter' && stack[stack.length - 1] === 'parameter') prefix = closeTo('parameter');
+        stack.push(name);
+        return prefix + whole;
+    });
+}
+
+// DeepSeek Web sometimes garbles DSML into
+// <invoke name="tool_calls"><parameter name="name">read</parameter><parameter name="arguments">{...}</parameter>
+// or puts name="name" on the invoke itself. Recover only when every name/arguments pair parses cleanly.
+function salvageGarbledDsmlCalls(text) {
+    const value = String(text || '').replace(/｜/g, '|').replace(/<\s*(\/?)\s*\|+\s*DSML\s*\|+\s*/gi, '<$1');
+    const argCount = (value.match(/<parameter\s+name\s*=\s*"arguments"/gi) || []).length;
+    const pairRe = /<(?:parameter|invoke)\s+name\s*=\s*"name"[^>]*>\s*([A-Za-z0-9_.-]+)\s*<\/parameter>\s*<parameter\s+name\s*=\s*"arguments"[^>]*>([\s\S]*?)<\/parameter>/gi;
+    const calls = [];
+    let m;
+    while ((m = pairRe.exec(value)) !== null) {
+        let call = null;
+        try { call = buildToolCall(m[1], JSON.parse(decodeDsmlParameterValue(m[2]).trim())); } catch { return []; }
+        if (!call) return [];
+        calls.push(call);
+    }
+    return calls.length === argCount ? calls : [];
+}
+
 function collectAgentToolCalls(text, allowedToolNames) {
     const allowed = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
     if (!text || allowed.size === 0) return [];
-    const raw = hasDsmlToolMarkup(text) ? listDsmlToolCalls(text) : collectJsonToolCalls(text);
-    const calls = [];
-    const seen = new Set();
-    for (const call of raw) {
-        if (!call || !allowed.has(call.name)) continue;
-        rememberToolCall(calls, seen, call);
-        if (calls.length >= MAX_AGENT_TOOL_CALLS) break;
+    const keepAllowed = (raw) => {
+        const calls = [];
+        const seen = new Set();
+        for (const call of raw) {
+            if (!call || !allowed.has(call.name)) continue;
+            rememberToolCall(calls, seen, call);
+            if (calls.length >= MAX_AGENT_TOOL_CALLS) break;
+        }
+        return calls;
+    };
+    const calls = keepAllowed(hasDsmlToolMarkup(text) ? listDsmlToolCalls(text) : collectJsonToolCalls(text));
+    if (calls.length > 0 || !hasDsmlToolMarkup(text)) return calls;
+    const repaired = keepAllowed(listDsmlToolCalls(repairGarbledDsmlStructure(text)));
+    if (repaired.length > 0) {
+        console.log(`[parseToolCall] Repaired garbled DSML structure: ${repaired.map(call => call.name).join(', ')}`);
+        return repaired;
     }
-    return calls;
+    const salvaged = salvageGarbledDsmlCalls(text);
+    if (salvaged.length === 0 || !salvaged.every(call => allowed.has(call.name))) return [];
+    console.log(`[parseToolCall] Salvaged garbled DSML: ${salvaged.map(call => call.name).join(', ')}`);
+    return keepAllowed(salvaged);
 }
 
 function looksLikeToolCallMarkup(text) {
@@ -2551,7 +2618,7 @@ function parseToolCall(text) {
  * when the gateway sends to Telegram. Valid pairs (emoji, astral CJK) are kept.
  */
 function sanitizeContent(text) {
-    return text.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '');
+    return normalizeGarbledDsmlDelimiters(text.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, ''));
 }
 
 function estimateTokens(text) {
