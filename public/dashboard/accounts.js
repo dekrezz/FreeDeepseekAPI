@@ -193,9 +193,9 @@
   // ---------------------------------------------------------------- view
   function mount(root) {
     st.root = root;
-    const filterInput = h('input', { type: 'search', class: 'input input-search', placeholder: 'Filter accounts', 'aria-label': 'Filter accounts', 'data-view-filter': '', spellcheck: 'false' });
+    const filterInput = h('input', { type: 'search', class: 'input input-search', placeholder: F.t('Filter accounts'), 'aria-label': F.t('Filter accounts'), 'data-view-filter': '', spellcheck: 'false' });
     filterInput.addEventListener('input', () => { st.query = filterInput.value.trim(); render(); });
-    const chips = F.segmented('Account state', FILTERS, st.filter, (v) => { st.filter = v; render(); });
+    const chips = F.segmented(F.t('Account state'), FILTERS.map(f => ({ ...f, label: F.t(f.label) })), st.filter, (v) => { st.filter = v; render(); });
     const count = h('p', { class: 'meta count' });
     const banner = h('div', { class: 'view-banner' });
     const table = h('table', { class: 'data-table accounts-table rows-clickable' });
@@ -214,7 +214,7 @@
     const empty = h('div', { class: 'empty-host' });
     const note = h('p', { class: 'meta table-note', text: 'Usage is since the server started. Tokens are estimates (characters ÷ 4). Pause is runtime only; Disable in file survives a restart.' });
 
-    const hero = F.pageHero({ image: '/dashboard/media-surface.jpg', label: 'Account pool', position: '50% 40%' });
+    const hero = F.pageHero({ image: '/dashboard/media-surface.jpg', label: F.t('Account pool'), position: '50% 40%' });
     root.append(hero, h('div', { class: 'view-pad' },
       h('div', { class: 'filter-row' }, h('label', { class: 'search-field search-field-inline' }, F.icon('search'), filterInput), chips, count),
       banner,
@@ -363,12 +363,12 @@
   }
 
   function emptyPool() {
-    const add = F.btn('Add account', { kind: 'primary', icon: 'plus', onclick: (e) => openAdd(e.currentTarget) });
+    const add = F.btn(F.t('Add account'), { kind: 'primary', icon: 'plus', onclick: (e) => openAdd(e.currentTarget) });
     return h('div', { class: 'empty' },
-      h('p', { class: 'empty-title', text: 'No accounts are loaded.' }),
+      h('p', { class: 'empty-title', text: F.t('No accounts are loaded.') }),
       h('p', { class: 'empty-text', text: 'Add a DeepSeek login exported by the DeepSeek Auth Exporter extension, or import one from a terminal and reload:' }),
       F.codeLine('npm run auth:import'),
-      h('div', { class: 'empty-actions' }, add, F.btn('Reload from disk', { icon: 'reload', onclick: (e) => reload(e.currentTarget) })));
+      h('div', { class: 'empty-actions' }, add, F.btn(F.t('Reload from disk'), { icon: 'reload', onclick: (e) => reload(e.currentTarget) })));
   }
 
   // ---------------------------------------------------------------- inspector
@@ -525,7 +525,7 @@
     let obj;
     try { obj = JSON.parse(text); } catch (e) { return { parseError: e.message }; }
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
-      return { parseError: 'The JSON must be an object like {"token": "…", "cookie": "…"}.' };
+      return { parseError: F.t('The JSON must be an object like {"token": "…", "cookie": "…"}.') };
     }
     const token = String(obj.token || obj.access_token || obj.accessToken || obj.auth_token || '').trim().replace(/^Bearer\s+/i, '');
     let cookieParts = 0;
@@ -567,7 +567,7 @@
     const nameHelp = h('p', { class: 'field-help', id: 'add-name-help' });
     nameInput.setAttribute('aria-describedby', 'add-name-help');
     const formErr = h('div', { class: 'form-error', role: 'alert', hidden: true });
-    const submit = F.btn('Add account', { kind: 'primary', type: 'submit' });
+    const submit = F.btn(F.t('Add account'), { kind: 'primary', type: 'submit' });
     const cancel = F.btn('Cancel', { onclick: close });
     const warn = (location.protocol === 'http:' && !F.isLoopbackHost())
       ? F.notice('warn', 'This page is not on HTTPS', `The credentials travel unencrypted to ${location.host}. Anyone on the network path can read them. Import from the machine running the proxy, or put it behind HTTPS.`)
@@ -585,30 +585,30 @@
       loaded.hidden = state.empty;
       source.classList.toggle('has-content', !state.empty);
       if (state.empty) showError('');
-      else if (state.parseError) showError(`Not valid JSON: ${state.parseError}. Download the file again from the extension.`);
+      else if (state.parseError) showError(F.t('Not valid JSON: {message}. Download the file again from the extension.', { message: state.parseError }));
       else {
         chips.append(
-          chip('Token', state.token, false, state.token ? 'Token found' : 'Token missing'),
-          chip(state.cookieParts ? `Cookie · ${state.cookieParts}` : 'Cookie', state.cookieParts > 0, false, state.cookieParts ? `Cookie found, ${state.cookieParts} part${state.cookieParts === 1 ? '' : 's'}` : 'Cookie missing'),
-          chip('hif_dliq', state.hifDliq, true, state.hifDliq ? 'hif_dliq found' : 'hif_dliq not found (optional)'),
-          chip('hif_leim', state.hifLeim, true, state.hifLeim ? 'hif_leim found' : 'hif_leim not found (optional)'));
+          chip(F.t('Token'), state.token, false, state.token ? F.t('Token found') : F.t('Token missing')),
+          chip(state.cookieParts ? F.t('Cookie · {n}', { n: state.cookieParts }) : F.t('Cookie'), state.cookieParts > 0, false, state.cookieParts ? F.t(state.cookieParts === 1 ? 'Cookie found, {n} part' : 'Cookie found, {n} parts', { n: state.cookieParts }) : F.t('Cookie missing')),
+          chip('hif_dliq', state.hifDliq, true, F.t(state.hifDliq ? '{field} found' : '{field} not found (optional)', { field: 'hif_dliq' })),
+          chip('hif_leim', state.hifLeim, true, F.t(state.hifLeim ? '{field} found' : '{field} not found (optional)', { field: 'hif_leim' })));
         const missing = [!state.token && 'token', !state.cookieParts && 'cookie'].filter(Boolean);
-        showError(missing.length ? `This file has no ${missing.join(' or ')} field. Sign in on chat.deepseek.com, click Read current tab, then Download again.` : '');
+        showError(missing.length ? F.t('This file has no {fields} field. Sign in on chat.deepseek.com, click Read current tab, then Download again.', { fields: missing.join(F.lang.get() === 'zh' ? ' 或 ' : ' or ') }) : '');
       }
       const name = nameInput.value.trim();
       const slug = slugFor(name);
-      nameHelp.textContent = !name ? '' : slug ? `Saved as accounts/${slug}.json` : 'Saved as accounts/account-N.json';
+      nameHelp.textContent = !name ? '' : slug ? F.t('Saved as accounts/{slug}.json', { slug }) : F.t('Saved as accounts/account-N.json');
       const ready = state.ok && name.length > 0;
       submit.setAttribute('aria-disabled', String(!ready));
-      submit.setAttribute('data-tip', ready ? '' : !state.ok ? 'Drop a valid deepseek-auth.json first' : 'Enter a name');
+      submit.setAttribute('data-tip', ready ? '' : !state.ok ? F.t('Drop a valid deepseek-auth.json first') : F.t('Enter a name'));
     };
     // Anything that is not the auth file gets pointed back at the file to look for.
-    const FIND_FILE = 'Find deepseek-auth.json, the file the extension downloaded (usually in Downloads), and drop that.';
+    const FIND_FILE = F.t('Find deepseek-auth.json, the file the extension downloaded (usually in Downloads), and drop that.');
     const reject = (text) => { raw = ''; validate(); showError(`${text} ${FIND_FILE}`); };
     const loadFile = (file) => {
       if (!file) return;
-      if (!/\.json$/i.test(file.name) && file.type !== 'application/json') { reject(`${file.name} is not a JSON file.`); return; }
-      if (file.size > 64 * 1024) { reject(`${file.name} is ${fmt.int(file.size / 1024)} KB, too big for an auth file.`); return; }
+      if (!/\.json$/i.test(file.name) && file.type !== 'application/json') { reject(F.t('{name} is not a JSON file.', { name: file.name })); return; }
+      if (file.size > 64 * 1024) { reject(F.t('{name} is {size} KB, too big for an auth file.', { name: file.name, size: fmt.int(file.size / 1024) })); return; }
       const reader = new FileReader();
       reader.onload = () => {
         raw = String(reader.result || '');
@@ -618,7 +618,7 @@
         validate();
         nameInput.focus();
       };
-      reader.onerror = () => reject(`${file.name} could not be read.`);
+      reader.onerror = () => reject(F.t('{name} could not be read.', { name: file.name }));
       reader.readAsText(file);
     };
     fileInput.addEventListener('change', () => { loadFile(fileInput.files[0]); fileInput.value = ''; });
@@ -629,7 +629,7 @@
       source.classList.remove('is-over');
       const item = e.dataTransfer.items && e.dataTransfer.items[0];
       const entry = item && item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
-      if (entry && entry.isDirectory) { reject(`${entry.name} is a folder.`); return; }
+      if (entry && entry.isDirectory) { reject(F.t('{name} is a folder.', { name: entry.name })); return; }
       loadFile(e.dataTransfer.files[0]);
     });
     nameInput.addEventListener('input', validate);
@@ -681,7 +681,7 @@
     const visual = h('aside', { class: 'add-visual' },
       h('img', { class: 'add-visual-media', src: '/dashboard/media-whale-sharks.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' }),
       h('div', { class: 'add-visual-inner' },
-          h('h2', { class: 'add-title', id: 'add-title', text: 'Add a DeepSeek account' }),
+          h('h2', { class: 'add-title', id: 'add-title', text: F.t('Add a DeepSeek account') }),
           h('ol', { class: 'add-steps', 'aria-label': 'Where the file comes from' },
             step(1, 'Install DeepSeek Auth Exporter', [h('span', { text: 'In ' }), code('chrome://extensions'), h('span', { text: ' turn on Developer mode, then Load unpacked → the ' }), code('chrome-extension'), h('span', { text: ' folder of FreeDeepseekAPI' })]),
             step(2, 'Read your session', [h('span', { text: 'On a signed-in chat.deepseek.com tab, click ' }), h('strong', { text: 'Read current tab' })]),
@@ -712,13 +712,13 @@
   }
 
   F.views.accounts = {
-    title: 'Accounts',
+    title: () => F.t('Accounts'),
     live: true,
     mount,
     actions() {
       return [
-        F.btn('Reload from disk', { icon: 'reload', onclick: (e) => reload(e.currentTarget) }),
-        F.btn('Add account', { kind: 'primary', icon: 'plus', onclick: (e) => openAdd(e.currentTarget) }),
+        F.btn(F.t('Reload from disk'), { icon: 'reload', 'data-action': 'reload', onclick: (e) => reload(e.currentTarget) }),
+        F.btn(F.t('Add account'), { kind: 'primary', icon: 'plus', onclick: (e) => openAdd(e.currentTarget) }),
       ];
     },
     show(route) {

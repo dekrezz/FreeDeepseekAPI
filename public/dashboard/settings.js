@@ -19,7 +19,7 @@
     },
     set(name, value) {
       const p = PREFS[name];
-      try { localStorage.setItem(p.key, value); } catch (e) { F.toast(`Could not save the ${name} preference: ${e.name}`, { tone: 'error' }); }
+      try { localStorage.setItem(p.key, value); } catch (e) { F.toast(F.t('Could not save the {name} preference: {error}', { name: F.t(name === 'material' ? 'Material' : 'Density'), error: e.name }), { tone: 'error' }); }
       F.prefs.apply(name, value);
     },
     apply(name, value) {
@@ -44,12 +44,12 @@
     const appearance = h('div', { class: 'set-group' });
     const chat = h('div', { class: 'set-stack' });
     root.append(h('div', { class: 'view-pad settings' },
-      section('Access key', 'The PROXY_API_KEY this dashboard signs its requests with.', key, 'key'),
-      section('Connection', 'Point any OpenAI- or Anthropic-compatible client at this proxy.', conn, 'route'),
-      section('Server', 'Facts from GET /health.', server, 'status'),
-      section('Updates', 'Stable gets a release once it has been checked. Latest gets every release first.', updates, 'download'),
-      section('Appearance', null, appearance, 'settings'),
-      section('Chat data', `Stored in this browser only, for ${location.origin}. 127.0.0.1 and localhost keep separate stores.`, chat, 'chat')));
+      section(F.t('Access key'), F.t('The PROXY_API_KEY this dashboard signs its requests with.'), key, 'key'),
+      section(F.t('Connection'), F.t('Point any OpenAI- or Anthropic-compatible client at this proxy.'), conn, 'route'),
+      section(F.t('Server'), F.t('Facts from GET /health.'), server, 'status'),
+      section(F.t('Updates'), F.t('Stable gets a release once it has been checked. Latest gets every release first.'), updates, 'download'),
+      section(F.t('Appearance'), null, appearance, 'settings'),
+      section(F.t('Chat data'), F.t('Stored in this browser only, for {origin}. 127.0.0.1 and localhost keep separate stores.', { origin: location.origin }), chat, 'chat')));
     Object.assign(st.els, { key, conn, server, updates, appearance, chat });
     F.on('accounts', () => { if (st.visible) renderServer(); });
   }
@@ -82,43 +82,43 @@
     const paint = (key, preview) => {
       header.classList.toggle('is-preview', Boolean(preview));
       header.classList.toggle('is-empty', !key);
-      if (!key) { value.replaceChildren(h('span', { class: 'auth-none', text: 'not sent' })); return; }
+      if (!key) { value.replaceChildren(h('span', { class: 'auth-none', text: F.t('not sent') })); return; }
       const { dots, tail } = maskKey(key);
       value.replaceChildren(h('span', { class: 'auth-scheme', text: 'Bearer ' }), h('span', { class: 'auth-dots', text: dots }), h('span', { class: 'auth-tail', text: tail }));
     };
     paint(stored, false);
 
-    const input = h('input', { type: 'password', class: 'input auth-input', id: 'settings-key', autocomplete: 'off', spellcheck: 'false', placeholder: stored ? 'Paste a new key to replace it' : 'Paste PROXY_API_KEY' });
+    const input = h('input', { type: 'password', class: 'input auth-input', id: 'settings-key', autocomplete: 'off', spellcheck: 'false', placeholder: stored ? F.t('Paste a new key to replace it') : F.t('Paste PROXY_API_KEY') });
     input.addEventListener('input', () => { const v = input.value.trim(); paint(v || stored, Boolean(v)); });
-    const reveal = F.iconBtn('eye', 'Show key', { cls: 'auth-reveal' });
+    const reveal = F.iconBtn('eye', F.t('Show key'), { cls: 'auth-reveal' });
     reveal.setAttribute('aria-pressed', 'false');
     reveal.setAttribute('aria-controls', 'settings-key');
     reveal.addEventListener('click', () => {
       const show = input.type === 'password';
       input.type = show ? 'text' : 'password';
       reveal.replaceChildren(F.icon(show ? 'eye-off' : 'eye'));
-      const label = show ? 'Hide key' : 'Show key';
+      const label = show ? F.t('Hide key') : F.t('Show key');
       reveal.setAttribute('aria-label', label);
       reveal.setAttribute('data-tip', label);
       reveal.setAttribute('aria-pressed', String(show));
       input.focus();
     });
-    const save = F.btn(stored ? 'Replace key' : 'Save key', { kind: 'primary', type: 'submit' });
+    const save = F.btn(stored ? F.t('Replace key') : F.t('Save key'), { kind: 'primary', type: 'submit' });
     const form = h('form', { class: 'auth-form' },
-      h('label', { class: 'sr-only', for: 'settings-key', text: 'Access key' }),
+      h('label', { class: 'sr-only', for: 'settings-key', text: F.t('Access key') }),
       h('span', { class: 'auth-field' }, input, reveal), save);
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const v = input.value.trim();
       if (!v) { input.focus(); return; }
-      try { F.key.set(v); } catch (err) { F.toast(`Could not store the key: ${err.name}`, { tone: 'error' }); return; }
+      try { F.key.set(v); } catch (err) { F.toast(F.t('Could not store the key: {name}', { name: err.name }), { tone: 'error' }); return; }
       input.value = '';
-      F.toast('Saved the key for this tab.', { tone: 'success' });
+      F.toast(F.t('Saved the key for this tab.'), { tone: 'success' });
       F.refresh();
       render();
     });
-    const forget = stored ? F.iconBtn('trash', 'Forget key', { cls: 'auth-forget' }) : null;
-    if (forget) forget.addEventListener('click', () => { F.key.clear(); F.toast('Forgot the key. Requests from this tab now go without one.'); F.refresh(); render(); });
+    const forget = stored ? F.iconBtn('trash', F.t('Forget key'), { cls: 'auth-forget' }) : null;
+    if (forget) forget.addEventListener('click', () => { F.key.clear(); F.toast(F.t('Forgot the key. Requests from this tab now go without one.')); F.refresh(); render(); });
 
     st.els.key.replaceChildren(h('div', { class: 'set-group auth' },
       h('div', { class: 'auth-head' }, header, forget),
@@ -136,7 +136,7 @@
     };
     const lang = h('span', { class: 'code-lang' });
     const code = h('code');
-    const copy = h('button', { type: 'button', class: 'code-btn' }, F.icon('copy'), h('span', { class: 'btn-label', text: 'Copy' }));
+    const copy = h('button', { type: 'button', class: 'code-btn' }, F.icon('copy'), h('span', { class: 'btn-label', text: F.t('Copy') }));
     copy.addEventListener('click', () => F.copy(snippets[st.snippet].code, copy));
     const show = (name) => {
       st.snippet = name;
@@ -144,12 +144,12 @@
       code.replaceChildren(...F.colorize(snippets[name].code, snippets[name].lang));
       copy.setAttribute('aria-label', `Copy the ${snippets[name].label} example`);
     };
-    const tabs = F.segmented('Client example', Object.entries(snippets).map(([value, s]) => ({ value, label: s.label })), st.snippet, show);
+    const tabs = F.segmented(F.t('Client example'), Object.entries(snippets).map(([value, s]) => ({ value, label: s.label })), st.snippet, show);
     tabs.classList.add('segmented-sm');
     show(st.snippet);
-    const urlValue = h('span', { class: 'set-url' }, h('code', { class: 'mono-id', text: `${base}/v1` }), F.copyBtn(`${base}/v1`, 'Copy base URL'));
+    const urlValue = h('span', { class: 'set-url' }, h('code', { class: 'mono-id', text: `${base}/v1` }), F.copyBtn(`${base}/v1`, F.t('Copy base URL')));
     st.els.conn.replaceChildren(
-      h('div', { class: 'set-group' }, row('Base URL', 'OpenAI-style clients use /v1. Anthropic SDKs take the origin without /v1.', urlValue)),
+      h('div', { class: 'set-group' }, row(F.t('Base URL'), F.t('OpenAI-style clients use /v1. Anthropic SDKs take the origin without /v1.'), urlValue)),
       h('div', { class: 'codeblock set-code' },
         h('div', { class: 'code-head' }, tabs, h('span', { class: 'code-actions' }, lang, copy)),
         h('pre', { class: 'code-pre code-vs', tabindex: '0' }, code)),
@@ -168,9 +168,9 @@
 
   function renderServer() {
     const host = st.els.server;
-    if (st.healthError) { host.replaceChildren(F.notice('crit', 'GET /health failed', F.errorText(st.healthError))); return; }
+    if (st.healthError) { host.replaceChildren(F.notice('crit', F.t('GET /health failed'), F.errorText(st.healthError))); return; }
     const hl = st.health;
-    if (!hl) { host.replaceChildren(h('div', { class: 'set-group' }, row('Status', null, h('span', { class: 'quiet', text: 'Loading…' }), null, 'live'))); return; }
+    if (!hl) { host.replaceChildren(h('div', { class: 'set-group' }, row('Status', null, h('span', { class: 'quiet', text: F.t('Loading…') }), null, 'live'))); return; }
     if (!hl.models) {
       host.replaceChildren(h('div', { class: 'set-group' }, row('Status', `The proxy answered "${hl.status}". Details need the access key.`, hl.status, null, 'live')));
       return;
@@ -196,14 +196,14 @@
     const tag = (icon, text) => h('span', { class: 'model-tag' }, F.icon(icon), text);
     return h('div', { class: 'set-group model-table' },
       h('div', { class: 'model-head' },
-        h('span', { class: 'set-label', text: 'Models' }),
+        h('span', { class: 'set-label', text: F.t('Models') }),
         h('span', { class: 'set-hint', text: `${models.length} available` })),
       h('ul', { class: 'model-rows', role: 'list' }, models.map(m => h('li', { class: 'model-row' },
         h('img', { class: 'model-logo', src: '/dashboard/logo.png', alt: '', width: '20', height: '20' }),
         h('code', { class: 'model-id mono-id', text: m }),
         h('span', { class: 'model-tags' },
-          /-thinking(?:-|$)/.test(m) ? tag('think', 'DeepThink') : null,
-          /-search(?:-|$)/.test(m) ? tag('search-web', 'Search') : null),
+          /-thinking(?:-|$)/.test(m) ? tag('think', F.t('DeepThink')) : null,
+          /-search(?:-|$)/.test(m) ? tag('search-web', F.t('Search')) : null),
         F.copyBtn(m, `Copy ${m}`)))));
   }
 
@@ -385,8 +385,10 @@
   function renderAppearance() {
     const pref = (label, hint, name, options) => row(label, hint, F.segmented(label, options, F.prefs.get(name), (v) => F.prefs.set(name, v)));
     st.els.appearance.replaceChildren(
-      pref('Material', 'System follows the reduced-transparency setting of your OS.', 'material', [{ value: 'system', label: 'System' }, { value: 'glass', label: 'Glass', icon: 'material' }, { value: 'solid', label: 'Solid' }]),
-      pref('Density', null, 'density', [{ value: 'comfortable', label: 'Comfortable' }, { value: 'compact', label: 'Compact' }]));
+      pref(F.t('Material'), F.t('System follows the reduced-transparency setting of your OS.'), 'material', [{ value: 'system', label: F.t('System') }, { value: 'glass', label: F.t('Glass'), icon: 'material' }, { value: 'solid', label: F.t('Solid') }]),
+      pref(F.t('Density'), null, 'density', [{ value: 'comfortable', label: F.t('Comfortable') }, { value: 'compact', label: F.t('Compact') }]),
+      row(F.t('Language'), F.t('Saved in this browser. Chinese is used when the browser language is Chinese and you have not chosen.'),
+        F.segmented(F.t('Language'), [{ value: 'en', label: 'English' }, { value: 'zh', label: '中文' }], F.lang.get(), (v) => { if (v !== F.lang.get()) F.lang.set(v); })));
   }
 
   async function renderChat() {
@@ -426,7 +428,7 @@
   }
 
   F.views.settings = {
-    title: 'Settings',
+    title: () => F.t('Settings'),
     live: false,
     mount,
     show() { st.visible = true; render(); loadHealth(); loadUpdate(); },

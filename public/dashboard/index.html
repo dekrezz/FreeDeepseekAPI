@@ -9,6 +9,7 @@
   <link rel="icon" type="image/png" href="/dashboard/logo.png">
   <title>FreeDeepseekAPI</title>
   <link rel="stylesheet" href="/dashboard/app.css">
+  <script src="/dashboard/i18n.js" defer></script>
   <script src="/dashboard/core.js" defer></script>
   <script src="/dashboard/glyphfield.js" defer></script>
   <script src="/dashboard/charts.js" defer></script>
@@ -112,27 +113,27 @@
   </svg>
 
   <div class="app" id="app">
-    <nav class="rail" id="rail" aria-label="Main">
+    <nav class="rail" id="rail" aria-label="Main" data-i18n-aria="Main">
       <div class="rail-head">
-        <a class="wordmark" href="#/chat" aria-label="FreeDeepseekAPI chat">
+        <a class="wordmark" href="#/chat" aria-label="FreeDeepseekAPI chat" data-i18n-aria="FreeDeepseekAPI chat">
           <img class="wordmark-mark" src="/dashboard/logo.png" alt="" width="24" height="24">
           <span class="wordmark-text rail-label">FreeDeepseek<span class="wordmark-sub">API</span></span>
         </a>
-        <button type="button" class="icon-btn rail-toggle" id="rail-toggle" aria-label="Toggle sidebar" data-tip="Toggle sidebar"><svg class="icon" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
+        <button type="button" class="icon-btn rail-toggle" id="rail-toggle" aria-label="Toggle sidebar" data-tip="Toggle sidebar" data-i18n-aria="Toggle sidebar" data-i18n-tip="Toggle sidebar"><svg class="icon" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
       </div>
       <ul class="rail-actions" role="list">
-        <li><button type="button" class="nav-item rail-search" id="open-search" data-tip="Search"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-search"/></svg><span class="rail-label">Search</span></button></li>
-        <li><button type="button" class="nav-item" id="new-chat" data-tip="New chat"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-plus"/></svg><span class="rail-label">New chat</span></button></li>
+        <li><button type="button" class="nav-item rail-search" id="open-search" data-tip="Search" data-i18n-tip="Search"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-search"/></svg><span class="rail-label" data-i18n="Search">Search</span></button></li>
+        <li><button type="button" class="nav-item" id="new-chat" data-tip="New chat" data-i18n-tip="New chat"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-plus"/></svg><span class="rail-label" data-i18n="New chat">New chat</span></button></li>
       </ul>
       <section class="chats" id="chats" aria-labelledby="chats-heading">
         <div class="chats-head">
-          <h2 class="chats-title" id="chats-heading">Chats</h2>
-          <button type="button" class="icon-btn icon-btn-sm chats-filter" id="chats-filter" aria-label="Filter chats" aria-controls="chats-filter-field" aria-expanded="false" data-tip="Filter chats"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg></button>
-          <button type="button" class="icon-btn icon-btn-sm chats-close" id="chats-close" aria-label="Close chats"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+          <h2 class="chats-title" id="chats-heading" data-i18n="Chats">Chats</h2>
+          <button type="button" class="icon-btn icon-btn-sm chats-filter" id="chats-filter" aria-label="Filter chats" aria-controls="chats-filter-field" aria-expanded="false" data-tip="Filter chats" data-i18n-aria="Filter chats" data-i18n-tip="Filter chats"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg></button>
+          <button type="button" class="icon-btn icon-btn-sm chats-close" id="chats-close" aria-label="Close chats" data-i18n-aria="Close chats"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
         </div>
         <label class="search-field chats-filter-field" id="chats-filter-field" hidden>
           <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
-          <input type="search" id="chat-search" placeholder="Filter chats" aria-label="Filter chats" autocomplete="off" spellcheck="false">
+          <input type="search" id="chat-search" placeholder="Filter chats" aria-label="Filter chats" data-i18n-placeholder="Filter chats" data-i18n-aria="Filter chats" autocomplete="off" spellcheck="false">
         </label>
         <div class="chat-list" id="chat-list"></div>
       </section>
@@ -140,23 +141,23 @@
         <button type="button" class="account-switch" id="account-switch" aria-haspopup="menu" aria-expanded="false">
           <span class="avatar" id="account-avatar" aria-hidden="true"></span>
           <span class="account-text rail-label">
-            <span class="account-name" id="account-name">Loading accounts…</span>
+            <span class="account-name" id="account-name" data-i18n="Loading accounts…">Loading accounts…</span>
             <span class="account-sub" id="account-sub"></span>
           </span>
           <svg class="icon icon-sm account-chev rail-label" aria-hidden="true"><use href="#i-chevron-down"/></svg>
         </button>
-        <a class="nav-item" href="#/settings" id="open-settings" aria-label="Settings" data-tip="Settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span class="rail-label">Settings</span></a>
+        <a class="nav-item" href="#/settings" id="open-settings" aria-label="Settings" data-tip="Settings" data-i18n-aria="Settings" data-i18n-tip="Settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span class="rail-label" data-i18n="Settings">Settings</span></a>
       </div>
     </nav>
 
     <div class="main" id="main">
       <header class="toolbar glass glass-thin" id="toolbar">
-        <button type="button" class="icon-btn" id="toggle-chats" aria-label="Show chats" aria-controls="chats" aria-expanded="false" hidden><svg class="icon" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
+        <button type="button" class="icon-btn" id="toggle-chats" aria-label="Show chats" data-i18n-aria="Show chats" aria-controls="chats" aria-expanded="false" hidden><svg class="icon" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
         <h1 class="toolbar-title" id="view-title">FreeDeepseekAPI</h1>
         <div class="toolbar-right">
           <div class="toolbar-actions" id="toolbar-actions"></div>
-          <button type="button" class="icon-btn toolbar-mobile" id="toolbar-new-chat" aria-label="New chat"><svg class="icon" aria-hidden="true"><use href="#i-new-chat"/></svg></button>
-          <a class="icon-btn toolbar-mobile" id="toolbar-settings" href="#/settings" aria-label="Settings"><svg class="icon" aria-hidden="true"><use href="#i-gear"/></svg></a>
+          <button type="button" class="icon-btn toolbar-mobile" id="toolbar-new-chat" aria-label="New chat" data-i18n-aria="New chat"><svg class="icon" aria-hidden="true"><use href="#i-new-chat"/></svg></button>
+          <a class="icon-btn toolbar-mobile" id="toolbar-settings" href="#/settings" aria-label="Settings" data-i18n-aria="Settings"><svg class="icon" aria-hidden="true"><use href="#i-gear"/></svg></a>
         </div>
       </header>
 
@@ -167,30 +168,30 @@
     <div class="settings-layer" id="settings-layer" hidden>
       <div class="settings-backdrop" id="settings-backdrop"></div>
       <div class="settings-modal" id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="view-title" tabindex="-1">
-        <nav class="settings-nav" aria-label="Settings sections">
+        <nav class="settings-nav" aria-label="Settings sections" data-i18n-aria="Settings sections">
           <label class="search-field settings-search">
             <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
-            <input type="search" id="settings-search" placeholder="Search" aria-label="Search settings" autocomplete="off" spellcheck="false">
+            <input type="search" id="settings-search" placeholder="Search" aria-label="Search settings" data-i18n-placeholder="Search" data-i18n-aria="Search settings" autocomplete="off" spellcheck="false">
           </label>
           <!-- One card like the model picker: groups split by hairlines, the open page checked. -->
           <div class="nav-card">
-          <p class="settings-nav-title">Settings</p>
+          <p class="settings-nav-title" data-i18n="Settings">Settings</p>
           <ul class="nav-list" role="list">
-            <li><a class="nav-item nav-pick" href="#/settings" data-nav="settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span class="nav-text"><span class="nav-title">General</span><span class="nav-desc">Access key, connection, updates</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
+            <li><a class="nav-item nav-pick" href="#/settings" data-nav="settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span class="nav-text"><span class="nav-title" data-i18n="General">General</span><span class="nav-desc" data-i18n="Access key, connection, updates">Access key, connection, updates</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
           </ul>
-          <p class="settings-nav-title">Proxy</p>
+          <p class="settings-nav-title" data-i18n="Proxy">Proxy</p>
           <ul class="nav-list" role="list">
-            <li><a class="nav-item nav-pick" href="#/status" data-nav="status"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-status"/></svg><span class="nav-text"><span class="nav-title">Status</span><span class="nav-desc">Pool health and live traffic</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
-            <li><a class="nav-item nav-pick" href="#/accounts" data-nav="accounts"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-accounts"/></svg><span class="nav-text"><span class="nav-title">Accounts</span><span class="nav-desc">DeepSeek logins in the pool</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
-            <li><a class="nav-item nav-pick" href="#/usage" data-nav="usage"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-usage"/></svg><span class="nav-text"><span class="nav-title">Usage</span><span class="nav-desc">Tokens and requests over time</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
-            <li><a class="nav-item nav-pick" href="#/requests" data-nav="requests"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-requests"/></svg><span class="nav-text"><span class="nav-title">Requests</span><span class="nav-desc">Every call through the proxy</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
+            <li><a class="nav-item nav-pick" href="#/status" data-nav="status"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-status"/></svg><span class="nav-text"><span class="nav-title" data-i18n="Status">Status</span><span class="nav-desc" data-i18n="Pool health and live traffic">Pool health and live traffic</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
+            <li><a class="nav-item nav-pick" href="#/accounts" data-nav="accounts"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-accounts"/></svg><span class="nav-text"><span class="nav-title" data-i18n="Accounts">Accounts</span><span class="nav-desc" data-i18n="DeepSeek logins in the pool">DeepSeek logins in the pool</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
+            <li><a class="nav-item nav-pick" href="#/usage" data-nav="usage"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-usage"/></svg><span class="nav-text"><span class="nav-title" data-i18n="Usage">Usage</span><span class="nav-desc" data-i18n="Tokens and requests over time">Tokens and requests over time</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
+            <li><a class="nav-item nav-pick" href="#/requests" data-nav="requests"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-requests"/></svg><span class="nav-text"><span class="nav-title" data-i18n="Requests">Requests</span><span class="nav-desc" data-i18n="Every call through the proxy">Every call through the proxy</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
           </ul>
-          <p class="settings-nav-title">Connect</p>
+          <p class="settings-nav-title" data-i18n="Connect">Connect</p>
           <ul class="nav-list" role="list">
-            <li><a class="nav-item nav-pick" href="#/agents" data-nav="agents"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-agent"/></svg><span class="nav-text"><span class="nav-title">Agents</span><span class="nav-desc">Point coding agents at this proxy</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
+            <li><a class="nav-item nav-pick" href="#/agents" data-nav="agents"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-agent"/></svg><span class="nav-text"><span class="nav-title" data-i18n="Agents">Agents</span><span class="nav-desc" data-i18n="Point coding agents at this proxy">Point coding agents at this proxy</span></span><svg class="icon nav-check" aria-hidden="true"><use href="#i-check"/></svg></a></li>
           </ul>
           </div>
-          <p class="settings-nav-empty" id="settings-nav-empty" hidden>Nothing matches.</p>
+          <p class="settings-nav-empty" id="settings-nav-empty" data-i18n="Nothing matches." hidden>Nothing matches.</p>
         </nav>
         <div class="settings-pane" id="settings-pane">
           <main class="scroll" id="scroll" tabindex="-1">
@@ -209,21 +210,21 @@
                 <h2 class="inspector-title" id="inspector-title" tabindex="-1"></h2>
                 <p class="inspector-sub" id="inspector-sub"></p>
               </div>
-              <button type="button" class="icon-btn" id="inspector-close" aria-label="Close inspector"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+              <button type="button" class="icon-btn" id="inspector-close" aria-label="Close inspector" data-i18n-aria="Close inspector"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
             </div>
             <div class="inspector-body" id="inspector-body"></div>
           </aside>
-          <button type="button" class="icon-btn settings-close" id="settings-close" aria-label="Close settings" data-tip="Close"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+          <button type="button" class="icon-btn settings-close" id="settings-close" aria-label="Close settings" data-tip="Close" data-i18n-aria="Close settings" data-i18n-tip="Close"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
         </div>
       </div>
     </div>
 
-    <nav class="tabbar glass glass-regular" aria-label="Views">
-      <a class="tab" href="#/chat" data-nav="chat"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-chat"/></svg><span>Chat</span></a>
-      <a class="tab" href="#/status" data-nav="status"><span class="tab-icon"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-status"/></svg><svg class="lamp tab-badge" id="tab-pool-lamp" aria-hidden="true"><use href="#l-disabled"/></svg></span><span>Status</span></a>
-      <a class="tab" href="#/accounts" data-nav="accounts"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-accounts"/></svg><span>Accounts</span></a>
-      <a class="tab" href="#/usage" data-nav="usage"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-usage"/></svg><span>Usage</span></a>
-      <a class="tab" href="#/requests" data-nav="requests"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-requests"/></svg><span>Requests</span></a>
+    <nav class="tabbar glass glass-regular" aria-label="Views" data-i18n-aria="Views">
+      <a class="tab" href="#/chat" data-nav="chat"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-chat"/></svg><span data-i18n="Chat">Chat</span></a>
+      <a class="tab" href="#/status" data-nav="status"><span class="tab-icon"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-status"/></svg><svg class="lamp tab-badge" id="tab-pool-lamp" aria-hidden="true"><use href="#l-disabled"/></svg></span><span data-i18n="Status">Status</span></a>
+      <a class="tab" href="#/accounts" data-nav="accounts"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-accounts"/></svg><span data-i18n="Accounts">Accounts</span></a>
+      <a class="tab" href="#/usage" data-nav="usage"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-usage"/></svg><span data-i18n="Usage">Usage</span></a>
+      <a class="tab" href="#/requests" data-nav="requests"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-requests"/></svg><span data-i18n="Requests">Requests</span></a>
     </nav>
     <div class="scrim" id="scrim" hidden></div>
   </div>
@@ -231,24 +232,24 @@
   <div class="gate" id="gate" hidden>
     <div class="gate-card glass glass-thick" role="dialog" aria-modal="true" aria-labelledby="gate-title">
       <svg class="icon gate-icon" aria-hidden="true"><use href="#i-lock"/></svg>
-      <h2 class="gate-title" id="gate-title">Enter the proxy access key</h2>
+      <h2 class="gate-title" id="gate-title" data-i18n="Enter the proxy access key">Enter the proxy access key</h2>
       <div id="gate-key">
-        <p class="gate-text" id="gate-key-text">This proxy has PROXY_API_KEY set. The key is kept in this tab only and sent as a Bearer header.</p>
+        <p class="gate-text" id="gate-key-text" data-i18n="This proxy has PROXY_API_KEY set. The key is kept in this tab only and sent as a Bearer header.">This proxy has PROXY_API_KEY set. The key is kept in this tab only and sent as a Bearer header.</p>
         <form class="gate-form" id="gate-form" autocomplete="off">
-          <label class="field-label" for="gate-input">Access key</label>
+          <label class="field-label" for="gate-input" data-i18n="Access key">Access key</label>
           <input class="input" id="gate-input" type="password" autocomplete="current-password" spellcheck="false" required>
-          <button type="submit" class="btn btn-primary">Unlock</button>
+          <button type="submit" class="btn btn-primary" data-i18n="Unlock">Unlock</button>
         </form>
       </div>
       <div id="gate-forbidden" hidden>
-        <p class="gate-text">The admin API only answers browsers on this machine unless one of these is set where the proxy runs:</p>
+        <p class="gate-text" data-i18n="The admin API only answers browsers on this machine unless one of these is set where the proxy runs:">The admin API only answers browsers on this machine unless one of these is set where the proxy runs:</p>
         <ul class="gate-envs" role="list">
-          <li><code class="mono-id">PROXY_API_KEY</code><span>then enter the key here</span></li>
-          <li><code class="mono-id">PROXY_ADMIN_ALLOW_REMOTE=1</code><span>allow keyless remote admin (trusted networks only)</span></li>
-          <li><code class="mono-id">PROXY_CORS_ORIGINS</code><span>add this page's origin when it is opened through a LAN address</span></li>
+          <li><code class="mono-id">PROXY_API_KEY</code><span data-i18n="then enter the key here">then enter the key here</span></li>
+          <li><code class="mono-id">PROXY_ADMIN_ALLOW_REMOTE=1</code><span data-i18n="allow keyless remote admin (trusted networks only)">allow keyless remote admin (trusted networks only)</span></li>
+          <li><code class="mono-id">PROXY_CORS_ORIGINS</code><span data-i18n="add this page's origin when it is opened through a LAN address">add this page's origin when it is opened through a LAN address</span></li>
         </ul>
         <p class="gate-server" id="gate-server-message"></p>
-        <button type="button" class="btn btn-secondary" id="gate-retry">Try again</button>
+        <button type="button" class="btn btn-secondary" id="gate-retry" data-i18n="Try again">Try again</button>
       </div>
     </div>
   </div>
@@ -258,12 +259,12 @@
   <div class="chart-tip" id="chart-tip" hidden></div>
   <p class="sr-only" id="announcer" aria-live="polite"></p>
 
-  <dialog class="palette glass glass-thick" id="palette" aria-label="Command palette">
+  <dialog class="palette glass glass-thick" id="palette" aria-label="Command palette" data-i18n-aria="Command palette">
     <div class="palette-field">
       <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
-      <input type="text" id="palette-input" placeholder="Go to a view, account or chat" aria-label="Search commands" aria-controls="palette-list" aria-autocomplete="list" autocomplete="off" spellcheck="false">
+      <input type="text" id="palette-input" placeholder="Go to a view, account or chat" aria-label="Search commands" data-i18n-placeholder="Go to a view, account or chat" data-i18n-aria="Search commands" aria-controls="palette-list" aria-autocomplete="list" autocomplete="off" spellcheck="false">
     </div>
-    <ul class="palette-list" id="palette-list" role="listbox" aria-label="Commands"></ul>
+    <ul class="palette-list" id="palette-list" role="listbox" aria-label="Commands" data-i18n-aria="Commands"></ul>
   </dialog>
 
   <dialog class="dialog glass glass-thick" id="add-account" aria-labelledby="add-title"></dialog>

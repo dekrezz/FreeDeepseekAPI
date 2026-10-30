@@ -242,24 +242,24 @@
     const banners = h('div', { class: 'chat-banners' });
     const emptyTitle = h('h2', { class: 'chat-empty-title' },
       h('img', { class: 'chat-empty-mark', src: '/dashboard/logo.png', alt: '', width: '40', height: '40' }),
-      h('span', { text: 'What should we work on?' }));
+      h('span', { text: F.t('What should we work on?') }));
     const emptyLine = h('p', { class: 'chat-empty-line' });
     const empty = h('div', { class: 'chat-empty' }, emptyTitle, emptyLine);
     const unknown = h('div', { class: 'chat-unknown', hidden: true });
     const transcript = h('ol', { class: 'transcript', 'aria-label': 'Conversation' });
     const scroll = h('div', { class: 'chat-scroll', id: 'chat-scroll', tabindex: '-1' }, h('div', { class: 'chat-inner' }, banners, unknown, transcript));
 
-    const textarea = h('textarea', { class: 'composer-input', rows: '1', placeholder: 'Message DeepSeek through this proxy…', 'aria-label': 'Message', spellcheck: 'true' });
+    const textarea = h('textarea', { class: 'composer-input', rows: '1', placeholder: F.t('Message DeepSeek through this proxy…'), 'aria-label': F.t('Message'), spellcheck: 'true' });
     const thumbs = h('div', { class: 'attach-row', hidden: true });
     // hidden, not just visually hidden: Safari drew an empty focus box for the 1px input.
     const fileInput = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', multiple: true, hidden: true, tabindex: '-1', 'aria-hidden': 'true' });
-    const attachBtn = F.iconBtn('plus', 'Attach images', { onclick: () => fileInput.click() });
+    const attachBtn = F.iconBtn('plus', F.t('Attach images'), { onclick: () => fileInput.click() });
     // Under the box, Claude-style: model and mode on the right (the account is in its menu).
     const modelName = h('span', { class: 'meta-btn-label' });
     const modelMode = h('span', { class: 'meta-btn-detail' });
     const modelBtn = h('button', { type: 'button', class: 'meta-btn meta-btn-model', 'aria-haspopup': 'menu', 'aria-expanded': 'false' }, modelName, modelMode);
     const meta = h('div', { class: 'composer-meta' }, h('div', { class: 'composer-meta-left' }), h('div', { class: 'composer-meta-right' }, modelBtn));
-    const sendBtn = h('button', { type: 'submit', class: 'send-btn', 'aria-label': 'Send' },
+    const sendBtn = h('button', { type: 'submit', class: 'send-btn', 'aria-label': F.t('Send') },
       h('span', { class: 'send-icon send-icon-send' }, F.icon('send')),
       h('span', { class: 'send-icon send-icon-stop' }, F.icon('stop')));
     const form = h('form', { class: 'composer glass glass-regular', 'aria-label': 'Message composer' },
@@ -678,7 +678,7 @@
       li.append(h('div', { class: 'working', 'aria-live': 'off' },
         h('p', { class: 'working-label' },
           thinkGrid(true),
-          h('span', { text: 'Thinking' }),
+          h('span', { text: F.t('Thinking') }),
           h('span', { class: 'working-time', 'data-run-timer': String(runInfo.startedAt), text: thinkClock(elapsed) })),
         h('p', { class: 'meta working-hint', 'data-slow-hint': String(runInfo.startedAt), hidden: elapsed < SLOW_HINT_MS, text: 'The proxy returns the answer when DeepSeek finishes, so long answers and account failover can take a few minutes. It arrives in one piece.' })));
       if (m.reasoning) li.append(...answerParts(m, false));
@@ -825,18 +825,18 @@
   }
 
   function errorTitle(e) {
-    if (e.type === 'network') return 'Can\'t reach the proxy';
-    if (e.type === 'stream_truncated') return 'Response truncated';
-    if (e.type === 'reset_failed') return 'Couldn\'t reset the server session';
-    if (e.status === 429) return 'Rate limited';
-    if (e.status === 503) return 'No account available';
-    if (e.status === 401) return 'Access key required';
-    if (e.status === 403 && e.type === 'cors_error') return 'Not allowed from this address';
-    if (e.type === 'context_length_exceeded') return 'Context too long';
-    if (e.status === 504) return 'The proxy timed out';
-    if (e.status >= 500) return 'The proxy failed to answer';
-    if (e.status === 400) return 'The proxy rejected the request';
-    return 'The request failed';
+    if (e.type === 'network') return F.t('Can\'t reach the proxy');
+    if (e.type === 'stream_truncated') return F.t('Response truncated');
+    if (e.type === 'reset_failed') return F.t('Couldn\'t reset the server session');
+    if (e.status === 429) return F.t('Rate limited');
+    if (e.status === 503) return F.t('No account available');
+    if (e.status === 401) return F.t('Access key required');
+    if (e.status === 403 && e.type === 'cors_error') return F.t('Not allowed from this address');
+    if (e.type === 'context_length_exceeded') return F.t('Context too long');
+    if (e.status === 504) return F.t('The proxy timed out');
+    if (e.status >= 500) return F.t('The proxy failed to answer');
+    if (e.status === 400) return F.t('The proxy rejected the request');
+    return F.t('The request failed');
   }
 
   function receipt(m) {
@@ -1188,7 +1188,7 @@
       .sort((a, b) => b.updatedAt - a.updatedAt);
     if (!convs.length) {
       host.replaceChildren(h('div', { class: 'chat-list-empty' },
-        h('p', { class: 'chat-list-empty-title', text: q ? 'No chat title matches' : 'No chats yet' }),
+        h('p', { class: 'chat-list-empty-title', text: q ? F.t('No chat title matches') : F.t('No chats yet') }),
         h('p', { class: 'chat-list-empty-text', text: q ? 'Try another word.' : store.mode === 'memory' ? 'Chats are kept in memory only in this browser mode.' : 'Start one with New chat above.' })));
       return;
     }
@@ -1339,7 +1339,7 @@
   const ready = init();
 
   F.views.chat = {
-    get title() { const c = active(); return c ? c.title : 'New chat'; },
+    get title() { const c = active(); return c ? c.title : F.t('New chat'); },
     live: false,
     mount,
     async show(route) {

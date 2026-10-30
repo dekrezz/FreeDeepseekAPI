@@ -21,13 +21,13 @@
 
   function mount(root) {
     st.root = root;
-    const statusSeg = F.segmented('Status', [{ value: '', label: 'All' }, { value: 'error', label: 'Errors' }], st.f.status, (v) => { st.f.status = v; changed(); });
+    const statusSeg = F.segmented(F.t('Status'), [{ value: '', label: 'All' }, { value: 'error', label: 'Errors' }], st.f.status, (v) => { st.f.status = v; changed(); });
     const selects = h('div', { class: 'filter-selects' });
-    const client = h('input', { type: 'search', class: 'input input-search', placeholder: 'Client', 'aria-label': 'Filter by client', 'data-view-filter': '', spellcheck: 'false' });
+    const client = h('input', { type: 'search', class: 'input input-search', placeholder: F.t('Client'), 'aria-label': F.t('Filter by client'), 'data-view-filter': '', spellcheck: 'false' });
     client.addEventListener('input', () => { st.f.client = client.value.trim(); changed(); });
     const notice = h('div', { class: 'view-banner' });
     const table = h('table', { class: 'data-table requests-table rows-clickable' });
-    table.append(h('caption', { class: 'sr-only', text: 'Recent requests, newest first' }));
+    table.append(h('caption', { class: 'sr-only', text: F.t('Recent requests, newest first') }));
     table.append(h('thead', null, h('tr', null,
       h('th', { scope: 'col', text: 'Time' }), h('th', { scope: 'col', text: 'Status' }), h('th', { scope: 'col', text: 'Endpoint' }),
       h('th', { scope: 'col', text: 'Model' }), h('th', { scope: 'col', text: 'Account' }), h('th', { scope: 'col', text: 'Client' }),
@@ -42,7 +42,7 @@
       st.held = null;
       render();
     });
-    const hero = F.pageHero({ image: '/dashboard/media-caustics.jpg', label: 'Request log', position: '50% 62%' });
+    const hero = F.pageHero({ image: '/dashboard/media-caustics.jpg', label: F.t('Request log'), position: '50% 62%' });
     root.append(hero, h('div', { class: 'view-pad' },
       h('div', { class: 'filter-row' }, statusSeg, selects, h('label', { class: 'search-field search-field-inline' }, F.icon('search'), client)),
       notice,
@@ -293,7 +293,7 @@
   }
 
   F.views.requests = {
-    title: 'Requests',
+    title: () => F.t('Requests'),
     live: true,
     mount,
     show(route) {

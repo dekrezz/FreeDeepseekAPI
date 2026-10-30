@@ -25,7 +25,7 @@
       r = F.parseHash();
     } catch (e) {
       // A truncated or hand-edited link (#/chat/%E0) is not valid percent-encoding.
-      F.toast(`Unreadable page address ${location.hash} (${e.name}: ${e.message})`, { tone: 'warn' });
+      F.toast(F.t('Unreadable page address {hash} ({name}: {message})', { hash: location.hash, name: e.name, message: e.message }), { tone: 'warn' });
       history.replaceState(null, '', '#/chat');
       return route();
     }
@@ -37,7 +37,7 @@
       return route();
     }
     if (!VIEWS.includes(r.view)) {
-      F.toast(`Unknown page #/${r.view}`, { tone: 'warn' });
+      F.toast(F.t('Unknown page #{view}', { view: r.view }), { tone: 'warn' });
       history.replaceState(null, '', '#/chat');
       return route();
     }
@@ -132,14 +132,15 @@
     const v = F.views[app.view];
     slot.replaceChildren();
     if (!s.error || !v || !v.live) return;
-    const retry = F.btn('Retry', { size: 'sm', icon: 'reload', onclick: () => F.refresh() });
+    const retry = F.btn(F.t('Retry'), { size: 'sm', icon: 'reload', onclick: () => F.refresh() });
     if (s.error.type === 'network') {
-      slot.append(F.notice('crit', `Can't reach the proxy at ${location.host}.`, `${s.error.message} Data below is from ${s.lastOkAt ? fmt.time(s.lastOkAt) : 'nowhere yet'}.`, [retry]));
+      slot.append(F.notice('crit', F.t("Can't reach the proxy at {host}.", { host: location.host }), F.t('{message} Data below is from {when}.', { message: s.error.message, when: s.lastOkAt ? fmt.time(s.lastOkAt) : F.t('nowhere yet') }), [retry]));
     } else {
-      slot.append(F.notice('warn', `${s.error.endpoint || 'GET /admin/accounts'} failed${s.error.status ? ` with HTTP ${s.error.status}` : ''}`, F.errorText(s.error), [retry]));
+      const endpoint = s.error.endpoint || 'GET /admin/accounts';
+      slot.append(F.notice('warn', s.error.status ? F.t('{endpoint} failed with HTTP {status}', { endpoint, status: s.error.status }) : F.t('{endpoint} failed', { endpoint }), F.errorText(s.error), [retry]));
     }
     if (s.error.status === 403 && s.error.type === 'cors_error') {
-      slot.lastChild.append(h('p', { class: 'meta', text: `Add ${location.origin} to PROXY_CORS_ORIGINS where the proxy runs.` }));
+      slot.lastChild.append(h('p', { class: 'meta', text: F.t('Add {origin} to PROXY_CORS_ORIGINS where the proxy runs.', { origin: location.origin }) }));
     }
   }
 
@@ -152,7 +153,7 @@
     get() { try { return localStorage.getItem(ACCOUNT_KEY) || ''; } catch (e) { return ''; } },
     set(id) {
       try { if (id) localStorage.setItem(ACCOUNT_KEY, id); else localStorage.removeItem(ACCOUNT_KEY); }
-      catch (e) { F.toast(`Could not save the chat account: ${e.name}`, { tone: 'error' }); }
+      catch (e) { F.toast(F.t('Could not save the chat account: {name}', { name: e.name }), { tone: 'error' }); }
       renderPool();
       F.emit('chat-account', id);
     },
@@ -178,8 +179,9 @@
     el.textContent = initials(account.name || account.id);
   }
   const accountStateText = (a) => {
-    if (a.status === 'cooldown') return `Cooling down · ${fmt.clock(F.cooldownLeft(a))}`;
-    return { ready: 'Ready', busy: 'Busy', disabled: 'Paused', no_credentials: 'No credentials' }[a.status] || a.status;
+    if (a.status === 'cooldown') return F.t('Cooling down · {time}', { time: fmt.clock(F.cooldownLeft(a)) });
+    const label = { ready: 'Ready', busy: 'Busy', disabled: 'Paused', no_credentials: 'No credentials' }[a.status];
+    return label ? F.t(label) : a.status;
   };
 
   function renderPool() {
@@ -197,8 +199,8 @@
       sub.textContent = '';
     } else if (!data.accounts.length) {
       paintAvatar(avatar, 'add');
-      name.textContent = 'Add account';
-      sub.textContent = 'No DeepSeek login yet';
+      name.textContent = F.t('Add account');
+      sub.textContent = F.t('No DeepSeek login yet');
       btn.classList.add('is-empty');
     } else if (pinned) {
       const a = data.accounts.find(x => x.id === pinned);
@@ -211,16 +213,16 @@
       } else {
         paintAvatar(avatar, { id: pinned, name: pinned });
         name.textContent = pinned;
-        sub.textContent = 'Not loaded · chat will fail';
+        sub.textContent = F.t('Not loaded · chat will fail');
         btn.classList.add('is-crit');
       }
     } else {
       paintAvatar(avatar, 'auto');
-      name.textContent = 'Automatic';
+      name.textContent = F.t('Automatic');
       sub.textContent = sig.text;
       if (sig.tone) btn.classList.add(`is-${sig.tone}`);
     }
-    const label = `Chat account: ${name.textContent}${sub.textContent ? `, ${sub.textContent}` : ''}`;
+    const label = F.t('Chat account: {label}', { label: sub.textContent ? `${name.textContent}, ${sub.textContent}` : name.textContent });
     btn.setAttribute('aria-label', label);
     btn.setAttribute('data-tip', label);
     F.setLamp($('tab-pool-lamp'), sig.state);
@@ -236,7 +238,7 @@
     const data = F.store.accounts;
     if (data && !data.accounts.length) { openAddAccount(trigger); return; }
     const pinned = F.chatAccount.get();
-    const list = h('div', { class: 'menu account-menu', role: 'menu', 'aria-label': 'Chat account' });
+    const list = h('div', { class: 'menu account-menu', role: 'menu', 'aria-label': F.t('Chat account') });
     const item = (avatarFor, title, detail, checked, run, extra = {}) => {
       const b = h('button', { type: 'button', role: extra.radio === false ? 'menuitem' : 'menuitemradio', class: ['menu-item', 'account-item', extra.cls], 'aria-checked': extra.radio === false ? null : String(checked) },
         F.avatar(avatarFor, 'avatar-sm'),
@@ -246,20 +248,20 @@
       return b;
     };
     if (data) {
-      list.append(item('auto', 'Automatic', `Pool picks · ${F.poolSignal().text}`, !pinned, () => F.chatAccount.set('')));
+      list.append(item('auto', F.t('Automatic'), F.t('Pool picks · {text}', { text: F.poolSignal().text }), !pinned, () => F.chatAccount.set('')));
       for (const a of data.accounts) {
         const tone = a.status === 'cooldown' ? 'is-warn' : (a.status === 'disabled' || a.status === 'no_credentials') ? 'is-crit' : null;
         list.append(item(a, a.name || a.id, a.email ? `${a.email} · ${accountStateText(a)}` : accountStateText(a), pinned === a.id, () => F.chatAccount.set(a.id), { cls: tone }));
       }
     } else {
-      list.append(h('p', { class: 'meta account-menu-note', text: F.store.error ? `Accounts unavailable: ${F.errorText(F.store.error)}` : 'Loading accounts…' }));
+      list.append(h('p', { class: 'meta account-menu-note', text: F.store.error ? F.t('Accounts unavailable: {detail}', { detail: F.errorText(F.store.error) }) : F.t('Loading accounts…') }));
     }
     list.append(h('div', { class: 'menu-sep', role: 'separator' }));
     // Plain rows like "Manage accounts", so both labels start on the same line.
-    const add = h('button', { type: 'button', role: 'menuitem', class: 'menu-item' }, F.icon('plus'), h('span', { text: 'Add account' }));
+    const add = h('button', { type: 'button', role: 'menuitem', class: 'menu-item' }, F.icon('plus'), h('span', { text: F.t('Add account') }));
     add.addEventListener('click', () => { F.closePopover(); openAddAccount(trigger); });
     list.append(add);
-    const manage = h('button', { type: 'button', role: 'menuitem', class: 'menu-item' }, F.icon('accounts'), h('span', { text: 'Manage accounts' }));
+    const manage = h('button', { type: 'button', role: 'menuitem', class: 'menu-item' }, F.icon('accounts'), h('span', { text: F.t('Manage accounts') }));
     manage.addEventListener('click', () => { F.closePopover(); F.navigate('accounts'); });
     list.append(manage);
     list.addEventListener('keydown', (e) => {
@@ -268,7 +270,7 @@
       if (e.key === 'ArrowDown') { e.preventDefault(); btns[(i + 1) % btns.length].focus(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); btns[(i - 1 + btns.length) % btns.length].focus(); }
     });
-    F.popover(trigger, list, { width: Math.max(244, trigger.getBoundingClientRect().width), align: 'auto', role: 'presentation', label: 'Chat account' });
+    F.popover(trigger, list, { width: Math.max(244, trigger.getBoundingClientRect().width), align: 'auto', role: 'presentation', label: F.t('Chat account') });
   }
   $('account-switch').addEventListener('click', (e) => openAccountMenu(e.currentTarget));
   F.openAccountMenu = openAccountMenu;
@@ -322,7 +324,7 @@
     }
     app$.classList.toggle('rail-collapsed', collapsed);
     $('rail-toggle').setAttribute('aria-expanded', String(!collapsed));
-    $('toggle-chats').setAttribute('aria-label', collapsed ? 'Show sidebar' : 'Show chats');
+    $('toggle-chats').setAttribute('aria-label', collapsed ? F.t('Show sidebar') : F.t('Show chats'));
     try { localStorage.setItem('fdsa.railCollapsed', collapsed ? '1' : '0'); } catch (e) { /* preference only */ }
   }
   F.toggleRail = () => setRailCollapsed(!$('app').classList.contains('rail-collapsed'));
@@ -349,7 +351,7 @@
     e.preventDefault();
     const v = $('gate-input').value.trim();
     if (!v) return;
-    try { F.key.set(v); } catch (err) { F.toast(`Could not store the key: ${err.name}`, { tone: 'error' }); return; }
+    try { F.key.set(v); } catch (err) { F.toast(F.t('Could not store the key: {name}', { name: err.name }), { tone: 'error' }); return; }
     $('gate-input').value = '';
     F.hideGate();
     F.refresh();
@@ -361,32 +363,32 @@
   const palette = { items: [], index: 0 };
   function paletteItems() {
     const items = [
-      { label: 'New chat', icon: 'new-chat', run: () => F.views.chat.newChat() },
-      { label: 'Go to Chat', icon: 'chat', run: () => F.navigate('chat') },
-      { label: 'Go to Status', icon: 'status', run: () => F.navigate('status') },
-      { label: 'Go to Accounts', icon: 'accounts', run: () => F.navigate('accounts') },
-      { label: 'Go to Usage', icon: 'usage', run: () => F.navigate('usage') },
-      { label: 'Go to Requests', icon: 'requests', run: () => F.navigate('requests') },
-      { label: 'Go to Agents', icon: 'agent', run: () => F.navigate('agents') },
-      { label: 'Go to Settings', icon: 'settings', run: () => F.navigate('settings') },
-      { label: 'Show errors in Requests', icon: 'error-x', run: () => F.navigate('requests', '', { status: 'error' }) },
-      { label: 'Reload accounts from disk', icon: 'reload', run: () => { F.navigate('accounts'); setTimeout(() => { const b = Array.from(document.querySelectorAll('#toolbar-actions .btn')).find(x => x.textContent.includes('Reload')); F.views.accounts.reload(b); }, 0); } },
-      { label: 'Add account', icon: 'plus', run: () => { F.navigate('accounts'); setTimeout(() => F.views.accounts.openAdd(document.querySelector('#toolbar-actions .btn-primary')), 0); } },
+      { label: F.t('New chat'), icon: 'new-chat', run: () => F.views.chat.newChat() },
+      { label: F.t('Go to Chat'), icon: 'chat', run: () => F.navigate('chat') },
+      { label: F.t('Go to Status'), icon: 'status', run: () => F.navigate('status') },
+      { label: F.t('Go to Accounts'), icon: 'accounts', run: () => F.navigate('accounts') },
+      { label: F.t('Go to Usage'), icon: 'usage', run: () => F.navigate('usage') },
+      { label: F.t('Go to Requests'), icon: 'requests', run: () => F.navigate('requests') },
+      { label: F.t('Go to Agents'), icon: 'agent', run: () => F.navigate('agents') },
+      { label: F.t('Go to Settings'), icon: 'settings', run: () => F.navigate('settings') },
+      { label: F.t('Show errors in Requests'), icon: 'error-x', run: () => F.navigate('requests', '', { status: 'error' }) },
+      { label: F.t('Reload accounts from disk'), icon: 'reload', run: () => { F.navigate('accounts'); setTimeout(() => { const b = document.querySelector('#toolbar-actions [data-action="reload"]'); F.views.accounts.reload(b); }, 0); } },
+      { label: F.t('Add account'), icon: 'plus', run: () => { F.navigate('accounts'); setTimeout(() => F.views.accounts.openAdd(document.querySelector('#toolbar-actions .btn-primary')), 0); } },
     ];
     for (const a of (F.store.accounts && F.store.accounts.accounts) || []) {
       const name = a.name || a.id;
-      items.push({ label: `Account: ${name}`, detail: F.charts.stateLabel(a), icon: 'accounts', run: () => F.navigate('accounts', a.id) });
-      if (a.status === 'ready' || a.status === 'busy' || a.status === 'cooldown') items.push({ label: `Pause account: ${name}`, icon: 'pause', run: () => F.views.accounts.action(a, 'disable') });
-      if (a.status === 'disabled' && a.disabled_by === 'admin') items.push({ label: `Resume account: ${name}`, icon: 'play', run: () => F.views.accounts.action(a, 'enable') });
-      if (a.status === 'cooldown') items.push({ label: `Clear cooldown: ${name}`, icon: 'clear-cooldown', run: () => F.views.accounts.action(a, 'clear-cooldown') });
+      items.push({ label: F.t('Account: {name}', { name }), detail: F.charts.stateLabel(a), icon: 'accounts', run: () => F.navigate('accounts', a.id) });
+      if (a.status === 'ready' || a.status === 'busy' || a.status === 'cooldown') items.push({ label: F.t('Pause account: {name}', { name }), icon: 'pause', run: () => F.views.accounts.action(a, 'disable') });
+      if (a.status === 'disabled' && a.disabled_by === 'admin') items.push({ label: F.t('Resume account: {name}', { name }), icon: 'play', run: () => F.views.accounts.action(a, 'enable') });
+      if (a.status === 'cooldown') items.push({ label: F.t('Clear cooldown: {name}', { name }), icon: 'clear-cooldown', run: () => F.views.accounts.action(a, 'clear-cooldown') });
     }
     for (const a of F.views.agents.catalog()) {
-      items.push({ label: `Agent: ${a.name}`, detail: a.state, icon: 'agent', run: () => F.navigate('agents', a.id) });
-      items.push({ label: `Files: ${a.name}`, icon: 'files', run: () => F.navigate('agents', a.id, { show: 'disk' }) });
+      items.push({ label: F.t('Agent: {name}', { name: a.name }), detail: a.state, icon: 'agent', run: () => F.navigate('agents', a.id) });
+      items.push({ label: F.t('Files: {name}', { name: a.name }), icon: 'files', run: () => F.navigate('agents', a.id, { show: 'disk' }) });
     }
-    items.push({ label: 'Agent restore points', icon: 'undo', run: () => F.navigate('agents', '', { section: 'backups' }) });
+    items.push({ label: F.t('Agent restore points'), icon: 'undo', run: () => F.navigate('agents', '', { section: 'backups' }) });
     for (const c of F.views.chat.conversations().slice(0, 50)) {
-      items.push({ label: `Chat: ${c.title}`, detail: fmt.ago(c.updatedAt, Date.now()), icon: 'chat', run: () => F.navigate('chat', c.id) });
+      items.push({ label: F.t('Chat: {title}', { title: c.title }), detail: fmt.ago(c.updatedAt, Date.now()), icon: 'chat', run: () => F.navigate('chat', c.id) });
     }
     return items;
   }
@@ -405,7 +407,7 @@
       li.addEventListener('click', () => choose(i));
       return li;
     }));
-    if (!palette.items.length) list.append(h('li', { class: 'palette-empty', role: 'presentation', text: 'Nothing matches.' }));
+    if (!palette.items.length) list.append(h('li', { class: 'palette-empty', role: 'presentation', text: F.t('Nothing matches.') }));
     mark();
   }
   function mark() {

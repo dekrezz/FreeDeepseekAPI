@@ -71,6 +71,44 @@ test('agent tiles take each brand\'s own avatar colours (Lobe Icons), not a comp
   }
 });
 
+test('dashboard Chinese covers every English string and translates the main navigation', () => {
+  const store = {};
+  const localStorage = {
+    getItem(k) { return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
+    setItem(k, v) { store[k] = String(v); },
+    removeItem(k) { delete store[k]; },
+  };
+  const navigator = { language: 'en-US' };
+  const window = { FDSA: {} };
+  loadDashboardScript('i18n.js', { window, localStorage, navigator });
+  const { en, zh } = window.FDSA.I18N;
+  const t = window.FDSA.t;
+  assert.deepEqual(Object.keys(en).sort(), Object.keys(zh).sort());
+  for (const key of Object.keys(en)) {
+    assert.equal(typeof zh[key], 'string', key);
+    assert.ok(zh[key].trim(), `empty Chinese for ${key}`);
+  }
+  for (const key of ['Chat', 'Status', 'Accounts', 'Usage', 'Requests', 'Settings']) {
+    assert.equal(en[key], key, key);
+    assert.notEqual(zh[key], en[key], key);
+  }
+  assert.equal(window.FDSA.lang.get(), 'en');
+  assert.equal(t('Chat'), 'Chat');
+  assert.equal(t('not a stored sentence'), 'not a stored sentence');
+  navigator.language = 'zh-CN';
+  assert.equal(window.FDSA.lang.get(), 'zh');
+  assert.equal(t('Settings'), '设置');
+  assert.equal(t('{n} accounts', { n: 4 }), '4 个账号');
+  localStorage.setItem('fdsa.lang', 'en');
+  assert.equal(window.FDSA.lang.get(), 'en', 'a stored choice wins over the browser language');
+  assert.equal(t('Chat'), 'Chat');
+  const saved = zh.Chat;
+  delete zh.Chat;
+  localStorage.setItem('fdsa.lang', 'zh');
+  assert.equal(t('Chat'), 'Chat', 'a missing Chinese string falls back to English');
+  zh.Chat = saved;
+});
+
 test('agent rows carry no file/proxy/model chain; channel and mode choices read like the model picker', () => {
   const agents = fs.readFileSync(path.join(DASHBOARD_DIR, 'agents.js'), 'utf8');
   const settings = fs.readFileSync(path.join(DASHBOARD_DIR, 'settings.js'), 'utf8');

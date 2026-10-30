@@ -546,9 +546,12 @@
   }
 
   function stateWord(a) {
-    return { ready: 'ready', busy: 'busy', cooldown: 'cooling down', disabled: a.disabled_by === 'file' ? 'disabled in file' : 'paused', no_credentials: 'no credentials' }[a.status] || a.status;
+    const key = { ready: 'ready', busy: 'busy', cooldown: 'cooling down', disabled: a.disabled_by === 'file' ? 'disabled in file' : 'paused', no_credentials: 'no credentials' }[a.status];
+    return key ? F.t(key) : a.status;
   }
   C.stateWord = stateWord;
-  // Sentence-start form for headers and list details; stateWord stays lower case for mid-sentence use.
-  C.stateLabel = (a) => { const w = stateWord(a); return w.charAt(0).toUpperCase() + w.slice(1); };
+  C.stateLabel = (a) => {
+    const key = { ready: 'Ready', busy: 'Busy', cooldown: 'Cooling down', disabled: a.disabled_by === 'file' ? 'Disabled in file' : 'Paused', no_credentials: 'No credentials' }[a.status];
+    return key ? F.t(key) : (a.status || '');
+  };
 })();

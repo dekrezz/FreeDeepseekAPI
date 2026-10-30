@@ -8,6 +8,12 @@
   'use strict';
 
   const F = window.FDSA = window.FDSA || {};
+  if (typeof F.t !== 'function') F.t = (key, vars) => {
+    let s = key == null ? '' : String(key);
+    if (vars) s = s.replace(/\{(\w+)\}/g, (m, name) => (vars[name] == null ? m : String(vars[name])));
+    return s;
+  };
+  if (!F.lang) F.lang = { get() { return 'en'; }, set() {} };
   const SVGNS = 'http://www.w3.org/2000/svg';
   const KEY_STORAGE = 'freedeepseek.proxyKey';
   const POLL_MS = 5000;
@@ -150,23 +156,24 @@
     ago(ts, now = F.now()) {
       if (!ts) return '—';
       const d = Math.max(0, now - ts) / 1000;
-      if (d < 5) return 'just now';
-      if (d < 60) return `${Math.floor(d)}s ago`;
-      if (d < 3600) return `${Math.floor(d / 60)}m ago`;
-      if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
-      return `${Math.floor(d / 86400)}d ago`;
+      if (d < 5) return F.t('just now');
+      if (d < 60) return F.t('{n}s ago', { n: Math.floor(d) });
+      if (d < 3600) return F.t('{n}m ago', { n: Math.floor(d / 60) });
+      if (d < 86400) return F.t('{n}h ago', { n: Math.floor(d / 3600) });
+      return F.t('{n}d ago', { n: Math.floor(d / 86400) });
     },
     shortModel: (id) => (id ? String(id).replace(/^deepseek-v4-/, '') : '—'),
     endpoint(path) {
-      if (path === '/v1/chat/completions') return 'OpenAI chat';
-      if (path === '/v1/messages') return 'Anthropic messages';
-      if (path === '/v1/responses') return 'Responses';
+      if (path === '/v1/chat/completions') return F.t('OpenAI chat');
+      if (path === '/v1/messages') return F.t('Anthropic messages');
+      if (path === '/v1/responses') return F.t('Responses');
       return path || '—';
     },
     api(api) {
-      return { openai: 'OpenAI chat', anthropic: 'Anthropic messages', responses: 'Responses' }[api] || api || '—';
+      const label = { openai: 'OpenAI chat', anthropic: 'Anthropic messages', responses: 'Responses' }[api];
+      return label ? F.t(label) : (api || '—');
     },
-    cooldownReason: (r) => ({ rate_limit: 'rate limit', auth: 'auth error' }[r] || r || 'cooldown'),
+    cooldownReason: (r) => F.t({ rate_limit: 'rate limit', auth: 'auth error' }[r] || r || 'cooldown'),
   };
 
   // ---------------------------------------------------------------- clock
@@ -212,7 +219,7 @@
     let message;
     if (typeof err === 'string') message = err;
     else if (err && err.message) message = err.message;
-    else message = `${endpoint} answered HTTP ${res.status}${text && !body ? `: ${text.slice(0, 200)}` : ''}.`;
+    else message = F.t('{endpoint} answered HTTP {status}{extra}.', { endpoint, status: res.status, extra: text && !body ? `: ${text.slice(0, 200)}` : '' });
     const ra = Number(res.headers.get('retry-after'));
     return new ApiError(message, {
       status: res.status,
@@ -225,8 +232,8 @@
 
   F.networkError = (e, endpoint) => new ApiError(
     e && e.name === 'AbortError' && e.timeout
-      ? `${endpoint} did not answer within ${Math.round(e.timeout / 1000)}s.`
-      : `Can't reach the proxy at ${location.host} (${(e && e.name) || 'Error'}).`,
+      ? F.t('{endpoint} did not answer within {sec}s.', { endpoint, sec: Math.round(e.timeout / 1000) })
+      : F.t("Can't reach the proxy at {host} ({name}).", { host: location.host, name: (e && e.name) || 'Error' }),
     { status: 0, type: 'network', endpoint },
   );
 
@@ -257,7 +264,7 @@
     try {
       return text ? JSON.parse(text) : {};
     } catch (e) {
-      throw new ApiError(`${endpoint} sent a response that is not JSON.`, { status: res.status, type: 'invalid_response', endpoint });
+      throw new ApiError(F.t('{endpoint} sent a response that is not JSON.', { endpoint }), { status: res.status, type: 'invalid_response', endpoint });
     }
   };
 
@@ -286,11 +293,11 @@
     document.getElementById('app').setAttribute('inert', '');
     document.getElementById('gate-key').hidden = mode !== 'key';
     document.getElementById('gate-forbidden').hidden = mode !== 'forbidden';
-    document.getElementById('gate-title').textContent = mode === 'key' ? 'Enter the proxy access key' : 'This browser is not allowed to use the admin API';
+    document.getElementById('gate-title').textContent = mode === 'key' ? F.t('Enter the proxy access key') : F.t('This browser is not allowed to use the admin API');
     document.getElementById('gate-key-text').textContent = gate.keyRejected
-      ? 'The saved key was refused by the server. Enter the current PROXY_API_KEY.'
-      : 'This proxy has PROXY_API_KEY set. The key is kept in this tab only and sent as a Bearer header.';
-    document.getElementById('gate-server-message').textContent = serverMessage ? `Server: ${serverMessage}` : '';
+      ? F.t('The saved key was refused by the server. Enter the current PROXY_API_KEY.')
+      : F.t('This proxy has PROXY_API_KEY set. The key is kept in this tab only and sent as a Bearer header.');
+    document.getElementById('gate-server-message').textContent = serverMessage ? F.t('Server: {message}', { message: serverMessage }) : '';
     poller.stop();
     if (wasHidden && mode === 'key') requestAnimationFrame(() => document.getElementById('gate-input').focus());
   }
@@ -428,12 +435,12 @@
   // Pool summary sentence pieces shared by the sidebar, Status and Chat.
   F.poolSignal = () => {
     const data = store.accounts;
-    if (!data) return { state: 'disabled', text: store.error ? 'Pool unknown' : 'Loading pool…' };
+    if (!data) return { state: 'disabled', text: store.error ? F.t('Pool unknown') : F.t('Loading pool…') };
     const pool = data.pool;
-    if (!pool.total || pool.total === pool.no_credentials) return { state: 'no_credentials', text: 'No accounts', tone: 'crit' };
-    if (pool.can_serve > 0) return { state: 'ready', text: `${pool.can_serve} of ${pool.total} ready` };
+    if (!pool.total || pool.total === pool.no_credentials) return { state: 'no_credentials', text: F.t('No accounts'), tone: 'crit' };
+    if (pool.can_serve > 0) return { state: 'ready', text: F.t('{ready} of {total} ready', { ready: pool.can_serve, total: pool.total }) };
     const next = pool.next_ready_at ? Math.max(0, (pool.next_ready_at - F.now()) / 1000) : null;
-    return { state: 'cooldown', text: next != null ? `None ready · next in ${F.fmt.clock(next)}` : 'None ready', tone: 'warn', nextSec: next };
+    return { state: 'cooldown', text: next != null ? F.t('None ready · next in {time}', { time: F.fmt.clock(next) }) : F.t('None ready'), tone: 'warn', nextSec: next };
   };
 
   // 1s ticker for countdowns and relative times.
@@ -464,7 +471,7 @@
     try {
       await navigator.clipboard.writeText(text);
     } catch (e) {
-      F.toast(`Copy failed: ${e.message || e.name}. Select the text and copy it by hand.`, { tone: 'error' });
+      F.toast(F.t('Copy failed: {detail}. Select the text and copy it by hand.', { detail: e.message || e.name }), { tone: 'error' });
       return false;
     }
     if (btn) {
@@ -474,7 +481,7 @@
       const prevIcon = use && use.getAttribute('href');
       const prevLabel = label && label.textContent;
       if (use) use.setAttribute('href', '#i-check');
-      if (label) label.textContent = 'Copied';
+      if (label) label.textContent = F.t('Copied');
       clearTimeout(btn._copyTimer);
       btn._copyTimer = setTimeout(() => {
         btn.classList.remove('is-copied');
@@ -482,11 +489,11 @@
         if (label && prevLabel) label.textContent = prevLabel;
       }, 1500);
     } else {
-      F.toast('Copied');
+      F.toast(F.t('Copied'));
     }
     return true;
   };
-  F.copyBtn = (getText, label = 'Copy') => {
+  F.copyBtn = (getText, label = F.t('Copy')) => {
     const b = F.btn(null, { kind: 'ghost', icon: 'copy', size: 'sm', 'aria-label': label, title: label });
     b.addEventListener('click', (e) => { e.stopPropagation(); F.copy(typeof getText === 'function' ? getText() : getText, b); });
     return b;
@@ -509,7 +516,7 @@
     const t = F.h('div', { class: `toast glass glass-regular toast-${tone}`, role: isError ? 'alert' : null });
     const iconName = { error: 'error-x', success: 'success', warn: 'alert' }[tone] || 'info';
     // One-sentence toasts read as labels: no closing period ("Saved the key for this tab").
-    const text = typeof message === 'string' && /^[^.]+\.$/.test(message) ? message.slice(0, -1) : message;
+    const text = typeof message === 'string' && /^[^。.]+[。.]$/.test(message) ? message.slice(0, -1) : message;
     const body = F.h('div', { class: 'toast-body' }, F.h('p', { class: 'toast-text', text }));
     if (detail) body.append(detail);
     t.append(F.icon(iconName, 'toast-icon'), body);
@@ -524,7 +531,7 @@
     if (action) {
       t.append(F.btn(action.label, { kind: 'ghost', size: 'sm', onclick: () => { action.run(); close(); } }));
     }
-    t.append(F.iconBtn('close', 'Dismiss', { onclick: close, cls: 'icon-btn-sm' }));
+    t.append(F.iconBtn('close', F.t('Dismiss'), { onclick: close, cls: 'icon-btn-sm' }));
     root.append(t);
     const toasts = root.querySelectorAll('.toast:not(.is-out)');
     if (toasts.length > MAX_TOASTS) {
@@ -709,7 +716,7 @@
   F.confirm = (trigger, { text, confirmLabel, pendingLabel, danger = true, run }) => {
     const err = F.h('p', { class: 'inline-error', role: 'alert', hidden: true });
     const ok = F.btn(confirmLabel, { kind: danger ? 'danger' : 'primary' });
-    const cancel = F.btn('Cancel', { kind: 'secondary', onclick: () => F.closePopover() });
+    const cancel = F.btn(F.t('Cancel'), { kind: 'secondary', onclick: () => F.closePopover() });
     const box = F.h('div', { class: 'confirm' }, F.h('p', { class: 'confirm-text', text }), err, F.h('div', { class: 'confirm-actions' }, cancel, ok));
     ok.addEventListener('click', async () => {
       if (ok.getAttribute('aria-busy') === 'true') return;
@@ -818,7 +825,7 @@
     actions.length ? F.h('div', { class: 'notice-actions' }, actions) : null);
 
   F.endpointMissing = (endpoint) => F.notice('info', null,
-    `This server build doesn't expose ${endpoint}. Update server.js to the version that ships with this dashboard.`);
+    F.t("This server build doesn't expose {endpoint}. Update server.js to the version that ships with this dashboard.", { endpoint }));
 
   F.errorText = (err) => `${err.message}${err.type ? ` (${err.type})` : ''}`;
 
@@ -847,8 +854,8 @@
   // The server replaces secret values with ‹proxy-key› or ‹secret:abc123› before text leaves it.
   const SECRET_TOKEN = /‹(proxy-key|secret:([0-9a-f]{6}))›/g;
   F.SECRET_TOKEN = SECRET_TOKEN;
-  F.secretChip = (kind, fp) => F.h('span', { class: 'secret-chip', title: 'Hidden. Secrets never leave this machine.' },
-    F.icon('lock'), F.h('span', { text: kind === 'proxy-key' ? 'proxy key' : `secret ${fp}` }));
+  F.secretChip = (kind, fp) => F.h('span', { class: 'secret-chip', title: F.t('Hidden. Secrets never leave this machine.') },
+    F.icon('lock'), F.h('span', { text: kind === 'proxy-key' ? F.t('proxy key') : F.t('secret {fp}', { fp }) }));
   function withSecrets(text) {
     if (text.indexOf('‹') < 0) return [text];
     const out = [];
@@ -889,7 +896,7 @@
 
   // A command wraps at its spaces, continuation lines indented, so all of it is in view and
   // nothing scrolls sideways; Copy takes the exact text.
-  F.codeLine = (text) => F.h('div', { class: 'code-line' }, F.h('code', { class: 'mono-id', text }), F.copyBtn(text, 'Copy command'));
+  F.codeLine = (text) => F.h('div', { class: 'code-line' }, F.h('code', { class: 'mono-id', text }), F.copyBtn(text, F.t('Copy command')));
 
   // Scrollbars are hidden everywhere (app.css). A scrollable area instead fades out on each
   // edge that has more content past it, and the fade goes as soon as that edge is reached.
@@ -923,10 +930,10 @@
 
   F.emptyRequests = (sinceTs) => {
     return F.h('div', { class: 'empty' },
-      F.h('p', { class: 'empty-title', text: sinceTs ? `No requests since the server started at ${F.fmt.hm(sinceTs)}.` : 'No requests since the server started.' }),
-      F.h('p', { class: 'empty-text', text: 'Send one from Chat, or call the proxy from a terminal:' }),
+      F.h('p', { class: 'empty-title', text: sinceTs ? F.t('No requests since the server started at {time}.', { time: F.fmt.hm(sinceTs) }) : F.t('No requests since the server started.') }),
+      F.h('p', { class: 'empty-text', text: F.t('Send one from Chat, or call the proxy from a terminal:') }),
       F.codeLine(`curl ${location.origin}/v1/chat/completions -H 'Content-Type: application/json'${F.key.get() ? " -H \"Authorization: Bearer $PROXY_API_KEY\"" : ''} -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"Hello"}]}'`),
-      F.h('div', { class: 'empty-actions' }, F.h('a', { class: 'btn btn-primary', href: '#/chat' }, F.icon('chat'), F.h('span', { class: 'btn-label', text: 'Send one from Chat' }))));
+      F.h('div', { class: 'empty-actions' }, F.h('a', { class: 'btn btn-primary', href: '#/chat' }, F.icon('chat'), F.h('span', { class: 'btn-label', text: F.t('Send one from Chat') }))));
   };
 
   // ---------------------------------------------------------------- inspector

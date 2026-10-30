@@ -768,13 +768,13 @@
     });
     const rosterSection = h('section', { class: 'agents-section', 'aria-labelledby': 'agents-roster-title' },
       h('header', { class: 'settings-head' },
-        h('h2', { class: 'settings-title', id: 'agents-roster-title' }, F.icon('agent', 'title-icon'), h('span', { text: 'Agents' })),
+        h('h2', { class: 'settings-title', id: 'agents-roster-title' }, F.icon('agent', 'title-icon'), h('span', { text: F.t('Agents') })),
         h('p', { class: 'settings-desc', text: 'Each agent reads its own config file. Pick one to see the file and point it at this proxy.' })),
       roster);
     const backupBody = h('div', { class: 'set-stack' });
     const backupSection = h('section', { class: 'agents-section', id: 'agents-backups', 'aria-labelledby': 'agents-backups-title' },
       h('header', { class: 'settings-head' },
-        h('h2', { class: 'settings-title', id: 'agents-backups-title' }, F.icon('undo', 'title-icon'), h('span', { text: 'Restore points' })),
+        h('h2', { class: 'settings-title', id: 'agents-backups-title' }, F.icon('undo', 'title-icon'), h('span', { text: F.t('Restore points') })),
         h('p', { class: 'settings-desc', text: 'Every apply backs up the files it changes first. Restoring also deletes files that setup created.' })),
       backupBody);
     const overview = h('div', { class: 'agents-page' }, heroO,
@@ -868,7 +868,7 @@
 
   function cfgSection(title, id, icon, ...body) {
     return h('section', { class: 'cfg-section', 'aria-labelledby': id },
-      h('h2', { class: 'cfg-title', id }, F.icon(icon, 'title-icon'), h('span', { text: title })), ...body);
+      h('h2', { class: 'cfg-title', id }, F.icon(icon, 'title-icon'), h('span', { text: F.t(title) })), ...body);
   }
 
   // ---------------------------------------------------------------- paint: overview
@@ -970,7 +970,7 @@
     const link = h('a', { class: ['agent-row', st.cursor === a.id && 'is-cursor'], href: F.hashFor('agents', a.id), 'data-id': a.id, 'data-focus-key': `row-${a.id}` },
       mark(a.id),
       h('span', { class: 'agent-id' }, h('span', { class: 'agent-name', text: a.name }), sub),
-      h('span', { class: `agent-state is-${s.tone}` }, F.lamp(s.lamp), h('span', { text: s.label })),
+      h('span', { class: `agent-state is-${s.tone}` }, F.lamp(s.lamp), h('span', { text: F.t(s.label) })),
       F.icon('chevron-right', 'agent-chev'));
     return h('li', null, link);
   }
@@ -1547,7 +1547,7 @@
     if (!a.writable) return;
     if (!host.firstChild) {
       host.append(h('header', { class: 'settings-head' },
-        h('h2', { class: 'settings-title', id: 'agent-restore-title' }, F.icon('undo', 'title-icon'), h('span', { text: 'Restore points' })),
+        h('h2', { class: 'settings-title', id: 'agent-restore-title' }, F.icon('undo', 'title-icon'), h('span', { text: F.t('Restore points') })),
         h('p', { class: 'settings-desc', text: 'The newest backups that include this agent. Restoring puts every file in a backup back.' })),
       h('div', { class: 'set-stack agent-restore-list' }),
       h('a', { class: 'link agents-all-backups', href: F.hashFor('agents', '', { section: 'backups' }), text: 'All restore points' }));
@@ -1656,7 +1656,7 @@
   }
 
   F.views.agents = {
-    title: () => (st.d ? nameOf(st.d.id) : 'Agents'),
+    title: () => (st.d ? nameOf(st.d.id) : F.t('Agents')),
     live: false,
     mount,
     show,
@@ -1666,7 +1666,7 @@
       if (st.d) leaveDetail();
     },
     actions() {
-      const refresh = F.btn('Refresh', { icon: 'reload', title: 'Read the files again' });
+      const refresh = F.btn(F.t('Refresh'), { icon: 'reload', title: 'Read the files again' });
       refresh.addEventListener('click', async () => {
         if (refresh.getAttribute('aria-busy') === 'true') return;
         F.setPending(refresh, 'Refreshing…');
@@ -1674,7 +1674,7 @@
         try { await load(); } finally { F.clearPending(refresh); }
       });
       if (!st.d) return [refresh];
-      return [F.btn('All agents', { kind: 'ghost', icon: 'chevron-left', onclick: () => F.navigate('agents') }), refresh];
+      return [F.btn(F.t('All agents'), { kind: 'ghost', icon: 'chevron-left', onclick: () => F.navigate('agents') }), refresh];
     },
     onKey,
     onEscape,
