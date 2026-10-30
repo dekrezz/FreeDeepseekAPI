@@ -3399,11 +3399,21 @@ function lastTurnIsToolResult(messages) {
     return false;
 }
 
+// ASCII \b never fires beside Cyrillic, Hangul, or CJK, so a finished reply in
+// those scripts was retried as an abandoned tool loop. A sentence terminator
+// after a few letters is a final answer in any script; a bare "ok" is not.
+function looksLikeFinalAnswer(text) {
+    if (/(?<![\p{L}\p{N}_])(?:done|completed|fixed|finished|готово|сделано)(?![\p{L}\p{N}_])/iu.test(text)) return true;
+    const letters = text.match(/\p{L}/gu);
+    if (!letters || letters.length < 6) return false;
+    return /[.!?…]|[。！？｡．؟۔।॥]/u.test(text);
+}
+
 function looksLikeAbandonedToolLoop(text, messages) {
     if (!lastTurnIsToolResult(messages)) return false;
     const value = String(text || '').trim();
     if (!value || looksLikeToolCallMarkup(value) || looksLikeCodeDumpInsteadOfTool(value)) return false;
-    if (/\b(done|completed|fixed|finished|готово|сделано)\b/i.test(value)) return false;
+    if (looksLikeFinalAnswer(value)) return false;
     return value.length < 600;
 }
 
