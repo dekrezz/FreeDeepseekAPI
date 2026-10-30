@@ -194,6 +194,9 @@ const MAX_HISTORY_LENGTH = 15;
 const MAX_HISTORY_CHARS = 10000;
 const MAX_MESSAGE_DEPTH = 100;  // auto-reset after this many messages
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;  // 2 hours
+// A minted x-agent-session (or user/session, or the unkeyed address hash) otherwise
+// holds a chat id, history, and system fingerprint until the idle sweep. 200 is enough.
+const MAX_SESSIONS = 200;
 
 // === DeepSeek Web API Config — loaded from external config file ===
 const DS_CONFIG_PATH = process.env.DEEPSEEK_AUTH_PATH || path.join(__dirname, 'deepseek-auth.json');
@@ -814,12 +817,32 @@ function prepareSessionForPrompt(session, now = Date.now()) {
     return { reason, ...resetRemoteSession(session) };
 }
 
+// Drop least-recently-used sessions until the map fits MAX_SESSIONS.
+// protectedAgentId is the one this request is creating or touching, so it stays.
+function evictLeastRecentlyUsedSessions(protectedAgentId) {
+    while (sessions.size > MAX_SESSIONS) {
+        let oldestId = null;
+        let oldestAt = Infinity;
+        for (const [agentId, session] of sessions) {
+            if (agentId === protectedAgentId) continue;
+            const at = session.lastActivityAt || 0;
+            if (oldestId === null || at < oldestAt) {
+                oldestId = agentId;
+                oldestAt = at;
+            }
+        }
+        if (oldestId === null) break;
+        sessions.delete(oldestId);
+    }
+}
+
 function getOrCreateAgentSession(agentId) {
     if (!sessions.has(agentId)) {
         sessions.set(agentId, createSession());
     }
     const session = sessions.get(agentId);
     session.lastActivityAt = Date.now();
+    evictLeastRecentlyUsedSessions(agentId);
     return session;
 }
 
@@ -4524,6 +4547,7 @@ const server = http.createServer(async (req, res) => {
                 const existing = sessions.get(agentId);
                 const historyCount = existing ? existing.history.length : 0;
                 sessions.set(agentId, createSession());
+                evictLeastRecentlyUsedSessions(agentId);
                 console.log(`${agentTag} /new received — session reset (history cleared: ${historyCount})`);
                 const confirmation = buildTextResponse('Started a new chat. Session and history have been reset.', '/new', requestedModel);
                 logRow.status = 200;
@@ -5590,6 +5614,8 @@ module.exports = {
         prepareSessionForPrompt,
         sweepIdleSessions,
         sessions,
+        MAX_SESSIONS,
+        getOrCreateAgentSession,
         accounts,
         selectAccountForSession,
         dashboardUrl,

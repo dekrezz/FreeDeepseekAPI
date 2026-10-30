@@ -231,6 +231,71 @@ test('sweepIdleSessions evicts only idle entries', () => {
   serverInternals.sessions.delete('fresh-x');
 });
 
+test('creating more sessions than the cap drops the oldest idle entries and keeps the newest', () => {
+  const { sessions, getOrCreateAgentSession, createSession, MAX_SESSIONS } = serverInternals;
+  const saved = [...sessions.entries()];
+  const realNow = Date.now;
+  const id = (i) => `session-cap-${i}`;
+  sessions.clear();
+  try {
+    assert.equal(MAX_SESSIONS, 200);
+
+    for (let i = 0; i < MAX_SESSIONS; i++) {
+      const session = getOrCreateAgentSession(id(i));
+      session.lastActivityAt = i + 1;
+    }
+    assert.equal(sessions.size, MAX_SESSIONS);
+
+    const extra = 3;
+    const created = [];
+    for (let n = 0; n < extra; n++) {
+      const session = getOrCreateAgentSession(id(MAX_SESSIONS + n));
+      session.lastActivityAt = MAX_SESSIONS + n + 1;
+      created.push(session);
+    }
+
+    assert.equal(sessions.size, MAX_SESSIONS);
+    for (let n = 0; n < extra; n++) {
+      assert.equal(sessions.has(id(n)), false, `oldest idle ${id(n)} is dropped`);
+      assert.equal(sessions.has(id(MAX_SESSIONS + n)), true, `newest ${id(MAX_SESSIONS + n)} stays`);
+      assert.equal(sessions.get(id(MAX_SESSIONS + n)), created[n]);
+    }
+    assert.equal(sessions.has(id(extra)), true, 'the next idle session stays');
+    assert.equal(sessions.has(id(MAX_SESSIONS - 1)), true, 'the newest of the original set stays');
+
+    // The id being created stays even when its timestamp is older than every other entry.
+    sessions.clear();
+    Date.now = () => 5000;
+    for (let i = 0; i < MAX_SESSIONS; i++) getOrCreateAgentSession(id(i));
+    Date.now = () => 1;
+    const createdOldest = getOrCreateAgentSession(id(MAX_SESSIONS));
+    assert.equal(sessions.size, MAX_SESSIONS);
+    assert.equal(sessions.get(id(MAX_SESSIONS)), createdOldest, 'the session created for this request is kept');
+    let dropped = 0;
+    for (let i = 0; i < MAX_SESSIONS; i++) if (!sessions.has(id(i))) dropped++;
+    assert.equal(dropped, 1, 'an idle entry is dropped instead of the session just created');
+
+    // Touching the current id must not evict it, even when that refresh is the oldest timestamp.
+    sessions.clear();
+    Date.now = () => 5000;
+    for (let i = 0; i < MAX_SESSIONS; i++) {
+      getOrCreateAgentSession(id(i)).lastActivityAt = 1000 + i;
+    }
+    const older = createSession();
+    older.lastActivityAt = 50;
+    sessions.set('session-cap-older', older);
+    Date.now = () => 10;
+    const touched = getOrCreateAgentSession(id(0));
+    assert.equal(sessions.get(id(0)), touched, 'the session touched for this request is kept');
+    assert.equal(sessions.has('session-cap-older'), false, 'a less recent idle entry is dropped instead');
+    assert.equal(sessions.size, MAX_SESSIONS);
+  } finally {
+    Date.now = realNow;
+    sessions.clear();
+    for (const [key, value] of saved) sessions.set(key, value);
+  }
+});
+
 test('proxy API key authentication is optional and uses exact bearer tokens', () => {
   assert.equal(serverInternals.isProxyAuthorized(undefined, ''), true);
   assert.equal(serverInternals.isProxyAuthorized('Bearer secret', 'secret'), true);
