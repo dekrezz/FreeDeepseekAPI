@@ -1041,6 +1041,49 @@ function imageExtension(mediaType) {
     }[mediaType] || '';
 }
 
+// Every textual form of an IPv4-mapped address (::ffff:0:0/96), not only
+// ::ffff:a.b.c.d. dns.lookup returns hex (::ffff:7f00:1) and uncompressed
+// (0:0:0:0:0:ffff:127.0.0.1) literals unchanged, and both open TCP to the embedded IPv4.
+function ipv4FromMappedIpv6(address) {
+    let text = address;
+    const colon = text.lastIndexOf(':');
+    const tail = colon === -1 ? text : text.slice(colon + 1);
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(tail)) {
+        const octets = tail.split('.').map(Number);
+        if (octets.some(octet => octet > 255)) return '';
+        const hi = (octets[0] << 8) | octets[1];
+        const lo = (octets[2] << 8) | octets[3];
+        text = `${text.slice(0, colon + 1)}${hi.toString(16)}:${lo.toString(16)}`;
+    } else if (text.includes('.')) {
+        return '';
+    }
+    const halves = text.split('::');
+    if (halves.length > 2) return '';
+    const parseHalf = (half) => {
+        if (half === '') return [];
+        const parts = half.split(':');
+        if (parts.some(part => !/^[0-9a-f]{1,4}$/.test(part))) return null;
+        return parts.map(part => parseInt(part, 16));
+    };
+    const head = parseHalf(halves[0]);
+    if (head === null) return '';
+    let groups = head;
+    if (halves.length === 2) {
+        const rest = parseHalf(halves[1]);
+        if (rest === null) return '';
+        const missing = 8 - head.length - rest.length;
+        if (missing < 1) return '';
+        groups = head.concat(Array(missing).fill(0), rest);
+    }
+    if (groups.length !== 8) return '';
+    const mapped = groups[0] === 0 && groups[1] === 0 && groups[2] === 0
+        && groups[3] === 0 && groups[4] === 0 && groups[5] === 0xffff;
+    if (!mapped) return '';
+    const hi = groups[6];
+    const lo = groups[7];
+    return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+}
+
 function isPrivateNetworkAddress(address) {
     const value = String(address || '').toLowerCase().split('%', 1)[0];
     if (net.isIPv4(value)) {
@@ -1060,17 +1103,25 @@ function isPrivateNetworkAddress(address) {
         if (value === '::' || value === '::1') return true;
         if (value.startsWith('fc') || value.startsWith('fd')) return true;
         if (/^fe[89ab]/.test(value)) return true;
-        const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-        return mapped ? isPrivateNetworkAddress(mapped[1]) : false;
+        const mapped = ipv4FromMappedIpv6(value);
+        return mapped ? isPrivateNetworkAddress(mapped) : false;
     }
     return true;
+}
+
+// Node 22 keeps one pair of brackets on an IPv6 URL hostname. dns.lookup rejects them.
+function imageLookupHostname(hostname) {
+    const value = String(hostname || '').toLowerCase();
+    const bracketed = value.match(/^\[([^\[\]]+)\]$/);
+    if (bracketed && net.isIPv6(bracketed[1])) return bracketed[1];
+    return value;
 }
 
 async function assertPublicImageUrl(url) {
     if (url.protocol !== 'https:') {
         throw clientInputError('Image URL must be a public HTTPS URL');
     }
-    const hostname = url.hostname.toLowerCase();
+    const hostname = imageLookupHostname(url.hostname);
     if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
         throw clientInputError('Image URL must be a public HTTPS URL');
     }
@@ -5611,6 +5662,8 @@ module.exports = {
         loadProxyApiKey,
         requireProxyApiKey,
         isLoopbackHost,
+        isPrivateNetworkAddress,
+        assertPublicImageUrl,
         normalizeOrigin,
         isBrowserOriginAllowed,
         DEFAULT_MODEL_ID,
