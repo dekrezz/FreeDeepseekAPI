@@ -2393,6 +2393,22 @@ function collectJsonToolCalls(text) {
         absorbJsonToolPayload(fence[2].trim(), calls, seen);
     }
 
+    // Web DeepSeek sometimes wraps a bare {"name","arguments"} call in <｜tool_call>...</tool_call>
+    // (fullwidth bar). Scan for each opening tag and take the next balanced JSON object so a
+    // literal "</tool_call>" inside an argument string or an earlier unclosed tag cannot break it.
+    const xmlRe = /<\s*[|｜]*\s*tool_call\s*[|｜]*\s*>/gi;
+    let xml;
+    while ((xml = xmlRe.exec(value)) !== null) {
+        const braceIdx = value.indexOf('{', xml.index + xml[0].length);
+        if (braceIdx === -1) continue;
+        const rawJson = extractBalancedJsonAt(value, braceIdx);
+        if (!rawJson) continue;
+        try {
+            const parsed = JSON.parse(rawJson);
+            rememberToolCall(calls, seen, coerceToolCallObject(parsed, { allowBare: true }));
+        } catch (e) { /* malformed block is left to markup repair */ }
+    }
+
     const legacyRe = /TOOL_CALL:\s*([\w-]+)\s*/gi;
     let legacy;
     while ((legacy = legacyRe.exec(value)) !== null) {
@@ -2430,7 +2446,7 @@ function collectAgentToolCalls(text, allowedToolNames) {
 }
 
 function looksLikeToolCallMarkup(text) {
-    return /TOOL_CALL:\s*[\w-]+|<\s*tool_call\b|[|｜]+\s*DSML\s*[|｜]+|[<＜]\s*\/?\s*(?:DSML)?(?:[\w.-]+:)?(?:tool[\s_-]*calls|function[\s_-]*calls|invoke)\b|["'](?:tool_call|tool_calls|function_call)["']\s*:/i.test(String(text || ''));
+    return /TOOL_CALL:\s*[\w-]+|<\s*[|｜]*\s*tool_call\b|[|｜]+\s*DSML\s*[|｜]+|[<＜]\s*\/?\s*(?:DSML)?(?:[\w.-]+:)?(?:tool[\s_-]*calls|function[\s_-]*calls|invoke)\b|["'](?:tool_call|tool_calls|function_call)["']\s*:/i.test(String(text || ''));
 }
 
 function looksLikeCodeDumpInsteadOfTool(text) {
