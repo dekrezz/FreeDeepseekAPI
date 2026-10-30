@@ -7,7 +7,8 @@
  * 
  * Per-agent sessions: each unique `user` field gets its own DeepSeek web session.
  * Auto-reset: sessions reset when message chain reaches 100 messages or age > 2 hours.
- * Listens on 127.0.0.1:9655 by default (HOST is configurable)
+ * Listens on 127.0.0.1:9655 by default (HOST is configurable).
+ * HTTP unless both TLS_CERT_FILE and TLS_KEY_FILE are set and readable.
  */
 
 const http = require('http');
@@ -135,6 +136,34 @@ function isLoopbackHost(host) {
         || normalized === '::1'
         || normalized === '::ffff:127.0.0.1'
         || normalized === 'localhost';
+}
+
+// Optional TLS. Unset keeps today's HTTP server, including on loopback.
+// One file without the other, or a file that cannot be read, fails closed:
+// falling back to HTTP would send the login import and Authorization header in clear text.
+function readTlsCredentials(env = process.env) {
+    const certFile = typeof env.TLS_CERT_FILE === 'string' ? env.TLS_CERT_FILE.trim() : '';
+    const keyFile = typeof env.TLS_KEY_FILE === 'string' ? env.TLS_KEY_FILE.trim() : '';
+    if (!certFile && !keyFile) return null;
+    if (!certFile || !keyFile) {
+        throw new Error('TLS_CERT_FILE and TLS_KEY_FILE must both be set to serve HTTPS. Leave both unset to keep HTTP.');
+    }
+    const readPem = (name, file) => {
+        try {
+            fs.accessSync(file, fs.constants.R_OK);
+            const pem = fs.readFileSync(file);
+            if (!pem.length) throw Object.assign(new Error('file is empty'), { code: 'EINVAL' });
+            return pem;
+        } catch (error) {
+            throw new Error(`Could not read ${name} (${file}): ${error.message}`);
+        }
+    };
+    return { cert: readPem('TLS_CERT_FILE', certFile), key: readPem('TLS_KEY_FILE', keyFile) };
+}
+
+function cleartextStartupWarning(host, tlsEnabled) {
+    if (tlsEnabled || isLoopbackHost(host)) return null;
+    return `[DS-API] WARNING: HOST=${host} is not loopback and TLS is off. The login import and the Authorization header are clear text. Set TLS_CERT_FILE and TLS_KEY_FILE, or bind to 127.0.0.1.`;
 }
 
 function normalizeOrigin(origin) {
@@ -3701,6 +3730,8 @@ async function handleUpdateRequest(req, res, parts) {
             const body = await readAdminJsonBody(req);
             const channel = body && typeof body.channel === 'string' ? body.channel : undefined;
             if (parts[2] === 'check') return adminJson(res, 200, await updater.check(channel));
+            // The summary is the one check() already builds. Nothing is merged until confirm:true.
+            if (body.confirm !== true) return adminJson(res, 409, await updater.check(channel));
             if (updateBusy) return adminError(res, 409, 'update_in_progress', 'An update is already being installed.');
             updateBusy = true;
             try {
@@ -3764,7 +3795,7 @@ function agentsLocalDecision({ remoteAddress, headers = {} } = {}, { port = PORT
     return {
         allowed: false,
         status: 403,
-        error: { type: 'agents_local_only', message: `Agent config files are only shown to a browser on the machine running the proxy. Open the dashboard at http://127.0.0.1:${port}/dashboard on that machine.` },
+        error: { type: 'agents_local_only', message: `Agent config files are only shown to a browser on the machine running the proxy. Open the dashboard at ${publicScheme()}://127.0.0.1:${port}/dashboard on that machine.` },
     };
 }
 
@@ -3780,7 +3811,7 @@ function agentProxyFacts(mod) {
         let host = String(HOST || '').trim().replace(/^\[|\]$/g, '');
         if (!host || host === '0.0.0.0' || host === '::') host = '127.0.0.1';
         if (net.isIPv6(host)) host = `[${host}]`;
-        return `http://${host}:${agentListenPort()}`;
+        return `${publicScheme()}://${host}:${agentListenPort()}`;
     };
     let baseUrl;
     let baseSource;
@@ -4251,7 +4282,8 @@ async function serveDashboard(req, res, pathname) {
 }
 
 // === HTTP Server ===
-const server = http.createServer(async (req, res) => {
+// The same handler serves HTTP, or HTTPS when both PEM files are set and readable.
+async function handleRequest(req, res) {
     const requestOrigin = req.headers.origin;
     res.setHeader('Vary', 'Origin');
     if (!isBrowserOriginAllowed(requestOrigin)) {
@@ -5335,7 +5367,21 @@ const server = http.createServer(async (req, res) => {
             releaseSlot();
         }
     });
-});
+}
+
+const tlsCredentials = readTlsCredentials();
+function publicScheme() {
+    return tlsCredentials ? 'https' : 'http';
+}
+function createListenServer(handler) {
+    if (!tlsCredentials) return http.createServer(handler);
+    try {
+        return https.createServer({ cert: tlsCredentials.cert, key: tlsCredentials.key }, handler);
+    } catch (error) {
+        throw new Error(`TLS_CERT_FILE and TLS_KEY_FILE are not a usable PEM certificate and key: ${error.message}`);
+    }
+}
+const server = createListenServer(handleRequest);
 
 async function runAuthScript() {
     const script = path.join(__dirname, 'scripts', 'deepseek_chrome_auth.js');
@@ -5385,7 +5431,7 @@ function dashboardUrl(host, port) {
     const h = String(host || '127.0.0.1');
     // A wildcard bind address is not something a browser can open.
     const target = (h === '0.0.0.0' || h === '::' || h === '') ? '127.0.0.1' : h;
-    return `http://${target.includes(':') ? `[${target}]` : target}:${port}/dashboard`;
+    return `${publicScheme()}://${target.includes(':') ? `[${target}]` : target}:${port}/dashboard`;
 }
 function openDashboardInBrowser(url) {
     const { cmd, args } = browserOpenCommand(process.platform, url);
@@ -5453,6 +5499,8 @@ async function main() {
             console.warn('[DS-API] WARNING: PROXY_ADMIN_ALLOW_REMOTE=1 without PROXY_API_KEY lets anyone on the network pause, resume, and reload your DeepSeek accounts.');
         }
     }
+    const cleartextWarning = cleartextStartupWarning(HOST, Boolean(tlsCredentials));
+    if (cleartextWarning) console.warn(cleartextWarning);
     const startup = await showStartupMenu();
     if (!startup.start) process.exit(0);
     server.on('error', (err) => {
@@ -5463,7 +5511,7 @@ async function main() {
     // Periodically evict idle sessions (unref'd so it never keeps the process alive).
     setInterval(sweepIdleSessions, 10 * 60 * 1000).unref();
     server.listen(PORT, HOST, () => {
-        console.log(`[DS-API] Server on http://${HOST}:${PORT} (multi-agent sessions enabled)`);
+        console.log(`[DS-API] Server on ${publicScheme()}://${HOST}:${PORT} (multi-agent sessions enabled)`);
         console.log('[DS-API] POST /v1/chat/completions (OpenAI Chat Completions, stream=true|false)');
         console.log('[DS-API] POST /v1/messages — Anthropic Messages shim for Claude Code');
         console.log('[DS-API] POST /v1/responses — OpenAI Responses API shim');
@@ -5611,6 +5659,9 @@ module.exports = {
         loadProxyApiKey,
         requireProxyApiKey,
         isLoopbackHost,
+        readTlsCredentials,
+        cleartextStartupWarning,
+        publicScheme,
         normalizeOrigin,
         isBrowserOriginAllowed,
         DEFAULT_MODEL_ID,

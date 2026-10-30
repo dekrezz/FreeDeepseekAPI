@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
+const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -16,6 +18,7 @@ function runNode(args, opts = {}) {
   return spawnSync(process.execPath, args, {
     cwd: ROOT,
     encoding: 'utf8',
+    timeout: opts.timeout,
     env: { ...process.env, ...opts.env },
   });
 }
@@ -333,6 +336,141 @@ test('loopback host detection covers supported local bind addresses', () => {
   assert.equal(serverInternals.isLoopbackHost('::ffff:127.0.0.1'), true);
   assert.equal(serverInternals.isLoopbackHost('localhost'), true);
   assert.equal(serverInternals.isLoopbackHost('0.0.0.0'), false);
+});
+
+function writePemPair(dir) {
+  const cert = path.join(dir, 'cert.pem');
+  const key = path.join(dir, 'key.pem');
+  const made = spawnSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-keyout', key, '-out', cert, '-days', '1', '-nodes', '-subj', '/CN=localhost'], { encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stderr);
+  return { cert, key };
+}
+
+test('TLS stays off unless both PEM files are set and readable, including off loopback', () => {
+  const { readTlsCredentials, server } = serverInternals;
+  assert.equal(readTlsCredentials({}), null);
+  assert.equal(readTlsCredentials({ TLS_CERT_FILE: '  ', TLS_KEY_FILE: '' }), null);
+  assert.equal(server instanceof http.Server, true);
+  assert.equal(server instanceof https.Server, false);
+  assert.equal(serverInternals.publicScheme(), 'http');
+
+  const half = runNode(['-e', 'require("./server.js")'], { env: { HOST: '0.0.0.0', TLS_CERT_FILE: '/tmp/only-cert.pem', TLS_KEY_FILE: '' } });
+  assert.notEqual(half.status, 0);
+  assert.match(half.stderr, /TLS_CERT_FILE and TLS_KEY_FILE must both be set/);
+
+  const missing = runNode(['-e', 'require("./server.js")'], { env: { HOST: '127.0.0.1', TLS_CERT_FILE: '/no/such/cert.pem', TLS_KEY_FILE: '/no/such/key.pem' } });
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /Could not read TLS_CERT_FILE/);
+
+  const plain = runNode(['-e', 'const http=require("http"); const https=require("https"); const s=require("./server.js").__test.server; if(!(s instanceof http.Server)||s instanceof https.Server) process.exit(2);'], {
+    env: { HOST: '0.0.0.0', TLS_CERT_FILE: '', TLS_KEY_FILE: '' },
+  });
+  assert.equal(plain.status, 0, plain.stderr);
+
+  const dir = tmpdir();
+  const unread = path.join(dir, 'unread.pem');
+  fs.writeFileSync(unread, 'not empty');
+  fs.chmodSync(unread, 0);
+  const denied = runNode(['-e', 'require("./server.js")'], { env: { TLS_CERT_FILE: unread, TLS_KEY_FILE: unread } });
+  assert.notEqual(denied.status, 0);
+  assert.match(denied.stderr, /Could not read TLS_CERT_FILE/);
+
+  const garbage = path.join(dir, 'garbage.pem');
+  fs.writeFileSync(garbage, 'not a pem');
+  const bad = runNode(['-e', 'require("./server.js")'], { env: { TLS_CERT_FILE: garbage, TLS_KEY_FILE: garbage } });
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /not a usable PEM certificate and key/);
+});
+
+test('a non-loopback bind without TLS warns that the login import and Authorization header are clear text', () => {
+  const { cleartextStartupWarning } = serverInternals;
+  assert.equal(cleartextStartupWarning('127.0.0.1', false), null);
+  assert.equal(cleartextStartupWarning('localhost', false), null);
+  assert.equal(cleartextStartupWarning('[::1]', false), null);
+  assert.equal(cleartextStartupWarning('0.0.0.0', true), null);
+  const warning = cleartextStartupWarning('0.0.0.0', false);
+  assert.match(warning, /HOST=0\.0\.0\.0 is not loopback and TLS is off/);
+  assert.match(warning, /login import/);
+  assert.match(warning, /Authorization header are clear text/);
+
+  const emptyAuth = fs.mkdtempSync(path.join(os.tmpdir(), 'fdsa-no-auth-'));
+  const base = {
+    PORT: '0', NON_INTERACTIVE: '1', PROXY_API_KEY: 'test-key', OPEN_DASHBOARD: '',
+    DEEPSEEK_AUTH_DIR: emptyAuth, DEEPSEEK_AUTH_PATH: path.join(emptyAuth, 'missing.json'),
+  };
+  const noisy = runNode(['server.js'], { env: { ...base, HOST: '0.0.0.0' }, timeout: 8000 });
+  assert.equal(noisy.signal, null);
+  assert.match(noisy.stderr, /login import and the Authorization header are clear text/);
+  assert.doesNotMatch(noisy.stderr, /exposes the proxy without authentication/);
+  const quiet = runNode(['server.js'], { env: { ...base, HOST: '127.0.0.1' }, timeout: 8000 });
+  assert.doesNotMatch(quiet.stderr, /clear text/);
+  assert.equal(quiet.signal, null);
+});
+
+test('readable TLS_CERT_FILE and TLS_KEY_FILE serve the same handler over HTTPS', async () => {
+  const dir = tmpdir();
+  const { cert, key } = writePemPair(dir);
+  const script = path.join(dir, 'serve.js');
+  fs.writeFileSync(script, `
+    const https = require('https');
+    const http = require('http');
+    const S = require(${JSON.stringify(path.join(ROOT, 'server.js'))}).__test;
+    if (!(S.server instanceof https.Server)) process.exit(2);
+    if (S.server instanceof http.Server) process.exit(3);
+    if (S.publicScheme() !== 'https') process.exit(4);
+    S.server.listen(0, '127.0.0.1', () => {
+      const port = S.server.address().port;
+      const req = https.get({ host: '127.0.0.1', port, path: '/health', rejectUnauthorized: false, servername: 'localhost' }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          const json = JSON.parse(body);
+          if (res.statusCode !== 200 || json.status !== 'ok' || json.service !== 'FreeDeepseekAPI') process.exit(5);
+          S.server.close(() => process.exit(0));
+        });
+      });
+      req.on('error', () => process.exit(6));
+    });
+  `);
+  const run = runNode([script], { env: { HOST: '127.0.0.1', TLS_CERT_FILE: cert, TLS_KEY_FILE: key } });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+});
+
+test('HTTPS on a non-loopback bind does not warn, and the listen line says https', async () => {
+  const { spawn } = require('node:child_process');
+  const dir = tmpdir();
+  const { cert, key } = writePemPair(dir);
+  const authDir = path.join(dir, 'accounts');
+  fs.mkdirSync(authDir);
+  fs.writeFileSync(path.join(authDir, 'login.json'), JSON.stringify({ token: 'tok', cookie: 'sid=1' }));
+  const child = spawn(process.execPath, ['server.js'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOST: '0.0.0.0', PORT: '0', NON_INTERACTIVE: '1', OPEN_DASHBOARD: '', PROXY_API_KEY: 'test-key',
+      DEEPSEEK_AUTH_DIR: authDir, TLS_CERT_FILE: cert, TLS_KEY_FILE: key,
+    },
+  });
+  let stdout = '';
+  let stderr = '';
+  const result = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve('timeout'), 8000);
+    const onData = () => {
+      if (stdout.includes('Server on https://')) { clearTimeout(timer); resolve('ready'); }
+    };
+    child.stdout.on('data', (chunk) => { stdout += chunk; onData(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk; onData(); });
+    child.on('exit', () => { clearTimeout(timer); resolve('exit'); });
+  });
+  if (child.exitCode === null) child.kill('SIGTERM');
+  await new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve();
+    const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 1500);
+    child.on('exit', () => { clearTimeout(timer); resolve(); });
+  });
+  assert.equal(result, 'ready', `${stdout}\n${stderr}`);
+  assert.match(stdout, /Server on https:\/\/0\.0\.0\.0:0 /);
+  assert.doesNotMatch(`${stdout}\n${stderr}`, /clear text/);
 });
 
 test('browser origin guard allows local UIs and exact configured origins only', () => {

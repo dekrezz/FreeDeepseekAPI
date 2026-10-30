@@ -519,7 +519,7 @@ Two channels, both branches on GitHub:
 | `stable` | A release once it has been checked. The default, and what Quick start clones. |
 | `latest` | Every release as soon as it is out. |
 
-**From the dashboard:** Settings → Updates. Pick a channel, **Check for updates** shows what is new, **Install** moves your copy to it, **Restart now** loads it. The restart is automatic when the proxy runs with `npm start` or `npm run dashboard`; otherwise stop it and start it again.
+**From the dashboard:** Settings → Updates. Pick a channel, **Check for updates** shows what is new, **Install** asks you to confirm those changes, then moves your copy to it, **Restart now** loads it. The restart is automatic when the proxy runs with `npm start` or `npm run dashboard`; otherwise stop it and start it again. Nothing is installed until that confirmation.
 
 The dashboard only moves your copy forward. It stops and shows the command to run by hand when the folder has uncommitted changes to tracked files or your channel branch has commits of its own. A container image or a downloaded archive has no git history: pull a new image or download the new release.
 
@@ -810,6 +810,7 @@ Full table: [docs/models.md](docs/models.md).
 |---|---|---|
 | `HOST` | `127.0.0.1` | Bind address. A non-loopback bind without a proxy key prints a warning |
 | `PORT` | `9655` | Listen port |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | off | PEM certificate and private key. When both are set and readable, the proxy serves HTTPS. Unset keeps HTTP. Loopback does not need TLS. A non-loopback bind without them warns that the login import and the Authorization header are clear text |
 | `PROXY_API_KEY` | off | Bearer required on `/v1/*` and `/admin/*` when set |
 | `REQUIRE_PROXY_API_KEY` | off | Refuse to start if the key is missing. The container sets this |
 | `PROXY_CORS_ORIGINS` | loopback | Extra exact browser origins |
