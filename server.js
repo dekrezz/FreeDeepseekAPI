@@ -2486,6 +2486,16 @@ function salvageGarbledDsmlCalls(text) {
     return calls.length === argCount ? calls : [];
 }
 
+// DeepSeek Web sometimes replies with only <call name="bash"><parameter name="command">...</parameter></call>.
+// Read it as DSML invokes only when the whole reply is such blocks, so a <call> quoted in prose never runs.
+const BARE_CALL_BLOCK_RE = /<call(\s+name\s*=\s*"[\w.-]+"\s*)>([\s\S]*?)<\/call>/gi;
+function bareCallBlocksToDsml(text) {
+    const value = String(text || '');
+    if (value.length > MAX_TOOL_MARKUP_CHARS || value.replace(BARE_CALL_BLOCK_RE, '').trim()) return '';
+    const invokes = value.replace(BARE_CALL_BLOCK_RE, '<invoke$1>$2</invoke>');
+    return invokes === value ? '' : `<tool_calls>${invokes}</tool_calls>`;
+}
+
 function collectAgentToolCalls(text, allowedToolNames) {
     const allowed = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
     if (!text || allowed.size === 0) return [];
@@ -2500,7 +2510,8 @@ function collectAgentToolCalls(text, allowedToolNames) {
         return calls;
     };
     const calls = keepAllowed(hasDsmlToolMarkup(text) ? listDsmlToolCalls(text) : collectJsonToolCalls(text));
-    if (calls.length > 0 || !hasDsmlToolMarkup(text)) return calls;
+    if (calls.length > 0) return calls;
+    if (!hasDsmlToolMarkup(text)) return keepAllowed(listDsmlToolCalls(bareCallBlocksToDsml(text)));
     const repaired = keepAllowed(listDsmlToolCalls(repairGarbledDsmlStructure(text)));
     if (repaired.length > 0) {
         console.log(`[parseToolCall] Repaired garbled DSML structure: ${repaired.map(call => call.name).join(', ')}`);
@@ -2513,7 +2524,7 @@ function collectAgentToolCalls(text, allowedToolNames) {
 }
 
 function looksLikeToolCallMarkup(text) {
-    return /TOOL_CALL:\s*[\w-]+|<\s*[|｜]*\s*tool_call\b|[|｜]+\s*DSML\s*[|｜]+|[<＜]\s*\/?\s*(?:DSML)?(?:[\w.-]+:)?(?:tool[\s_-]*calls|function[\s_-]*calls|invoke)\b|["'](?:tool_call|tool_calls|function_call)["']\s*:/i.test(String(text || ''));
+    return /TOOL_CALL:\s*[\w-]+|<\s*[|｜]*\s*tool_call\b|<call\s+name\s*=|[|｜]+\s*DSML\s*[|｜]+|[<＜]\s*\/?\s*(?:DSML)?(?:[\w.-]+:)?(?:tool[\s_-]*calls|function[\s_-]*calls|invoke)\b|["'](?:tool_call|tool_calls|function_call)["']\s*:/i.test(String(text || ''));
 }
 
 function looksLikeCodeDumpInsteadOfTool(text) {
