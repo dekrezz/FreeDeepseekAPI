@@ -1655,8 +1655,8 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 :root:not([data-theme=dark]) .chat-empty-mark { filter: invert(1); }
 
 /* ------------------------------------------------------------------ main sidebar and its menus */
-:root { --panel: #1a1b1e; --panel-active: #2b2e33; --panel-chip: #26292e; --panel-field: #26292e; --panel-edge: var(--rule); }
-:root:not([data-theme=dark]) { --panel: #eceef1; --panel-active: #dcdfe4; --panel-chip: #f7f8f9; --panel-field: #dfe1e6; --panel-edge: rgb(255 255 255 / 0.7); }
+:root { --panel: #1d1e20; --panel-active: #2b2d31; --panel-chip: #26282b; --panel-field: #26282b; --panel-edge: rgb(255 255 255 / 0.04); }
+:root:not([data-theme=dark]) { --panel: #f5f6f8; --panel-active: #e8eaed; --panel-chip: #fff; --panel-field: #ebedf0; --panel-edge: rgb(21 23 26 / 0.03); }
 .app { --rail-w: 288px; --rail-open-w: 272px; }
 .rail { margin: 8px 0 8px 8px; padding: 12px; border-radius: 20px; color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--panel-edge); }
 :root:not([data-theme=dark]) .wordmark-mark { filter: invert(1); }
@@ -1680,7 +1680,7 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 .popover:has(.model-menu), .popover:has(.account-menu) { padding: 8px; border-radius: 16px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--panel-edge), var(--shadow-pop); }
 .model-menu .menu-item, .account-menu .menu-item { border-radius: 10px; color: var(--ink-2); font-weight: 500; }
 .model-menu .menu-item .icon, .account-menu .menu-item .icon { width: 18px; height: 18px; color: var(--ink-2); }
-.model-menu .menu-item[aria-checked=true], .account-menu .menu-item[aria-checked=true] { background: var(--panel-active); color: var(--ink); }
+.model-menu .menu-item[aria-checked=true], .account-menu .menu-item[aria-checked=true] { color: var(--ink); }
 .model-menu .menu-item[aria-checked=true] .icon, .account-menu .menu-item[aria-checked=true] .icon { color: var(--ink); }
 .model-title, .model-row-label { color: var(--ink); font-weight: 500; }
 .model-desc { font-weight: 400; }
