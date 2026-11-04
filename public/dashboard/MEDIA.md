@@ -7,7 +7,6 @@ not recorded; the photo page names them.
 
 | File | Source | Credit | Processing |
 |---|---|---|---|
-| `media-whale-sharks.jpg` | Unsplash `bZc2GI4LR2Q`, whale sharks at the surface (Add account) | Kevin Charit, Unsplash License | 1200 px, JPEG q72 |
 | `media-sea-glint.jpg` | Unsplash `-06smVJ7ppg`, sunlight on deep blue water (access key screen) | Tadeusz Zachwieja, Unsplash License | 1920 px, JPEG q72 |
 | `logo.png` | `docs/assets/logo.png` (project logo) | FreeDeepseekAPI | cropped to the whale, 128×128 PNG with alpha |
 

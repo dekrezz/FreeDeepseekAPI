@@ -677,9 +677,8 @@
       h('span', { class: 'add-step-n', 'aria-hidden': 'true', text: String(n) }),
       h('span', { class: 'add-step-body' }, h('span', { class: 'add-step-title', text: title }), h('span', { class: 'add-step-detail' }, detail)));
     const code = (text) => h('code', { text });
-    // Where the file comes from, over whale sharks rising to the surface (MEDIA.md); the form on the right.
+    // Where the file comes from; the form on the right.
     const visual = h('aside', { class: 'add-visual' },
-      h('img', { class: 'add-visual-media', src: '/dashboard/media-whale-sharks.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' }),
       h('div', { class: 'add-visual-inner' },
           h('h2', { class: 'add-title', id: 'add-title', text: F.t('Add a DeepSeek account') }),
           h('ol', { class: 'add-steps', 'aria-label': 'Where the file comes from' },

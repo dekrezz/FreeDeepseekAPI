@@ -694,23 +694,20 @@ dialog::backdrop { background: var(--scrim); }
 .dialog-foot { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 28px; }
 .dialog-foot .dialog-actions { margin-top: 0; flex: none; }
 
-/* Add account: the three steps over whale sharks rising to the surface, the form on the right. */
+/* Add account: the three steps on the sidebar's panel, the form on the right. */
 .dialog.dialog-split { width: min(940px, calc(100vw - 32px)); overflow: hidden; border-radius: 24px; }
 .dialog-split[open] { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
-.add-visual { position: relative; isolation: isolate; display: flex; align-items: flex-end; min-height: 540px; overflow: hidden; background: #000; color: #f0f0fa; }
-.add-visual-media { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; max-width: none; object-fit: cover; object-position: 50% 30%; }
-.add-visual::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-  background: linear-gradient(180deg, rgb(0 0 0 / 0) 28%, rgb(0 0 0 / 0.55) 56%, rgb(0 0 0 / 0.9) 100%); }
-.add-visual-inner { width: 100%; padding: 32px 30px 30px; }
-.add-title { max-width: 11ch; font-family: var(--font-display); font-size: 2rem; line-height: 1.02; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; text-wrap: balance; }
-.add-steps { list-style: none; display: grid; gap: 16px; margin: 26px 0 0; padding: 0; }
+.add-visual { display: flex; align-items: flex-start; min-height: 540px; background: var(--panel); color: var(--ink); }
+.add-visual-inner { width: 100%; padding: 32px; }
+.add-title { font-size: 1.5rem; line-height: 2rem; font-weight: 500; text-wrap: balance; }
+.add-steps { list-style: none; display: grid; gap: 16px; margin: 24px 0 0; padding: 0; }
 .add-step { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; align-items: start; }
-.add-step-n { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; border: 1px solid rgb(240 240 250 / 0.45); font-family: var(--font-ui); font-size: 0.8125rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.add-step-n { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--panel-chip); color: var(--ink); font-family: var(--font-ui); font-size: 0.8125rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .add-step-body { display: grid; gap: 2px; padding-top: 2px; }
 .add-step-title { font-size: 0.875rem; line-height: 1.25rem; font-weight: 600; }
-.add-step-detail { color: rgb(240 240 250 / 0.74); font-size: 0.8125rem; line-height: 1.25rem; overflow-wrap: anywhere; }
-.add-step-detail strong { color: #f0f0fa; font-weight: 600; }
-.add-step-detail code { white-space: nowrap; padding: 1px 6px; border-radius: 6px; background: rgb(255 255 255 / 0.14); color: #f0f0fa; font-family: var(--font-mono); font-size: 0.75rem; }
+.add-step-detail { color: var(--ink-2); font-size: 0.8125rem; line-height: 1.25rem; overflow-wrap: anywhere; }
+.add-step-detail strong { color: var(--ink); font-weight: 600; }
+.add-step-detail code { white-space: nowrap; padding: 1px 6px; border-radius: 6px; background: var(--panel-chip); color: var(--ink); font-family: var(--font-mono); font-size: 0.75rem; }
 .add-panel { position: relative; display: flex; flex-direction: column; min-width: 0; max-height: calc(100dvh - 48px); overflow: auto; padding: 30px 30px 26px; }
 .dialog-split > .dialog-close { position: absolute; top: 14px; right: 14px; z-index: 2; }
 .add-panel .dialog-form { flex: 1; display: flex; flex-direction: column; padding: 0; }
@@ -756,19 +753,19 @@ dialog::backdrop { background: var(--scrim); }
   .dialog.dialog-split { overflow: auto; border-radius: 20px; }
   .dialog-split[open] { grid-template-columns: minmax(0, 1fr); }
   .add-visual { min-height: 0; }
-  .add-visual-inner { padding: 168px 22px 22px; }
+  .add-visual-inner { padding: 24px 20px; }
   .add-title { font-size: 1.625rem; max-width: none; }
   .add-steps { gap: 12px; margin-top: 18px; }
   .add-panel { position: static; max-height: none; overflow: visible; padding: 22px; }
   /* The dialog scrolls on phones: Close sticks to its top, the actions to its bottom.
      Close takes no row height (negative margin) so the photo still starts at the top edge. */
-  .dialog-split > .dialog-close { position: sticky; top: 12px; grid-column: 1 / -1; justify-self: end; width: 44px; height: 44px; margin: 12px 12px -56px 0; background: rgb(0 0 0 / 0.45); color: #f0f0fa; }
+  .dialog-split > .dialog-close { position: sticky; top: 12px; grid-column: 1 / -1; justify-self: end; width: 44px; height: 44px; margin: 12px 12px -56px 0; }
   .add-panel .dialog-foot { position: sticky; bottom: -22px; z-index: 1; margin: 20px -22px -22px; padding: 14px 22px 22px; background: var(--raised); box-shadow: 0 -1px 0 var(--rule); }
   .source-empty { min-height: 168px; }
   .dialog-foot { flex-direction: column; align-items: stretch; }
   .dialog-foot .dialog-actions > .btn { flex: 1; }
 }
-@media (prefers-reduced-motion: reduce) { .dialog-split[open] .add-visual-media { animation: none; } .source-empty-icon { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .source-empty-icon { transition: none; } }
 
 /* Centred in the window; the list keeps one height so typing never moves the box. */
 .palette { width: min(640px, calc(100vw - 32px)); margin: auto; border-radius: 20px; padding: 0; overflow: hidden; }
@@ -1647,8 +1644,8 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 :root:not([data-theme=dark]) .new-pill.new-pill { background: #15171a; color: #fff; }
 :root:not([data-theme=dark]) ::selection { color: inherit; }
 @media (hover: hover) and (pointer: fine) { :root:not([data-theme=dark]) .btn-primary:not(.rail-new):hover:not([aria-disabled=true]) { background: #2b2e33; } }
-/* Code keeps its dark block: the syntax colors are drawn for it. So do the photo screens. */
-:root:not([data-theme=dark]) .codeblock, :root:not([data-theme=dark]) .set-code, .gate, .add-visual {
+/* Code keeps its dark block: the syntax colors are drawn for it. So does the photo on the access screen. */
+:root:not([data-theme=dark]) .codeblock, :root:not([data-theme=dark]) .set-code, .gate {
   color-scheme: dark; --ink: #ececec; --ink-2: #b4b4b4; --ink-3: #8f8f8f; --on-ink: #0d0d0d; --rule: rgb(255 255 255 / 0.08); --rule-mid: rgb(255 255 255 / 0.12); --rule-strong: rgb(255 255 255 / 0.2);
   --hover-wash: rgb(255 255 255 / 0.06); --active-wash: rgb(255 255 255 / 0.1); --field: #262626; --well: #1f1f1f; --surface: #303030; --raised: #353535;
   color: var(--ink);
@@ -1658,18 +1655,16 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 :root:not([data-theme=dark]) .chat-empty-mark { filter: invert(1); }
 
 /* ------------------------------------------------------------------ main sidebar and its menus */
-:root { --panel: #1a1b1e; --panel-active: #2b2e33; --panel-chip: #26292e; --panel-key: #33373d; --panel-field: #26292e; --panel-edge: var(--rule); }
-:root:not([data-theme=dark]) { --panel: #eceef1; --panel-active: #dcdfe4; --panel-chip: #f7f8f9; --panel-key: #d3d6dc; --panel-field: #dfe1e6; --panel-edge: rgb(255 255 255 / 0.7); }
+:root { --panel: #1a1b1e; --panel-active: #2b2e33; --panel-chip: #26292e; --panel-field: #26292e; --panel-edge: var(--rule); }
+:root:not([data-theme=dark]) { --panel: #eceef1; --panel-active: #dcdfe4; --panel-chip: #f7f8f9; --panel-field: #dfe1e6; --panel-edge: rgb(255 255 255 / 0.7); }
 .app { --rail-w: 288px; --rail-open-w: 272px; }
 .rail { margin: 8px 0 8px 8px; padding: 12px; border-radius: 20px; color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--panel-edge); }
 :root:not([data-theme=dark]) .wordmark-mark { filter: invert(1); }
 .rail-head { height: 40px; padding: 0; margin-bottom: 12px; }
 .wordmark-mark { width: 28px; height: 28px; }
 .rail .rail-toggle, .rail .rail-toggle:hover:not([aria-disabled=true]), .rail .rail-toggle:focus, .rail .rail-toggle[aria-expanded=true] { background: transparent; }
-.rail .rail-search { height: 40px; margin: 0 0 8px; padding: 0 8px 0 12px; border-radius: 10px; background: var(--panel-field); box-shadow: none; color: var(--ink-2); }
+.rail .rail-search { height: 40px; margin: 0 0 8px; padding: 0 12px; border-radius: 10px; background: var(--panel-field); box-shadow: none; color: var(--ink-2); }
 .rail .rail-search .icon { width: 18px; height: 18px; color: var(--ink-2); }
-.rail .rail-search .rail-label:not(.search-key) { flex: 1; }
-.search-key { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: var(--panel-key); color: var(--ink-2); font-family: var(--font-ui); font-size: 0.8125rem; }
 .chats-title { margin: 0; padding: 0 4px; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 600; color: var(--ink-2); }
 .rail .nav-item { height: 36px; padding: 0 12px; gap: 12px; border-radius: 10px; color: var(--ink-2); font-weight: 500; }
 .rail .nav-item .icon { width: 18px; height: 18px; }
@@ -1690,7 +1685,8 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 .model-desc { font-weight: 400; }
 .model-menu .menu-sep, .account-menu .menu-sep { background: var(--rule); margin: 4px 0; }
 
-@media (min-width: 720px) { .app.rail-collapsed .rail { margin: 0; } }
+/* The page title sits on the line of the sidebar's toggle. */
+@media (min-width: 720px) { .app.rail-collapsed .rail { margin: 0; } .main { --toolbar-h: 80px; } }
 @media (max-width: 1099px) {
   .app { --rail-w: 72px; --rail-open-w: 56px; }
   .rail { padding: 8px; }
@@ -1698,7 +1694,6 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
   .rail-head { margin-bottom: 4px; }
   .rail .rail-search { width: 40px; padding: 0; margin-bottom: 4px; background: transparent; }
   .rail .account-switch { padding: 6px; background: transparent; box-shadow: none; }
-  .search-key { display: none; }
 }
 @media (max-width: 719px) { .rail { margin: 0; border-radius: 0; } }
 

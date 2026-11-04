@@ -455,7 +455,6 @@
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
     if (mod && e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); F.views.chat.newChat(); return; }
-    if (e.key === '/' && !mod && app.view === 'chat' && !e.target.closest('input, textarea, select, [contenteditable]')) { e.preventDefault(); openPalette(); return; }
     if (mod && e.key === '\\') {
       e.preventDefault();
       F.toggleRail();
