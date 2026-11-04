@@ -6,10 +6,12 @@
   const { h, fmt } = F;
 
   const PREFS = {
-    theme: { key: 'fdsa.theme', attr: 'data-theme', values: ['light', 'dark'] },
+    theme: { key: 'fdsa.theme', attr: 'data-theme', values: ['system', 'light', 'dark'] },
     material: { key: 'fdsa.material', attr: 'data-material', values: ['system', 'glass', 'solid'] },
     density: { key: 'fdsa.density', attr: 'data-density', values: ['comfortable', 'compact'] },
   };
+
+  const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
 
   F.prefs = {
     get(name) {
@@ -26,12 +28,18 @@
     apply(name, value) {
       const p = PREFS[name];
       const root = document.documentElement;
+      if (name === 'theme') {
+        if (value === 'dark' || (value === 'system' && systemDark.matches)) root.setAttribute(p.attr, 'dark');
+        else root.removeAttribute(p.attr);
+        return;
+      }
       if (value === p.values[0] && name !== 'density') root.removeAttribute(p.attr);
       else root.setAttribute(p.attr, value);
     },
     applyAll() { for (const name of Object.keys(PREFS)) F.prefs.apply(name, F.prefs.get(name)); },
   };
   F.prefs.applyAll();
+  systemDark.addEventListener('change', () => { if (F.prefs.get('theme') === 'system') F.prefs.apply('theme', 'system'); });
 
   const st = { root: null, els: {}, health: null, healthError: null, visible: false, snippet: 'openai',
     update: { status: null, error: null, channel: null, check: null, phase: 'idle', message: null } };
@@ -415,7 +423,7 @@
   function renderAppearance() {
     const pref = (label, hint, name, options) => row(label, hint, F.segmented(label, options, F.prefs.get(name), (v) => F.prefs.set(name, v)));
     st.els.appearance.replaceChildren(
-      pref(F.t('Theme'), null, 'theme', [{ value: 'light', label: F.t('Light') }, { value: 'dark', label: F.t('Dark') }]),
+      pref(F.t('Theme'), null, 'theme', [{ value: 'system', label: F.t('System') }, { value: 'light', label: F.t('Light') }, { value: 'dark', label: F.t('Dark') }]),
       pref(F.t('Material'), F.t('System follows the reduced-transparency setting of your OS'), 'material', [{ value: 'system', label: F.t('System') }, { value: 'glass', label: F.t('Glass'), icon: 'material' }, { value: 'solid', label: F.t('Solid') }]),
       pref(F.t('Density'), null, 'density', [{ value: 'comfortable', label: F.t('Comfortable') }, { value: 'compact', label: F.t('Compact') }]),
       row(F.t('Language'), F.t('Saved in this browser. Chinese is used when the browser language is Chinese and you have not chosen.'),

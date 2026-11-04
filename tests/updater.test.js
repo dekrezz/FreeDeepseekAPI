@@ -282,4 +282,13 @@ test('with real git: check sees a new release, install fast-forwards and switche
   assert.equal(JSON.parse(fs.readFileSync(path.join(user, 'package.json'), 'utf8')).version, '0.3.0');
   assert.equal((await updater.status()).channel, 'latest');
   assert.equal((await updater.check('latest')).upToDate, true);
+
+  // A branch ahead of the channel already has the release, so nothing is offered.
+  g(user, 'switch', '-c', 'work');
+  g(user, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '--allow-empty', '-m', 'Work in progress');
+  const ahead = await updater.check('latest');
+  assert.equal(ahead.upToDate, true);
+  assert.equal(ahead.switchOnly, false);
+  assert.equal(ahead.canInstall, false);
+  assert.deepEqual(ahead.changes, []);
 });
