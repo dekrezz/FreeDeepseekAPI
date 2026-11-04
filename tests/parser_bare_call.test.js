@@ -34,3 +34,63 @@ test('<call> quoted inside prose is not executed but is detected as markup', () 
     assert.equal(S.looksLikeToolCallMarkup(text), true);
     assert.equal(S.looksLikeToolCallMarkup('I will call the bash tool next.'), false);
 });
+
+const bash = command => `<call name="bash"><parameter name="command">${command}</parameter></call>`;
+const commandOf = text => {
+    const calls = S.collectAgentToolCalls(text, TOOLS);
+    assert.deepEqual(calls.map(c => c.name), ['bash']);
+    return JSON.parse(calls[0].arguments).command;
+};
+
+test('a tag named call in a code answer is not tool markup', () => {
+    assert.equal(S.looksLikeToolCallMarkup('Render <Call name="Bob" /> here.'), false);
+    assert.equal(S.looksLikeToolCallMarkup('In XML: <call name="x">text</call>'), false);
+});
+
+test('markup and entities inside a value stay literal', () => {
+    for (const command of [
+        'grep -n "<invoke" server.js',
+        "grep -c '<tool_calls>' a.txt",
+        "grep '|DSML|' server.js",
+        'grep -n "</call>" server.js',
+        'echo "</parameter>" done',
+        "grep -c '&lt;' page.html",
+        "sed 's/&amp;/x/g' a && cat <<EOF",
+    ]) assert.equal(commandOf(bash(command)), command);
+    assert.equal(commandOf(bash('<![CDATA[echo "</call></parameter>"]]>')), 'echo "</call></parameter>"');
+});
+
+test('a tool envelope inside a value does not replace the outer call', () => {
+    for (const content of [
+        '{"tool_call":{"name":"bash","arguments":{"command":"rm -rf build"}}}',
+        '<tool_call>{"name":"bash","arguments":{"command":"id"}}</tool_call>',
+        'TOOL_CALL: bash {"command":"id"}',
+    ]) {
+        const text = `<call name="read"><parameter name="path">a</parameter><parameter name="content">${content}</parameter></call>`;
+        const calls = S.collectAgentToolCalls(text, TOOLS);
+        assert.deepEqual(calls.map(c => c.name), ['read']);
+        assert.equal(JSON.parse(calls[0].arguments).content, content);
+    }
+    const dropped = '<call name="rm"><parameter name="x">{"tool_call":{"name":"bash","arguments":{}}}</parameter></call>';
+    assert.deepEqual(S.collectAgentToolCalls(dropped, TOOLS), []);
+});
+
+test('other spellings of the tag are parsed', () => {
+    const tools = new Set(['bash', 'read', 'mcp:read']);
+    const names = text => S.collectAgentToolCalls(text, tools).map(c => c.name);
+    assert.deepEqual(names(`<call name='bash'><parameter name="command">ls</parameter></call>`), ['bash']);
+    assert.deepEqual(names('<call name="bash" id="1"><parameter name="command">ls</parameter></call>'), ['bash']);
+    assert.deepEqual(names('<call name="mcp:read"><parameter name="p">x</parameter></call>'), ['mcp:read']);
+    assert.deepEqual(names('<call name="read"/>'), ['read']);
+    assert.deepEqual(names('<call name="read"></call>'), ['read']);
+    assert.deepEqual(names('<call name="bash">{"command":"ls"}</call>'), ['bash']);
+    const fullwidth = '＜call name="bash"＞＜parameter name="command"＞ls＜/parameter＞＜/call＞';
+    assert.deepEqual(names(fullwidth), ['bash']);
+    assert.equal(S.looksLikeToolCallMarkup(`Sure: ${fullwidth}`), true);
+});
+
+test('unclosed <call> tags are rejected quickly', () => {
+    const started = Date.now();
+    assert.deepEqual(S.collectAgentToolCalls('<call name="a">'.repeat(17000), TOOLS), []);
+    assert.ok(Date.now() - started < 1000);
+});
