@@ -590,6 +590,93 @@ function clientIp(req) {
     }
     return raw || 'unknown';
 }
+// Abuse limits for callers outside this machine. Loopback is never limited, so local agents keep
+// working. Only the socket address, or the hop a trusted proxy appended, decides who that is: the
+// left end of X-Forwarded-For is whatever the client sent.
+function socketIp(socket) {
+    const raw = String((socket && socket.remoteAddress) || '').replace(/^::ffff:/, '');
+    return raw === '::1' ? '127.0.0.1' : raw;
+}
+function guardIp(req) {
+    if (isTruthy(process.env.TRUST_PROXY)) {
+        const hops = String(req.headers['x-forwarded-for'] || '').split(',').map(hop => hop.trim()).filter(Boolean);
+        if (hops.length) return hops[hops.length - 1].replace(/^::ffff:/, '');
+    }
+    return socketIp(req.socket);
+}
+function createRemoteGuard({ perMinute = 600, authFailLimit = 10, authLockMs = 15 * 60 * 1000, perIpConnections = 64, maxTracked = 10000, now = Date.now } = {}) {
+    const clients = new Map();
+    const idle = (client, t) => client.sockets === 0 && client.lockedUntil <= t && t - client.windowStart >= 60000 && t - client.failStart >= authLockMs;
+    const prune = (t) => {
+        for (const [ip, client] of clients) if (idle(client, t)) clients.delete(ip);
+        // Still full under a flood of addresses: drop the oldest that holds no socket.
+        for (const [ip, client] of clients) {
+            if (clients.size < maxTracked) break;
+            if (client.sockets === 0) clients.delete(ip);
+        }
+    };
+    const clientFor = (ip) => {
+        let client = clients.get(ip);
+        if (client) return client;
+        const t = now();
+        if (clients.size >= maxTracked) prune(t);
+        client = { windowStart: t, count: 0, failStart: t, failures: 0, lockedUntil: 0, sockets: 0 };
+        clients.set(ip, client);
+        return client;
+    };
+    const seconds = (ms) => Math.max(1, Math.ceil(ms / 1000));
+    return {
+        // One request. Refused while the address is locked out or over its minute budget.
+        check(ip) {
+            const client = clientFor(ip);
+            const t = now();
+            if (client.lockedUntil > t) return { allowed: false, retryAfter: seconds(client.lockedUntil - t) };
+            if (!perMinute) return { allowed: true };
+            if (t - client.windowStart >= 60000) { client.windowStart = t; client.count = 0; }
+            client.count++;
+            if (client.count > perMinute) return { allowed: false, retryAfter: seconds(client.windowStart + 60000 - t) };
+            return { allowed: true };
+        },
+        // A wrong key. Enough of them inside the lock window close the door for that window.
+        failedAuth(ip) {
+            if (!authFailLimit) return;
+            const client = clientFor(ip);
+            const t = now();
+            if (t - client.failStart >= authLockMs) { client.failStart = t; client.failures = 0; }
+            client.failures++;
+            if (client.failures >= authFailLimit) { client.lockedUntil = t + authLockMs; client.failures = 0; }
+        },
+        // One TCP connection, before any HTTP is read.
+        connect(ip) {
+            const client = clientFor(ip);
+            if (client.lockedUntil > now()) return false;
+            if (perIpConnections && client.sockets >= perIpConnections) return false;
+            client.sockets++;
+            return true;
+        },
+        disconnect(ip) {
+            const client = clients.get(ip);
+            if (client && client.sockets > 0) client.sockets--;
+        },
+        size: () => clients.size,
+    };
+}
+const remoteGuard = createRemoteGuard({
+    perMinute: envNumber('PROXY_RATE_LIMIT_PER_MIN', 600),
+    authFailLimit: envNumber('PROXY_AUTH_FAIL_LIMIT', 10),
+    authLockMs: envNumber('PROXY_AUTH_LOCK_MS', 15 * 60 * 1000),
+    perIpConnections: envNumber('PROXY_MAX_CONNECTIONS_PER_IP', 64),
+});
+// Runs on every TCP connection, so a refused caller costs a close and no parsing. Without a proxy
+// key nothing outside this machine is served, so it does not get an answer either.
+function guardConnection(socket, { guard = remoteGuard, proxyKey = PROXY_API_KEY, trustProxy = isTruthy(process.env.TRUST_PROXY) } = {}) {
+    const ip = socketIp(socket);
+    if (isLoopbackHost(ip)) return;
+    if (!proxyKey) { socket.destroy(); return; }
+    if (trustProxy) return; // Every socket is the proxy's; the per-request limits see the real client.
+    if (!guard.connect(ip)) { socket.destroy(); return; }
+    socket.once('close', () => guard.disconnect(ip));
+}
 // Flat estimate for every model (DeepSeek API list prices); the web path has no billing.
 const USD_PER_M_INPUT = 0.22;
 const USD_PER_M_OUTPUT = 0.66;
@@ -4758,6 +4845,16 @@ async function serveDashboard(req, res, pathname) {
 // === HTTP Server ===
 // The same handler serves HTTP, or HTTPS when both PEM files are set and readable.
 async function handleRequest(req, res) {
+    const remoteIp = guardIp(req);
+    const remoteClient = !isLoopbackHost(remoteIp);
+    if (remoteClient) {
+        const gate = remoteGuard.check(remoteIp);
+        if (!gate.allowed) {
+            res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(gate.retryAfter), Connection: 'close' });
+            res.end(JSON.stringify({ error: { message: 'Too many requests from this address', type: 'rate_limit' } }));
+            return;
+        }
+    }
     const requestOrigin = req.headers.origin;
     res.setHeader('Vary', 'Origin');
     if (!isBrowserOriginAllowed(requestOrigin)) {
@@ -4779,6 +4876,7 @@ async function handleRequest(req, res) {
 
     const isPublicProbe = req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health' || url.pathname === '/readyz' || isDashboardPath(url.pathname));
     if (!isPublicProbe && !isProxyAuthorized(req.headers.authorization)) {
+        if (remoteClient) remoteGuard.failedAuth(remoteIp);
         res.writeHead(401, {
             'Content-Type': 'application/json',
             'WWW-Authenticate': 'Bearer',
@@ -5883,6 +5981,12 @@ function createListenServer(handler) {
     }
 }
 const server = createListenServer(handleRequest);
+// Slow or endless requests must not hold sockets open. Streamed answers are not affected: these
+// cover receiving the request only.
+server.headersTimeout = 15000;
+server.requestTimeout = 120000;
+server.maxConnections = envNumber('PROXY_MAX_CONNECTIONS', 1024);
+server.on('connection', (socket) => guardConnection(socket));
 
 async function runAuthScript() {
     const script = path.join(__dirname, 'scripts', 'deepseek_chrome_auth.js');
@@ -6159,6 +6263,9 @@ module.exports = {
         clientIp,
         modelCostUsd,
         isProxyAuthorized,
+        createRemoteGuard,
+        guardConnection,
+        guardIp,
         loadProxyApiKey,
         requireProxyApiKey,
         isLoopbackHost,

@@ -250,6 +250,9 @@ The full field list (`AgentSummary`, `FileMeta`) is in [`public/dashboard/API.md
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | off | PEM certificate and key. Both set and readable serves HTTPS; otherwise HTTP. Not required on loopback. A non-loopback bind without them warns that the login import and Authorization header are clear text |
 | `PROXY_API_KEY` / `REQUIRE_PROXY_API_KEY` | off | Protects `/v1/*` and `/admin/*` |
 | `PROXY_ADMIN_ALLOW_REMOTE` | off | If `1`, `/admin/*` answers non-loopback clients without `PROXY_API_KEY` |
+| `PROXY_RATE_LIMIT_PER_MIN` | `600` | Requests per minute from one address outside this machine, then 429. `0` turns it off. Loopback is never limited |
+| `PROXY_AUTH_FAIL_LIMIT` / `PROXY_AUTH_LOCK_MS` | `10` / `900000` | That many wrong keys from one address lock it out for this long. `0` turns the lock off |
+| `PROXY_MAX_CONNECTIONS_PER_IP` / `PROXY_MAX_CONNECTIONS` | `64` / `1024` | Open connections from one outside address, and in total |
 | `DEEPSEEK_AUTH_PATH` | `./deepseek-auth.json` | One file, or comma-separated list |
 | `DEEPSEEK_AUTH_DIR` | `./accounts` if present | All `*.json` in that directory |
 | `DEEPSEEK_MAX_CONCURRENT` | `24` | Process-wide cap. Real parallelism is **number of idle logins** |

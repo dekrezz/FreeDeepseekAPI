@@ -452,8 +452,6 @@
     sendBtn.setAttribute('aria-label', running ? 'Stop' : 'Send');
     sendBtn.setAttribute('data-tip', running ? 'Stop' : reason || (emptyInput ? 'Type a message' : 'Send'));
     sendBtn.setAttribute('aria-disabled', String(!running && (Boolean(reason) || emptyInput)));
-    if (reason && !running && (S.els.note.textContent === '' || S.noteFromReason)) setNote(reason, S.models.error || coolLeftMs(conv) > 0 ? 'crit' : null, true);
-    else if (!reason && S.noteFromReason) setNote('');
   }
   function setDisabled(btn, disabled, reason, tip) {
     btn.setAttribute('aria-disabled', String(Boolean(disabled)));
@@ -1339,6 +1337,8 @@
 
   F.views.chat = {
     get title() { const c = active(); return c ? c.title : F.t('New chat'); },
+    // The page heading stays empty until a chat is open; the tab keeps the title above.
+    get heading() { const c = active(); return c ? c.title : ''; },
     live: false,
     mount,
     async show(route) {

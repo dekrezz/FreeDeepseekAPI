@@ -1669,7 +1669,8 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 .rail .nav-item { height: 36px; padding: 0 12px; gap: 12px; border-radius: 10px; color: var(--ink-2); font-weight: 500; }
 .rail .nav-item .icon { width: 18px; height: 18px; }
 .rail .nav-item[aria-current=page] { background: var(--panel-active); color: var(--ink); }
-.rail .account-switch { min-height: 44px; padding: 4px 12px; border-radius: 10px; background: var(--panel-chip); box-shadow: 0 1px 2px rgb(21 23 26 / 0.1); }
+.rail .account-switch, .rail .account-switch:hover, .rail .account-switch[aria-expanded=true] { min-height: 44px; padding: 4px; border-radius: 10px; background: transparent; box-shadow: none; }
+.rail .avatar.is-add { background: transparent; box-shadow: none; }
 .rail .avatar { width: 24px; height: 24px; font-size: 0.6875rem; }
 .chats { margin-top: 16px; }
 .chat-item { height: 36px; padding: 0 12px; border-radius: 10px; color: var(--ink-2); font-weight: 500; }
@@ -1703,6 +1704,17 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
   .settings-pane .toolbar { padding-left: max(40px, calc(50% - 340px)); }
   .app.has-inspector .settings-pane .view-pad { max-width: none; }
 }
+
+/* ------------------------------------------------------------------ chat error card */
+.chat-error { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; align-items: start; width: 100%; padding: 16px; border-radius: 16px; background: var(--well); box-shadow: inset 0 0 0 1px var(--rule); animation: chat-error-in 240ms var(--ease-out); }
+@keyframes chat-error-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .chat-error { animation: none; } }
+.chat-error-icon { width: 20px; height: 20px; margin-top: 1px; }
+.chat-error-line, .chat-error .chat-error-line { display: grid; gap: 2px; max-width: none; flex-basis: auto; }
+.chat-error-title { font-weight: 500; }
+.chat-error-text { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.chat-error-hint { grid-column: 2; padding: 0; }
+.chat-error > :not(.chat-error-icon):not(.chat-error-line) { grid-column: 2; }
 
 /* ------------------------------------------------------------------ composer */
 .composer.composer { width: min(768px, 100%); grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "thumbs thumbs" "input input" "left right"; align-items: center; row-gap: 8px; padding: 16px 12px 8px 20px; border-radius: 28px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--rule-mid), 0 2px 8px rgb(0 0 0 / 0.08); }

@@ -114,7 +114,7 @@
   function renderToolbar() {
     const v = F.views[app.view];
     const title = $('view-title');
-    if (!title.querySelector('input')) title.textContent = titleFor(app.view);
+    if (!title.querySelector('input')) title.textContent = v.heading ?? titleFor(app.view);
     const actions = v.actions ? v.actions() : [];
     $('toolbar-actions').replaceChildren(...actions);
   }
