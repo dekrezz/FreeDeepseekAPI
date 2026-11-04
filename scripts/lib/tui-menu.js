@@ -67,6 +67,7 @@ const STRINGS = {
     replaceDefault: 'Make DeepSeek the default model',
     selectAgents: 'Select coding agents',
     continueSetup: 'Continue',
+    skipSetup: 'Skip and continue',
     setupComplete: 'Coding agents are configured',
     setupCancelled: 'Setup cancelled. Come back anytime.',
     selected: 'Selected',
@@ -151,6 +152,7 @@ const STRINGS = {
     replaceDefault: 'Сделать DeepSeek моделью по умолчанию',
     selectAgents: 'Выберите coding-агентов',
     continueSetup: 'Продолжить',
+    skipSetup: 'Пропустить и продолжить',
     setupComplete: 'Coding-агенты настроены',
     setupCancelled: 'Настройка отменена. Возвращайтесь ещё.',
     selected: 'Выбрано',
@@ -235,6 +237,7 @@ const STRINGS = {
     replaceDefault: '将 DeepSeek 设为默认模型',
     selectAgents: '选择 Coding Agent',
     continueSetup: '继续',
+    skipSetup: '跳过并继续',
     setupComplete: 'Coding Agent 配置完成',
     setupCancelled: '设置已取消，欢迎下次再来。',
     selected: '已选择',
@@ -610,6 +613,7 @@ async function runInteractiveMulti(getState, setLang, initial = [], options = {}
       const items = [
         ...selectable.map(item => ({ ...item, checked: selected.has(item.id) })),
         { id: '__continue', label: t(snap.lang, 'continueSetup') },
+        ...(options.skipId ? [{ id: '__skip', label: t(snap.lang, 'skipSetup') }] : []),
       ];
       index = Math.max(0, Math.min(index, items.length - 1));
       const regions = renderFrame({
@@ -637,6 +641,7 @@ async function runInteractiveMulti(getState, setLang, initial = [], options = {}
           if (hit.id.startsWith('item:')) {
             index = Number(hit.id.slice(5));
             const item = items[index];
+            if (item.id === '__skip') return { id: options.skipId, ids: [] };
             if (item.id === '__continue') {
               if (selected.size) return { id: 'continue', ids: [...selected] };
             } else if (selected.has(item.id)) selected.delete(item.id);
@@ -657,11 +662,15 @@ async function runInteractiveMulti(getState, setLang, initial = [], options = {}
       else if (key === 'lang-next' || key === 'right' || key === 'tab') setLang(cycleLang(snap.lang, 1));
       else if (key === 'space') {
         const item = items[index];
+        if (item.id === '__skip') return { id: options.skipId, ids: [] };
         if (item.id === '__continue') {
           if (selected.size) return { id: 'continue', ids: [...selected] };
         } else if (selected.has(item.id)) selected.delete(item.id);
         else selected.add(item.id);
-      } else if (key === 'enter' && selected.size) return { id: 'continue', ids: [...selected] };
+      } else if (key === 'enter') {
+        if (items[index].id === '__skip') return { id: options.skipId, ids: [] };
+        if (selected.size) return { id: 'continue', ids: [...selected] };
+      }
     }
   } finally {
     disableInteractive();
@@ -702,12 +711,15 @@ async function pickMany(getState, setLang, initial = [], options = {}) {
   console.log(`\nFreeDeepseekAPI — ${snap.subtitle}`);
   snap.items.forEach((item, i) => console.log(`  ${i + 1}  ${item.label}`));
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await new Promise(resolve => rl.question('Select numbers separated by commas: ', resolve));
+  const question = options.skipId
+    ? `Select numbers separated by commas (Enter: ${t(snap.lang, 'skipSetup')}): `
+    : 'Select numbers separated by commas: ';
+  const answer = await new Promise(resolve => rl.question(question, resolve));
   rl.close();
   const ids = String(answer || '').split(',')
     .map(value => snap.items[Number(value.trim()) - 1]?.id)
     .filter(Boolean);
-  return ids.length ? { id: 'continue', ids } : { id: options.cancelId || 'quit', ids: [] };
+  return ids.length ? { id: 'continue', ids } : { id: options.skipId || options.cancelId || 'quit', ids: [] };
 }
 
 async function pause(lang) {

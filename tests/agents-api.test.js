@@ -497,6 +497,15 @@ function runCli(args, env) {
   return spawnSync(process.execPath, ['scripts/setup-agents.js', ...args], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, ...env } });
 }
 
+test('the wizard can be skipped: it exits cleanly and writes nothing', () => {
+  const home = tmpdir();
+  const res = spawnSync(process.execPath, ['scripts/setup-agents.js'], { cwd: ROOT, encoding: 'utf8', input: '\n', env: { ...process.env, SETUP_HOME: home } });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /Enter: /);
+  assert.doesNotMatch(res.stdout, /model=/);
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
 test('the CLI writes a manifest, and --restore with a manifest deletes files setup created', () => {
   const home = tmpdir();
   put(home, '.config/opencode/opencode.json', '{"model":"openai/gpt"}\n');
