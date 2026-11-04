@@ -2153,8 +2153,9 @@ async function interactive(opts) {
         }),
         setLang,
         selected,
-        { cancelId: 'cancel' },
+        { cancelId: 'cancel', skipId: 'skip' },
       );
+      if (chosen.id === 'skip') return null;
       if (chosen.id === 'cancel') {
         await pick(
           () => ({

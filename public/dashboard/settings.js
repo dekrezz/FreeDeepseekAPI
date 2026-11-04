@@ -6,9 +6,12 @@
   const { h, fmt } = F;
 
   const PREFS = {
+    theme: { key: 'fdsa.theme', attr: 'data-theme', values: ['system', 'light', 'dark'] },
     material: { key: 'fdsa.material', attr: 'data-material', values: ['system', 'glass', 'solid'] },
     density: { key: 'fdsa.density', attr: 'data-density', values: ['comfortable', 'compact'] },
   };
+
+  const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
 
   F.prefs = {
     get(name) {
@@ -19,18 +22,24 @@
     },
     set(name, value) {
       const p = PREFS[name];
-      try { localStorage.setItem(p.key, value); } catch (e) { F.toast(F.t('Could not save the {name} preference: {error}', { name: F.t(name === 'material' ? 'Material' : 'Density'), error: e.name }), { tone: 'error' }); }
+      try { localStorage.setItem(p.key, value); } catch (e) { F.toast(F.t('Could not save the {name} preference: {error}', { name: F.t({ theme: 'Theme', material: 'Material', density: 'Density' }[name]), error: e.name }), { tone: 'error' }); }
       F.prefs.apply(name, value);
     },
     apply(name, value) {
       const p = PREFS[name];
       const root = document.documentElement;
+      if (name === 'theme') {
+        if (value === 'dark' || (value === 'system' && systemDark.matches)) root.setAttribute(p.attr, 'dark');
+        else root.removeAttribute(p.attr);
+        return;
+      }
       if (value === p.values[0] && name !== 'density') root.removeAttribute(p.attr);
       else root.setAttribute(p.attr, value);
     },
     applyAll() { for (const name of Object.keys(PREFS)) F.prefs.apply(name, F.prefs.get(name)); },
   };
   F.prefs.applyAll();
+  systemDark.addEventListener('change', () => { if (F.prefs.get('theme') === 'system') F.prefs.apply('theme', 'system'); });
 
   const st = { root: null, els: {}, health: null, healthError: null, visible: false, snippet: 'openai',
     update: { status: null, error: null, channel: null, check: null, phase: 'idle', message: null } };
@@ -44,19 +53,19 @@
     const appearance = h('div', { class: 'set-group' });
     const chat = h('div', { class: 'set-stack' });
     root.append(h('div', { class: 'view-pad settings' },
-      section(F.t('Access key'), F.t('The PROXY_API_KEY this dashboard signs its requests with.'), key, 'key'),
-      section(F.t('Connection'), F.t('Point any OpenAI- or Anthropic-compatible client at this proxy.'), conn, 'route'),
-      section(F.t('Server'), F.t('Facts from GET /health.'), server, 'status'),
-      section(F.t('Updates'), F.t('Stable gets a release once it has been checked. Latest gets every release first.'), updates, 'download'),
-      section(F.t('Appearance'), null, appearance, 'settings'),
-      section(F.t('Chat data'), F.t('Stored in this browser only, for {origin}. 127.0.0.1 and localhost keep separate stores.', { origin: location.origin }), chat, 'chat')));
+      section(F.t('Access key'), F.t('The PROXY_API_KEY this dashboard signs its requests with'), key),
+      section(F.t('Connection'), F.t('Point any OpenAI- or Anthropic-compatible client at this proxy'), conn),
+      section(F.t('Server'), F.t('Facts from GET /health'), server),
+      section(F.t('Updates'), F.t('Stable gets a release once it has been checked. Latest gets every release first.'), updates),
+      section(F.t('Appearance'), null, appearance),
+      section(F.t('Chat data'), F.t('Stored in this browser only, for {origin}. 127.0.0.1 and localhost keep separate stores.', { origin: location.origin }), chat)));
     Object.assign(st.els, { key, conn, server, updates, appearance, chat });
     F.on('accounts', () => { if (st.visible) renderServer(); });
   }
 
-  function section(title, lead, body, icon) {
+  function section(title, lead, body) {
     return h('section', { class: 'settings-section' },
-      h('header', { class: 'settings-head' }, h('h2', { class: 'settings-title' }, F.icon(icon, 'title-icon'), h('span', { text: title })), lead ? h('p', { class: 'settings-desc', text: lead }) : null),
+      h('header', { class: 'settings-head' }, h('h2', { class: 'settings-title' }, h('span', { text: title })), lead ? h('p', { class: 'settings-desc', text: lead }) : null),
       body);
   }
 
@@ -64,7 +73,7 @@
   function row(label, hint, control, cls, icon) {
     return h('div', { class: ['set-row', cls, icon && 'has-icon'] },
       icon ? h('span', { class: 'set-icon', 'aria-hidden': 'true' }, F.icon(icon)) : null,
-      h('div', { class: 'set-text' }, h('span', { class: 'set-label', text: label }), hint ? (hint instanceof Node ? hint : h('span', { class: 'set-hint', text: hint })) : null),
+      h('div', { class: 'set-text' }, h('span', { class: 'set-label', text: F.t(label) }), hint ? (hint instanceof Node ? hint : h('span', { class: 'set-hint', text: F.t(hint) })) : null),
       control == null || control === '' ? null : h('div', { class: 'set-control' }, control instanceof Node ? control : String(control)));
   }
 
@@ -340,9 +349,8 @@
       : s.branch ? [h('span', { text: 'Branch' }), h('code', { class: 'mono-id update-branch', text: s.branch })] : [h('span', { text: 'No channel' })];
     const checkBtn = F.btn(u.phase === 'checking' ? 'Checking…' : 'Check for updates', { kind: 'primary', icon: 'reload', onclick: checkUpdate });
     if (busy || s.method !== 'git') checkBtn.setAttribute('aria-disabled', 'true');
-    // The installed build over a humpback breaking the surface (MEDIA.md), the check on its right.
+    // The installed build, the check on its right.
     const hero = h('div', { class: 'update-hero' },
-      h('img', { class: 'update-hero-media', src: '/dashboard/media-breach.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' }),
       h('div', { class: 'update-hero-body' },
         h('p', { class: 'update-version', text: s.version ? `v${s.version}` : 'Unknown version' }),
         h('p', { class: 'update-where' }, ...where, s.commit ? h('code', { class: 'mono-id', text: s.commit }) : null)),
@@ -415,7 +423,8 @@
   function renderAppearance() {
     const pref = (label, hint, name, options) => row(label, hint, F.segmented(label, options, F.prefs.get(name), (v) => F.prefs.set(name, v)));
     st.els.appearance.replaceChildren(
-      pref(F.t('Material'), F.t('System follows the reduced-transparency setting of your OS.'), 'material', [{ value: 'system', label: F.t('System') }, { value: 'glass', label: F.t('Glass'), icon: 'material' }, { value: 'solid', label: F.t('Solid') }]),
+      pref(F.t('Theme'), null, 'theme', [{ value: 'system', label: F.t('System') }, { value: 'light', label: F.t('Light') }, { value: 'dark', label: F.t('Dark') }]),
+      pref(F.t('Material'), F.t('System follows the reduced-transparency setting of your OS'), 'material', [{ value: 'system', label: F.t('System') }, { value: 'glass', label: F.t('Glass'), icon: 'material' }, { value: 'solid', label: F.t('Solid') }]),
       pref(F.t('Density'), null, 'density', [{ value: 'comfortable', label: F.t('Comfortable') }, { value: 'compact', label: F.t('Compact') }]),
       row(F.t('Language'), F.t('Saved in this browser. Chinese is used when the browser language is Chinese and you have not chosen.'),
         F.segmented(F.t('Language'), [{ value: 'en', label: 'English' }, { value: 'zh', label: '中文' }], F.lang.get(), (v) => { if (v !== F.lang.get()) F.lang.set(v); })));
@@ -423,6 +432,7 @@
 
   async function renderChat() {
     const host = st.els.chat;
+    const size = (b) => (b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GB` : b >= 2 ** 20 ? `${Math.round(b / 2 ** 20)} MB` : `${Math.round(b / 1024)} KB`);
     const info = F.chatStore ? await F.chatStore.stats() : null;
     let est = null;
     try { est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; } catch (e) { est = null; }
@@ -442,9 +452,9 @@
         row('Conversations', null, info ? fmt.int(info.conversations) : '—'),
         row('Messages', null, info ? fmt.int(info.messages) : '—'),
         row('Storage', info && info.mode === 'memory' ? 'Not saved: IndexedDB is unavailable in this browser mode.' : null,
-          info && info.mode === 'memory' ? null : est ? `${fmt.compact(est.usage / 1024)} KB of about ${fmt.compact(est.quota / 1048576)} MB` : 'IndexedDB')),
+          info && info.mode === 'memory' ? null : est ? `${size(est.usage)} of about ${size(est.quota)}` : 'IndexedDB')),
       h('div', { class: 'set-group' },
-        row('Export all conversations', 'Downloads every conversation in this browser as one JSON file.', exportBtn),
+        row('Export all conversations', 'Downloads every conversation in this browser as one JSON file', exportBtn),
         row('Delete all conversations', 'Removes them from this browser. This can\'t be undone.', delBtn)));
   }
 

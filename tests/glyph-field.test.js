@@ -102,7 +102,7 @@ test('glyph field: only a press starts a ripple; holding or dragging does nothin
   assert.equal(presses.length, 1, 'a press on the composer or a button does not');
 });
 
-test('settings headers, Add account, Updates and the access gate show ocean photos that ship and are credited; no video', () => {
+test('the access gate shows an ocean photo that ships and is credited; settings and Add account show none; no video', () => {
   const dir = path.join(__dirname, '..', 'public', 'dashboard');
   const credits = fs.readFileSync(path.join(dir, 'MEDIA.md'), 'utf8');
   const used = new Set();
@@ -110,7 +110,7 @@ test('settings headers, Add account, Updates and the access gate show ocean phot
     const code = fs.readFileSync(path.join(dir, file), 'utf8');
     assert.doesNotMatch(code, /createElement\(['"]video['"]\)/, `${file} still plays a video`);
     const photos = [...code.matchAll(/\/dashboard\/(media-[a-z0-9-]+\.jpg)/g)].map(m => m[1]);
-    if (file !== 'app.css') assert.ok(photos.length, `${file} shows no photo`);
+    if (file !== 'app.css') assert.equal(photos.length, 0, `${file} still shows a photo`);
     photos.forEach(p => used.add(p));
   }
   assert.match(fs.readFileSync(path.join(dir, 'app.css'), 'utf8'), /\.gate \{[^}]*\/dashboard\/media-[a-z0-9-]+\.jpg/, 'the access gate shows a photo');

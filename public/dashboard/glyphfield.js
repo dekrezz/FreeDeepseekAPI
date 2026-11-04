@@ -14,8 +14,10 @@
   const FONT_PX = 11;
   const LINE_PX = 14;
   const MONO = 'ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace';
-  const INK = '#a9b6c6';     // cool grey of the field
-  const CREST = '#5aa9ff';   // --signal: the lit crest of a ripple
+  // Cool grey of the field and the lit crest of a ripple (--signal), per theme.
+  const darkTheme = () => document.documentElement.getAttribute('data-theme') === 'dark';
+  const inkColor = () => (darkTheme() ? '#a9b6c6' : '#66727f');
+  const crestColor = () => (darkTheme() ? '#5aa9ff' : '#1f6fd6');
   const INTERACTIVE = 'button, a, input, textarea, select, label, form, [role="menu"], [role="dialog"], .composer-meta, .composer-note, .chat-banners';
   const IDLE_MS = 120;       // re-roll tick while nothing moves
   const IDLE_SHARE = 0.012;  // share of glyphs re-rolled per tick
@@ -213,8 +215,8 @@
       gh = Math.round(LINE_PX * dpr);
       cols = Math.ceil(W / gw);
       rows = Math.ceil(H / gh);
-      atlasInk = atlas(INK);
-      atlasCrest = atlas(CREST);
+      atlasInk = atlas(inkColor());
+      atlasCrest = atlas(crestColor());
       const alpha = markAlpha();
       glyph = new Uint8Array(cols * rows);
       base = new Float32Array(cols * rows);
@@ -308,6 +310,7 @@
     new IntersectionObserver((entries) => { visible = entries[entries.length - 1].isIntersecting; update(); }).observe(host);
     document.addEventListener('visibilitychange', update);
     let resizeFrame = 0;
+    new MutationObserver(() => { dirty = true; }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     new ResizeObserver(() => {
       dirty = true;
       // A field that could not lay out at zero size starts once the view has a size.

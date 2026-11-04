@@ -42,7 +42,7 @@
       st.held = null;
       render();
     });
-    const hero = F.pageHero({ image: '/dashboard/media-caustics.jpg', label: F.t('Request log'), position: '50% 62%' });
+    const hero = F.pageHero({ label: F.t('Request log') });
     root.append(hero, h('div', { class: 'view-pad' },
       h('div', { class: 'filter-row' }, statusSeg, selects, h('label', { class: 'search-field search-field-inline' }, F.icon('search'), client)),
       notice,

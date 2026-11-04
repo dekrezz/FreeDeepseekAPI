@@ -458,12 +458,21 @@
     return `#/${view}${sub ? `/${encodeURIComponent(sub)}` : ''}${qs ? `?${qs}` : ''}`;
   };
   F.navigate = (view, sub, params) => { location.hash = F.hashFor(view, sub, params); };
+  // The chat that closing the settings window returns to. A first message gives a new chat its id
+  // through replaceHash, which never routes, so the route handler alone would miss it.
+  F.rememberChat = (hash) => { try { localStorage.setItem('fdsa.lastChat', hash); } catch (e) { /* preference only */ } F.lastChatHash = hash; };
+  F.chatToReturnTo = () => {
+    if (F.lastChatHash) return F.lastChatHash;
+    try { const saved = localStorage.getItem('fdsa.lastChat'); if (saved && saved.startsWith('#/chat')) return saved; } catch (e) { /* preference only */ }
+    return '#/chat';
+  };
   // Replace the hash without adding history or re-routing.
   F.replaceHash = (view, sub, params) => {
     F._suppressRoute = true;
     history.replaceState(null, '', F.hashFor(view, sub, params));
     F._suppressRoute = false;
     try { localStorage.setItem('fdsa.lastRoute', location.hash); } catch (e) { /* preference only */ }
+    if (view === 'chat') F.rememberChat(location.hash);
   };
 
   // ---------------------------------------------------------------- clipboard
@@ -801,14 +810,11 @@
   };
 
   // ---------------------------------------------------------------- notices
-  // Page header for the settings-window views: an ocean photo (MEDIA.md), a caps headline built
-  // from live data, and one quieter line under it.
-  F.pageHero = ({ image, label, position = '50% 50%' }) => {
-    const img = F.h('img', { class: 'hero-media', src: image, alt: '', decoding: 'async', 'aria-hidden': 'true' });
-    img.style.setProperty('object-position', position);
+  // Page header for the settings-window views: a line built from live data and a quieter one under it.
+  F.pageHero = ({ label }) => {
     const title = F.h('p', { class: 'status-sentence hero-title' });
     const sub = F.h('p', { class: 'hero-sub' });
-    const el = F.h('section', { class: 'hero hero-page', 'aria-label': label }, img,
+    const el = F.h('section', { class: 'hero hero-page', 'aria-label': label },
       F.h('div', { class: 'hero-inner' }, F.h('header', { class: 'status-head' }, title, sub)));
     el.set = (headline, detail = '', tone = null) => {
       title.textContent = headline;

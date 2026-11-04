@@ -42,5 +42,7 @@ A valid report is answered on the advisory. The fix lands as a normal commit on 
 
 - Leave the bind at `127.0.0.1` unless you mean to share the port. On any other bind, set `TLS_CERT_FILE` and `TLS_KEY_FILE` so the login import and the Authorization header are not clear text. Loopback does not need TLS.
 - Keep `deepseek-auth.json` and `accounts/*.json` out of git. `npm run auth` writes them mode `600`.
-- Set `PROXY_API_KEY` before the port is reachable past your own user.
+- Set `PROXY_API_KEY` before the port is reachable past your own user. Without it, connections from outside this machine are closed before any HTTP is read.
+- With a key, one outside address gets 600 requests a minute and 64 open connections, and 10 wrong keys lock it out for 15 minutes. Loopback is not limited. Behind a reverse proxy, set `TRUST_PROXY=1`, or every client counts as the proxy itself. See [HTTP API](docs/api.md) for the settings.
+- These limits slow abuse. They do not hide the port: on a public bind, a firewall or VPN is what keeps scanners away.
 - One DeepSeek login serves one chat at a time. A second client on that same login waits.

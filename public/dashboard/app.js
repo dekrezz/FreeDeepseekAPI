@@ -45,7 +45,7 @@
       return route();
     }
     try { localStorage.setItem('fdsa.lastRoute', location.hash); } catch (e) { /* preference only */ }
-    if (r.view === 'chat') app.lastChatHash = location.hash;
+    if (r.view === 'chat') F.rememberChat(location.hash);
     F.closePopover(false);
     F.hideTooltip();
     F.charts.hideTip();
@@ -83,7 +83,7 @@
   // ---------------------------------------------------------------- settings window
   function closeSettings() {
     if (app.view === 'chat') return false;
-    location.hash = app.lastChatHash || '#/chat';
+    location.hash = F.chatToReturnTo();
     return true;
   }
   $('settings-close').addEventListener('click', closeSettings);
@@ -114,7 +114,7 @@
   function renderToolbar() {
     const v = F.views[app.view];
     const title = $('view-title');
-    if (!title.querySelector('input')) title.textContent = titleFor(app.view);
+    if (!title.querySelector('input')) title.textContent = v.heading ?? titleFor(app.view);
     const actions = v.actions ? v.actions() : [];
     $('toolbar-actions').replaceChildren(...actions);
   }
