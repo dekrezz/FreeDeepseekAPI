@@ -324,8 +324,7 @@
     S.root.style.setProperty('--dock-h', `${Math.round(hgt)}px`);
   }
 
-  function setNote(text, tone, fromReason = false) {
-    S.noteFromReason = fromReason && Boolean(text);
+  function setNote(text, tone) {
     const note = S.els.note;
     note.className = `composer-note${tone ? ` is-${tone}` : ''}`;
     if (!text) { note.replaceChildren(); return; }
