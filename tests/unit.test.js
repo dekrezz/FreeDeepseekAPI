@@ -2018,7 +2018,7 @@ test('dashboardUrl points a browser at a reachable loopback address', () => {
 test('dashboardEntry serves photos and video but never docs or paths outside the folder', () => {
   const { dashboardEntry } = serverInternals;
   assert.deepEqual(dashboardEntry('/dashboard/media-clip.mp4'), { file: 'media-clip.mp4', type: 'video/mp4', optional: true, media: true });
-  assert.equal(dashboardEntry('/dashboard/media-manta.jpg').type, 'image/jpeg');
+  assert.equal(dashboardEntry('/dashboard/media-sea-glint.jpg').type, 'image/jpeg');
   assert.equal(dashboardEntry('/dashboard/logo.png').type, 'image/png');
   assert.ok(!dashboardEntry('/dashboard/app.css').media);
   assert.ok(!dashboardEntry('/dashboard/core.js').media);
@@ -2064,19 +2064,19 @@ test('dashboard photos and video are not served when opened directly as a page',
     await serveDashboard({ headers: dest ? { 'sec-fetch-dest': dest } : {} }, res, pathname);
     return res;
   };
-  for (const pathname of ['/dashboard/media-manta.jpg', '/dashboard/geist.woff2', '/dashboard/logo.png']) {
+  for (const pathname of ['/dashboard/media-sea-glint.jpg', '/dashboard/geist.woff2', '/dashboard/logo.png']) {
     for (const dest of ['document', 'iframe', 'embed', 'object']) {
       const res = await call(pathname, dest);
       assert.equal(res.status, 403, `${pathname} as ${dest}`);
       assert.match(String(res.body), /media_direct_open/);
     }
   }
-  const image = await call('/dashboard/media-manta.jpg', 'image');
+  const image = await call('/dashboard/media-sea-glint.jpg', 'image');
   assert.equal(image.status, 200);
   // Without this, the browser reuses the cached image for a direct open and never asks.
   assert.match(String(image.headers.Vary), /Sec-Fetch-Dest/);
   assert.equal((await call('/dashboard/geist.woff2', 'font')).status, 200);
-  assert.equal((await call('/dashboard/media-manta.jpg')).status, 200, 'clients without Fetch Metadata still get the file');
+  assert.equal((await call('/dashboard/media-sea-glint.jpg')).status, 200, 'clients without Fetch Metadata still get the file');
   assert.equal((await call('/dashboard', 'document')).status, 200, 'the page itself still opens');
 });
 

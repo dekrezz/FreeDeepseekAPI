@@ -6,6 +6,7 @@
   const { h, fmt } = F;
 
   const PREFS = {
+    theme: { key: 'fdsa.theme', attr: 'data-theme', values: ['light', 'dark'] },
     material: { key: 'fdsa.material', attr: 'data-material', values: ['system', 'glass', 'solid'] },
     density: { key: 'fdsa.density', attr: 'data-density', values: ['comfortable', 'compact'] },
   };
@@ -19,7 +20,7 @@
     },
     set(name, value) {
       const p = PREFS[name];
-      try { localStorage.setItem(p.key, value); } catch (e) { F.toast(F.t('Could not save the {name} preference: {error}', { name: F.t(name === 'material' ? 'Material' : 'Density'), error: e.name }), { tone: 'error' }); }
+      try { localStorage.setItem(p.key, value); } catch (e) { F.toast(F.t('Could not save the {name} preference: {error}', { name: F.t({ theme: 'Theme', material: 'Material', density: 'Density' }[name]), error: e.name }), { tone: 'error' }); }
       F.prefs.apply(name, value);
     },
     apply(name, value) {
@@ -340,9 +341,8 @@
       : s.branch ? [h('span', { text: 'Branch' }), h('code', { class: 'mono-id update-branch', text: s.branch })] : [h('span', { text: 'No channel' })];
     const checkBtn = F.btn(u.phase === 'checking' ? 'Checking…' : 'Check for updates', { kind: 'primary', icon: 'reload', onclick: checkUpdate });
     if (busy || s.method !== 'git') checkBtn.setAttribute('aria-disabled', 'true');
-    // The installed build over a humpback breaking the surface (MEDIA.md), the check on its right.
+    // The installed build, the check on its right.
     const hero = h('div', { class: 'update-hero' },
-      h('img', { class: 'update-hero-media', src: '/dashboard/media-breach.jpg', alt: '', decoding: 'async', 'aria-hidden': 'true' }),
       h('div', { class: 'update-hero-body' },
         h('p', { class: 'update-version', text: s.version ? `v${s.version}` : 'Unknown version' }),
         h('p', { class: 'update-where' }, ...where, s.commit ? h('code', { class: 'mono-id', text: s.commit }) : null)),
@@ -415,6 +415,7 @@
   function renderAppearance() {
     const pref = (label, hint, name, options) => row(label, hint, F.segmented(label, options, F.prefs.get(name), (v) => F.prefs.set(name, v)));
     st.els.appearance.replaceChildren(
+      pref(F.t('Theme'), null, 'theme', [{ value: 'light', label: F.t('Light') }, { value: 'dark', label: F.t('Dark') }]),
       pref(F.t('Material'), F.t('System follows the reduced-transparency setting of your OS'), 'material', [{ value: 'system', label: F.t('System') }, { value: 'glass', label: F.t('Glass'), icon: 'material' }, { value: 'solid', label: F.t('Solid') }]),
       pref(F.t('Density'), null, 'density', [{ value: 'comfortable', label: F.t('Comfortable') }, { value: 'compact', label: F.t('Compact') }]),
       row(F.t('Language'), F.t('Saved in this browser. Chinese is used when the browser language is Chinese and you have not chosen.'),

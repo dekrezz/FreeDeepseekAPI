@@ -45,7 +45,7 @@
       return route();
     }
     try { localStorage.setItem('fdsa.lastRoute', location.hash); } catch (e) { /* preference only */ }
-    if (r.view === 'chat') app.lastChatHash = location.hash;
+    if (r.view === 'chat') F.rememberChat(location.hash);
     F.closePopover(false);
     F.hideTooltip();
     F.charts.hideTip();
@@ -83,7 +83,7 @@
   // ---------------------------------------------------------------- settings window
   function closeSettings() {
     if (app.view === 'chat') return false;
-    location.hash = app.lastChatHash || '#/chat';
+    location.hash = F.chatToReturnTo();
     return true;
   }
   $('settings-close').addEventListener('click', closeSettings);
@@ -455,6 +455,7 @@
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
     if (mod && e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); F.views.chat.newChat(); return; }
+    if (e.key === '/' && !mod && app.view === 'chat' && !e.target.closest('input, textarea, select, [contenteditable]')) { e.preventDefault(); openPalette(); return; }
     if (mod && e.key === '\\') {
       e.preventDefault();
       F.toggleRail();

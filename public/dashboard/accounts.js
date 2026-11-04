@@ -214,7 +214,7 @@
     const empty = h('div', { class: 'empty-host' });
     const note = h('p', { class: 'meta table-note', text: 'Usage is since the server started. Tokens are estimates (characters ÷ 4). Pause is runtime only; Disable in file survives a restart.' });
 
-    const hero = F.pageHero({ image: '/dashboard/media-surface.jpg', label: F.t('Account pool'), position: '50% 40%' });
+    const hero = F.pageHero({ label: F.t('Account pool') });
     root.append(hero, h('div', { class: 'view-pad' },
       h('div', { class: 'filter-row' }, h('label', { class: 'search-field search-field-inline' }, F.icon('search'), filterInput), chips, count),
       banner,
