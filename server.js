@@ -2098,10 +2098,11 @@ function decodeDsmlValue(value) {
         .replace(/&amp;/gi, '&');
 }
 
-function decodeDsmlParameterValue(value) {
+function decodeDsmlParameterValue(value, keepEntities = false) {
     const raw = String(value || '');
     const cdata = raw.trim().match(/^<!\[CDATA\[([\s\S]*?)\]\]>$/i);
-    return cdata ? cdata[1] : decodeDsmlValue(raw);
+    if (cdata) return cdata[1];
+    return keepEntities ? raw : decodeDsmlValue(raw);
 }
 
 function getMarkupAttribute(attrs, attribute) {
@@ -2183,12 +2184,12 @@ function scanDsmlStructuralTags(text) {
     return tags;
 }
 
-function parseDsmlParameter(attrs, rawBody, args, seenNames) {
+function parseDsmlParameter(attrs, rawBody, args, seenNames, keepEntities = false) {
     const parameterName = getMarkupAttribute(attrs, 'name');
     if (!parameterName || !/^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}$/.test(parameterName) || seenNames.has(parameterName)) return false;
     seenNames.add(parameterName);
     const stringMode = getMarkupAttribute(attrs, 'string');
-    const rawValue = decodeDsmlParameterValue(rawBody);
+    const rawValue = decodeDsmlParameterValue(rawBody, keepEntities);
     if (rawValue.length > MAX_TOOL_ARGUMENT_CHARS) return false;
     let value = rawValue;
     if (stringMode && stringMode.toLowerCase() === 'false') {
@@ -2254,6 +2255,7 @@ function extractToolCallScope(normalized) {
     }
     // Narrow repair: tolerate a missing opening wrapper only when a closing
     // wrapper exists. A bare invoke without this sentinel is never executable.
+    // The one sentinel-free form is parseBareCallBlocks: a reply made only of <call> blocks.
     if (closings.length > 0) {
         const closing = closings[closings.length - 1];
         const invokeOpenings = tags.filter(tag => tag.name === 'invoke' && !tag.closing && tag.start < closing.start);
@@ -2486,6 +2488,81 @@ function salvageGarbledDsmlCalls(text) {
     return calls.length === argCount ? calls : [];
 }
 
+// DeepSeek Web sometimes replies with only <call name="bash"><parameter name="command">...</parameter></call>.
+// Accepted trade-off: a reply made only of such blocks runs, even if the model was quoting one verbatim;
+// the client whitelist still applies, and a <call> quoted in prose never runs.
+// Values arrive unescaped, so they are read by position and kept literal: a </call>, <invoke or &lt;
+// inside a value is data. A </parameter> closes a value only when <parameter or </call> follows it.
+const BARE_CALL_OPEN_RE = /\s*[<＜]call\s([^<>＜＞]{0,1024})[>＞]/y;
+const BARE_CALL_CLOSE_RE = /\s*[<＜]\/call\s*[>＞]/y;
+const BARE_CALL_END_RE = /[<＜]\/call\s*[>＞]/g;
+const BARE_PARAM_OPEN_RE = /\s*[<＜]parameter\s([^<>＜＞]{0,1024})[>＞]/y;
+const BARE_PARAM_END_RE = /[<＜]\/parameter\s*[>＞]/g;
+const BARE_PARAM_NEXT_RE = /\s*[<＜](?:parameter\s|\/call\s*[>＞])/y;
+const BARE_CDATA_OPEN_RE = /\s*<!\[CDATA\[/iy;
+
+function matchMarkupAt(re, text, pos) {
+    re.lastIndex = pos;
+    return re.exec(text);
+}
+
+function markupMatchEnd(match) {
+    return match.index + match[0].length;
+}
+
+function parseBareCallBody(value, start) {
+    const args = Object.create(null);
+    const seenNames = new Set();
+    let parameterCount = 0;
+    let pos = start;
+    for (let open; (open = matchMarkupAt(BARE_PARAM_OPEN_RE, value, pos)) !== null;) {
+        if (++parameterCount > MAX_DSML_PARAMETERS) return null;
+        const bodyStart = markupMatchEnd(open);
+        let searchFrom = bodyStart;
+        const cdata = matchMarkupAt(BARE_CDATA_OPEN_RE, value, bodyStart);
+        if (cdata) {
+            const cdataEnd = value.indexOf(']]>', markupMatchEnd(cdata));
+            if (cdataEnd === -1) return null;
+            searchFrom = cdataEnd + 3;
+        }
+        let close;
+        do {
+            close = matchMarkupAt(BARE_PARAM_END_RE, value, searchFrom);
+            if (!close) return null;
+            searchFrom = markupMatchEnd(close);
+        } while (!matchMarkupAt(BARE_PARAM_NEXT_RE, value, searchFrom));
+        if (!parseDsmlParameter(open[1], value.substring(bodyStart, close.index), args, seenNames, true)) return null;
+        pos = searchFrom;
+    }
+    if (parameterCount > 0) {
+        const close = matchMarkupAt(BARE_CALL_CLOSE_RE, value, pos);
+        return close ? { args, end: markupMatchEnd(close) } : null;
+    }
+
+    const close = matchMarkupAt(BARE_CALL_END_RE, value, start);
+    if (!close) return null;
+    const body = value.substring(start, close.index).trim();
+    try { return { args: body ? JSON.parse(body) : {}, end: markupMatchEnd(close) }; }
+    catch (e) { return null; }
+}
+
+function parseBareCallBlocks(text) {
+    const value = String(text || '');
+    if (value.length > MAX_TOOL_MARKUP_CHARS) return [];
+    const calls = [];
+    let pos = 0;
+    for (let open; (open = matchMarkupAt(BARE_CALL_OPEN_RE, value, pos)) !== null;) {
+        const block = open[1].trimEnd().endsWith('/')
+            ? { args: {}, end: markupMatchEnd(open) }
+            : parseBareCallBody(value, markupMatchEnd(open));
+        const call = block && buildToolCall(getMarkupAttribute(open[1], 'name'), block.args);
+        if (!call) return [];
+        calls.push(call);
+        pos = block.end;
+    }
+    return value.substring(pos).trim() ? [] : calls;
+}
+
 function collectAgentToolCalls(text, allowedToolNames) {
     const allowed = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
     if (!text || allowed.size === 0) return [];
@@ -2499,6 +2576,9 @@ function collectAgentToolCalls(text, allowedToolNames) {
         }
         return calls;
     };
+    // First, so a tool envelope or DSML tag inside a parameter value stays data.
+    const bareCalls = parseBareCallBlocks(text);
+    if (bareCalls.length > 0) return keepAllowed(bareCalls);
     const calls = keepAllowed(hasDsmlToolMarkup(text) ? listDsmlToolCalls(text) : collectJsonToolCalls(text));
     if (calls.length > 0 || !hasDsmlToolMarkup(text)) return calls;
     const repaired = keepAllowed(listDsmlToolCalls(repairGarbledDsmlStructure(text)));
@@ -2513,6 +2593,8 @@ function collectAgentToolCalls(text, allowedToolNames) {
 }
 
 function looksLikeToolCallMarkup(text) {
+    // Case-sensitive and tied to <parameter, so <Call name="x" /> in a JSX or XML answer stays text.
+    if (/[<＜]call\s[^<>＜＞]{0,1024}[>＞]\s*[<＜]parameter\s/.test(String(text || ''))) return true;
     return /TOOL_CALL:\s*[\w-]+|<\s*[|｜]*\s*tool_call\b|[|｜]+\s*DSML\s*[|｜]+|[<＜]\s*\/?\s*(?:DSML)?(?:[\w.-]+:)?(?:tool[\s_-]*calls|function[\s_-]*calls|invoke)\b|["'](?:tool_call|tool_calls|function_call)["']\s*:/i.test(String(text || ''));
 }
 
@@ -5472,7 +5554,8 @@ async function handleRequest(req, res) {
                 toolCall = null;
             }
 
-            const dsmlCalls = listDsmlToolCalls(fullContent);
+            const bareCalls = parseBareCallBlocks(fullContent);
+            const dsmlCalls = bareCalls.length > 0 ? bareCalls : listDsmlToolCalls(fullContent);
             const nativeOnlyDsml = dsmlCalls.length > 0 && dsmlCalls.every(call => isDeepSeekNativeTool(call.name));
             const shouldRepairNative = !noToolsMode && !toolCall && (Boolean(ignoredNativeTool) || nativeOnlyDsml);
             const shouldRepairMarkup = !noToolsMode && !toolCall && !shouldRepairNative && looksLikeToolCallMarkup(fullContent);
