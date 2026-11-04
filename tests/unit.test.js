@@ -462,7 +462,7 @@ test('proxy API key can be loaded from a mounted secret and required explicitly'
 test('Containerfile keeps the rootless Podman runtime minimal and fail-closed', () => {
   const containerfile = fs.readFileSync(path.join(ROOT, 'Containerfile'), 'utf8');
   const containerignore = fs.readFileSync(path.join(ROOT, '.containerignore'), 'utf8');
-  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  const guide = fs.readFileSync(path.join(ROOT, 'docs', 'guide.md'), 'utf8');
   const copyLines = containerfile
     .split(/\r?\n/)
     .map(line => line.trim())
@@ -487,12 +487,12 @@ test('Containerfile keeps the rootless Podman runtime minimal and fail-closed', 
 
   assert.match(containerignore, /^\*$/m);
   assert.doesNotMatch(containerignore, /^!.*(?:auth|secret|\.env)/mi);
-  assert.match(readme, /--publish 127\.0\.0\.1:9655:9655/);
-  assert.match(readme, /--secret free-deepseek-auth[^\n]*mode=0400/);
-  assert.match(readme, /--secret free-deepseek-proxy-key[^\n]*mode=0400/);
-  assert.match(readme, /--read-only/);
-  assert.match(readme, /--cap-drop=ALL/);
-  assert.match(readme, /--security-opt=no-new-privileges/);
+  assert.match(guide, /--publish 127\.0\.0\.1:9655:9655/);
+  assert.match(guide, /--secret free-deepseek-auth[^\n]*mode=0400/);
+  assert.match(guide, /--secret free-deepseek-proxy-key[^\n]*mode=0400/);
+  assert.match(guide, /--read-only/);
+  assert.match(guide, /--cap-drop=ALL/);
+  assert.match(guide, /--security-opt=no-new-privileges/);
 });
 
 test('the files the Containerfile copies are enough to load the server and the dashboard', (t) => {
