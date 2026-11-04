@@ -32,7 +32,6 @@
     ["Theme", "主题"],
     ["Light", "浅色"],
     ["Dark", "深色"],
-    ["Connect a coding agent", "连接编程助手"],
     ["Key, connection, updates", "访问密钥、连接、更新"],
     ["Pool health and live traffic", "账号池健康状况和实时流量"],
     ["DeepSeek logins in the pool", "池中的 DeepSeek 登录"],

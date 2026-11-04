@@ -123,26 +123,6 @@
       </div>
       <ul class="rail-actions" role="list">
         <li><button type="button" class="nav-item rail-search" id="open-search" data-tip="Search" data-i18n-tip="Search"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-search"/></svg><span class="rail-label" data-i18n="Search">Search</span><kbd class="search-key rail-label" aria-hidden="true">/</kbd></button></li>
-      </ul>
-      <p class="rail-section rail-label" data-i18n="Proxy">Proxy</p>
-      <ul class="rail-actions" role="list">
-        <li><a class="nav-item" href="#/status" data-nav="status" data-tip="Status" data-i18n-tip="Status"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-status"/></svg><span class="rail-label" data-i18n="Status">Status</span></a></li>
-        <li><a class="nav-item" href="#/accounts" data-nav="accounts" data-tip="Accounts" data-i18n-tip="Accounts"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-accounts"/></svg><span class="rail-label" data-i18n="Accounts">Accounts</span></a></li>
-        <li><a class="nav-item" href="#/usage" data-nav="usage" data-tip="Usage" data-i18n-tip="Usage"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-usage"/></svg><span class="rail-label" data-i18n="Usage">Usage</span></a></li>
-        <li><a class="nav-item" href="#/requests" data-nav="requests" data-tip="Requests" data-i18n-tip="Requests"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-requests"/></svg><span class="rail-label" data-i18n="Requests">Requests</span></a></li>
-        <li><a class="nav-item" href="#/agents" data-nav="agents" data-tip="Agents" data-i18n-tip="Agents"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-agent"/></svg><span class="rail-label" data-i18n="Agents">Agents</span></a></li>
-        <li><a class="nav-item" href="#/settings" id="open-settings" aria-label="Settings" data-tip="Settings" data-i18n-aria="Settings" data-i18n-tip="Settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span class="rail-label" data-i18n="Settings">Settings</span></a></li>
-      </ul>
-      <p class="rail-section rail-label" data-i18n="Account">Account</p>
-      <button type="button" class="account-switch" id="account-switch" aria-haspopup="menu" aria-expanded="false">
-          <span class="avatar" id="account-avatar" aria-hidden="true"></span>
-          <span class="account-text rail-label">
-            <span class="account-name" id="account-name" data-i18n="Loading accounts…">Loading accounts…</span>
-            <span class="account-sub" id="account-sub"></span>
-          </span>
-          <svg class="icon icon-sm account-chev rail-label" aria-hidden="true"><use href="#i-chevron-down"/></svg>
-        </button>
-      <ul class="rail-actions rail-new-list" role="list">
         <li><button type="button" class="nav-item" id="new-chat" data-tip="New chat" data-i18n-tip="New chat"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-plus"/></svg><span class="rail-label" data-i18n="New chat">New chat</span></button></li>
       </ul>
       <section class="chats" id="chats" aria-labelledby="chats-heading">
@@ -157,7 +137,17 @@
         </label>
         <div class="chat-list" id="chat-list"></div>
       </section>
-      <a class="rail-promo rail-label" href="#/agents"><span class="set-icon" aria-hidden="true"><svg class="icon"><use href="#i-agent"/></svg></span><span data-i18n="Connect a coding agent">Connect a coding agent</span></a>
+      <div class="rail-foot">
+        <button type="button" class="account-switch" id="account-switch" aria-haspopup="menu" aria-expanded="false">
+          <span class="avatar" id="account-avatar" aria-hidden="true"></span>
+          <span class="account-text rail-label">
+            <span class="account-name" id="account-name" data-i18n="Loading accounts…">Loading accounts…</span>
+            <span class="account-sub" id="account-sub"></span>
+          </span>
+          <svg class="icon icon-sm account-chev rail-label" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+        </button>
+        <a class="nav-item" href="#/settings" id="open-settings" aria-label="Settings" data-tip="Settings" data-i18n-aria="Settings" data-i18n-tip="Settings"><svg class="icon icon-nav" aria-hidden="true"><use href="#i-gear"/></svg><span class="rail-label" data-i18n="Settings">Settings</span></a>
+      </div>
     </nav>
 
     <div class="main" id="main">

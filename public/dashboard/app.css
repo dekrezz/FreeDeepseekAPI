@@ -1,6 +1,6 @@
 /* FreeDeepseekAPI dashboard. Graphite surfaces, hairline cards, Geist. The empty chat has the
    glyph field (glyphfield.js): the project mark set in re-rolling letters and digits. White by
-   default, dark with data-theme=dark; the sidebar is dark in both. No scrollbars: scrolling areas fade on the edges that have more. CSP: no inline styles; dynamic values
+   default, dark with data-theme=dark. No scrollbars: scrolling areas fade on the edges that have more. CSP: no inline styles; dynamic values
    arrive through the CSSOM. */
 
 /* ------------------------------------------------------------------ fonts */
@@ -1657,35 +1657,39 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
 :root:not([data-theme=dark]) .codeblock .seg[aria-checked=true], :root:not([data-theme=dark]) .set-code .seg[aria-checked=true] { background: #3a3a3a; color: #ececec; box-shadow: none; }
 :root:not([data-theme=dark]) .chat-empty-mark { filter: invert(1); }
 
-/* ------------------------------------------------------------------ main sidebar, dark in both themes */
+/* ------------------------------------------------------------------ main sidebar and its menus */
+:root { --panel: #1a1b1e; --panel-active: #2b2e33; --panel-chip: #26292e; --panel-key: #33373d; --panel-field: #26292e; --panel-edge: var(--rule); }
+:root:not([data-theme=dark]) { --panel: #eceef1; --panel-active: #dcdfe4; --panel-chip: #f7f8f9; --panel-key: #d3d6dc; --panel-field: #dfe1e6; --panel-edge: rgb(255 255 255 / 0.7); }
 .app { --rail-w: 288px; --rail-open-w: 272px; }
-.rail, :root:not([data-theme=dark]) .rail {
-  color-scheme: dark;
-  --rule: rgb(255 255 255 / 0.08); --rule-mid: rgb(255 255 255 / 0.12); --rule-strong: rgb(255 255 255 / 0.2);
-  --hover-wash: rgb(255 255 255 / 0.06); --active-wash: rgb(255 255 255 / 0.1);
-  --ink: #f2f3f5; --ink-2: #a9adb4; --ink-3: #8b9098; --field: #26292e; --warn: #f2b43c; --crit: #f26b6b; --signal: #5aa9ff;
-  margin: 8px 0 8px 8px; padding: 12px; border-radius: 20px; color: var(--ink); background: #17191c; box-shadow: inset 0 0 0 1px var(--rule);
-}
+.rail { margin: 8px 0 8px 8px; padding: 12px; border-radius: 20px; color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--panel-edge); }
+:root:not([data-theme=dark]) .wordmark-mark { filter: invert(1); }
 .rail-head { height: 40px; padding: 0; margin-bottom: 12px; }
 .wordmark-mark { width: 28px; height: 28px; }
-.rail .rail-search { height: 40px; margin: 0 0 12px; padding: 0 8px 0 12px; border-radius: 10px; background: var(--field); box-shadow: none; color: var(--ink-2); }
+.rail .rail-toggle, .rail .rail-toggle:hover:not([aria-disabled=true]), .rail .rail-toggle:focus, .rail .rail-toggle[aria-expanded=true] { background: transparent; }
+.rail .rail-search { height: 40px; margin: 0 0 8px; padding: 0 8px 0 12px; border-radius: 10px; background: var(--panel-field); box-shadow: none; color: var(--ink-2); }
 .rail .rail-search .icon { width: 18px; height: 18px; color: var(--ink-2); }
 .rail .rail-search .rail-label:not(.search-key) { flex: 1; }
-.search-key { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: #33373d; color: var(--ink-2); font-family: var(--font-ui); font-size: 0.8125rem; }
-.rail-section, .chats-title { margin: 0; padding: 0 4px; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 600; color: var(--ink-2); }
-.rail-section { margin: 4px 0 4px; }
-.rail-actions + .rail-section { margin-top: 12px; }
+.search-key { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: var(--panel-key); color: var(--ink-2); font-family: var(--font-ui); font-size: 0.8125rem; }
+.chats-title { margin: 0; padding: 0 4px; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 600; color: var(--ink-2); }
 .rail .nav-item { height: 36px; padding: 0 12px; gap: 12px; border-radius: 10px; color: var(--ink-2); font-weight: 500; }
 .rail .nav-item .icon { width: 18px; height: 18px; }
-.rail .nav-item[aria-current=page] { background: #2b2e33; color: var(--ink); }
-.rail .account-switch { min-height: 44px; margin-bottom: 4px; padding: 4px 12px; border-radius: 10px; background: #26292e; box-shadow: inset 0 0 0 1px var(--rule); }
+.rail .nav-item[aria-current=page] { background: var(--panel-active); color: var(--ink); }
+.rail .account-switch { min-height: 44px; padding: 4px 12px; border-radius: 10px; background: var(--panel-chip); box-shadow: 0 1px 2px rgb(21 23 26 / 0.1); }
 .rail .avatar { width: 24px; height: 24px; font-size: 0.6875rem; }
-.chats { margin-top: 8px; }
+.chats { margin-top: 16px; }
 .chat-item { height: 36px; padding: 0 12px; border-radius: 10px; color: var(--ink-2); font-weight: 500; }
-.chat-item[aria-current=page] { background: #2b2e33; color: var(--ink); }
-.rail-promo { display: flex; align-items: center; gap: 12px; margin-top: 8px; padding: 12px; border-radius: 12px; background: #202327; color: var(--ink); font-size: 0.875rem; font-weight: 500; text-decoration: none; }
-.rail-promo:hover { text-decoration: none; background: #26292e; }
-.rail .set-icon, :root:not([data-theme=dark]) .rail .set-icon { background: #2b2e33; color: var(--signal); box-shadow: none; }
+.chat-item[aria-current=page] { background: var(--panel-active); color: var(--ink); }
+.rail-foot .nav-item.nav-item { width: 44px; height: 44px; padding: 0; justify-content: center; }
+
+.popover:has(.model-menu), .popover:has(.account-menu) { padding: 8px; border-radius: 16px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--panel-edge), var(--shadow-pop); }
+.model-menu .menu-item, .account-menu .menu-item { border-radius: 10px; color: var(--ink-2); font-weight: 500; }
+.model-menu .menu-item .icon, .account-menu .menu-item .icon { width: 18px; height: 18px; color: var(--ink-2); }
+.model-menu .menu-item[aria-checked=true], .account-menu .menu-item[aria-checked=true] { background: var(--panel-active); color: var(--ink); }
+.model-menu .menu-item[aria-checked=true] .icon, .account-menu .menu-item[aria-checked=true] .icon { color: var(--ink); }
+.model-title, .model-row-label { color: var(--ink); font-weight: 500; }
+.model-desc { font-weight: 400; }
+.model-menu .menu-sep, .account-menu .menu-sep { background: var(--rule); margin: 4px 0; }
+
 @media (min-width: 720px) { .app.rail-collapsed .rail { margin: 0; } }
 @media (max-width: 1099px) {
   .app { --rail-w: 72px; --rail-open-w: 56px; }
@@ -1694,9 +1698,16 @@ a.receipt-item:hover .receipt-value { color: var(--ink); text-decoration: underl
   .rail-head { margin-bottom: 4px; }
   .rail .rail-search { width: 40px; padding: 0; margin-bottom: 4px; background: transparent; }
   .rail .account-switch { padding: 6px; background: transparent; box-shadow: none; }
-  .rail-section, .rail-promo, .search-key { display: none; }
+  .search-key { display: none; }
 }
 @media (max-width: 719px) { .rail { margin: 0; border-radius: 0; } }
+
+/* ------------------------------------------------------------------ settings pages share one centered column */
+@media (min-width: 1024px) {
+  .settings-pane .view-pad, .settings-pane .hero-inner, .settings-pane .banner-slot { max-width: 760px; margin-left: auto; margin-right: auto; padding-left: 40px; padding-right: 40px; }
+  .settings-pane .toolbar { padding-left: max(40px, calc(50% - 340px)); }
+  .app.has-inspector .settings-pane .view-pad { max-width: none; }
+}
 
 /* ------------------------------------------------------------------ composer */
 .composer.composer { width: min(768px, 100%); grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "thumbs thumbs" "input input" "left right"; align-items: center; row-gap: 8px; padding: 16px 12px 8px 20px; border-radius: 28px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--rule-mid), 0 2px 8px rgb(0 0 0 / 0.08); }
