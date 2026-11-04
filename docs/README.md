@@ -1,5 +1,6 @@
 # Docs
 
+- [Full guide](guide.md) — setup, sessions, the pool, request examples, errors
 - [Models](models.md) — DeepSeek-V4.1-Flash. native chat.deepseek.com search is on by default, `-thinking` is DeepThink, `-nosearch` turns search off
 - [One-click agents](agents.md) — Claude Code, Codex, Hermes, OpenClaw, Cursor
 - [Auth](auth.md) — 1–3 Web logins

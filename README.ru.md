@@ -5,7 +5,7 @@
 <h1 align="center">FreeDeepseekAPI</h1>
 
 <p align="center">
-  <strong>Локальный OpenAI-compatible API proxy для DeepSeek Web Chat</strong>
+  <strong>Ваш бесплатный аккаунт DeepSeek как API</strong>
 </p>
 
 <p align="center">
@@ -13,7 +13,6 @@
   <img alt="Node.js 18 plus" src="https://img.shields.io/badge/node-18%2B-339933.svg" />
   <img alt="No npm dependencies" src="https://img.shields.io/badge/dependencies-0-blue.svg" />
   <img alt="OpenAI compatible" src="https://img.shields.io/badge/OpenAI-compatible-111111.svg" />
-  <img alt="DeepSeek V4.1 Flash" src="https://img.shields.io/badge/DeepSeek-V4.1--Flash-4d6bfe.svg" />
 </p>
 
 <p align="center">
@@ -23,27 +22,14 @@
 </p>
 
 <p align="center">
-  <a href="#с-чего-начать">С чего начать</a> •
-  <a href="#быстрый-старт">Быстрый старт</a> •
-  <a href="#что-это-даёт">Что это даёт</a> •
-  <a href="#примеры-запросов">Примеры</a> •
-  <a href="#модели">Модели</a> •
-  <a href="#endpoints">Endpoints</a> •
-  <a href="#open-webui">Open WebUI</a> •
-  <a href="#агенты">Агенты</a>
+  <img src="docs/assets/dashboard.png" alt="Дашборд FreeDeepseekAPI" width="880" />
 </p>
 
-<p align="center">
-  <a href="#панель-аккаунтов"><img src="docs/assets/dashboard.png" alt="Дашборд FreeDeepseekAPI: встроенный чат поверх DeepSeek Web" width="880" /></a>
-</p>
+FreeDeepseekAPI работает на вашем компьютере и превращает бесплатный аккаунт [chat.deepseek.com](https://chat.deepseek.com) в локальный API. Через него с DeepSeek может говорить любое приложение, которое умеет работать с OpenAI или Anthropic: Open WebUI, Claude Code, Codex, Cursor и другие. Платный ключ не нужен.
 
-## С чего начать
+## Как начать
 
-**Что это.** У вас есть бесплатный аккаунт DeepSeek на [chat.deepseek.com](https://chat.deepseek.com). FreeDeepseekAPI работает на вашем компьютере и превращает этот аккаунт в API по адресу `http://127.0.0.1:9655` — такой же адрес выдают платные AI-сервисы. Любая программа, которая умеет работать с OpenAI или Anthropic, сможет через него пользоваться DeepSeek: Open WebUI, Cursor, Claude Code, Codex, ваши скрипты. Платный API-ключ не нужен: ваш аккаунт, на вашем компьютере.
-
-**Понадобится:** [Node.js](https://nodejs.org) 18 или новее, Git, Google Chrome и бесплатный аккаунт DeepSeek.
-
-### 1. Запуск за минуту
+Нужны [Node.js](https://nodejs.org) 18 или новее, Git, Google Chrome и аккаунт DeepSeek.
 
 ```bash
 git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
@@ -52,883 +38,86 @@ npm run auth
 npm run dashboard
 ```
 
-- `npm run auth`: выберите **Войти через Chrome**, войдите на chat.deepseek.com в открывшемся окне, отправьте короткое сообщение, например `ok`, и вернитесь в терминал. Вход сохранится в `deepseek-auth.json`.
-- `npm run dashboard`: запускает прокси и открывает `http://127.0.0.1:9655/dashboard`. Там можно сразу общаться с DeepSeek.
+1. `npm run auth` откроет Chrome. Выберите **Sign in with Chrome**, войдите в DeepSeek, отправьте короткое сообщение, например `ok`, и вернитесь в терминал.
+2. `npm run dashboard` запустит прокси и откроет дашборд. Писать в чат можно прямо там.
 
-### 2. Подключите свою программу
+## Как подключить приложение
+
+Впишите в настройках приложения:
 
 | Настройка | Значение |
 |---|---|
 | Base URL | `http://127.0.0.1:9655/v1` |
-| API key | любой текст (если прокси запущен с `PROXY_API_KEY`, укажите этот ключ) |
-| Модель | `deepseek-v4-flash` отвечает с поиском в интернете, `deepseek-v4-flash-thinking` сначала думает; добавьте `-nosearch`, чтобы выключить поиск |
+| API key | любой текст |
+| Модель | `deepseek-v4-flash` |
 
-Open WebUI в Docker: укажите `http://host.docker.internal:9655/v1`.
+Для Open WebUI в Docker адрес другой: `http://host.docker.internal:9655/v1`.
 
-### 3. Агенты для кода одной командой
+## Как настроить агентов
 
-Пока прокси запущен:
+Не останавливайте прокси и выполните:
 
 ```bash
 npm run setup:agents
 ```
 
-Команда настроит Claude Code, Codex, OpenCode, Hermes, OpenClaw и Cursor как дополнительный профиль; то, чем вы пользуетесь сейчас, останется как есть. То же можно сделать в дашборде: Settings → Agents. Потом запускайте, например, `claude --settings ~/.claude/freedeepseek.settings.json` или `codex --profile freedeepseek`.
+Команда добавит DeepSeek в Claude Code, Codex, OpenCode, Hermes, OpenClaw и Cursor как дополнительный вариант. Ваши текущие настройки останутся, а шаг можно пропустить прямо в мастере. То же самое есть в дашборде: Settings → Agents.
 
-Что-то не так? `npm run doctor` проверит настройку, а `curl http://127.0.0.1:9655/health` покажет, работает ли прокси. Всё остальное — ниже.
+## Частые вопросы
 
----
+**Это правда бесплатно?**
+Да. Используется тот же бесплатный аккаунт, что и на сайте DeepSeek.
 
-FreeDeepseekAPI поднимает локальный API-сервер перед **DeepSeek Web Chat** ([chat.deepseek.com](https://chat.deepseek.com)). К нему подключаются Open WebUI, LiteLLM, Hermes, Claude Code, Codex, OpenCode, OpenClaw, Cursor и любой OpenAI-compatible клиент.
+**Это официальный проект DeepSeek?**
+Нет. Он работает с закрытым веб-чатом DeepSeek, а тот может измениться в любой момент. Когда это случается, проект обновляется вслед за ним.
 
-Проект работает через ваш обычный залогиненный аккаунт DeepSeek. Локальный сервер принимает API-запросы и продолжает сохранённую Web-сессию. Платный ключ `api.deepseek.com` не нужен.
+**Могут ли забанить аккаунт?**
+Могут. DeepSeek способен заблокировать логин на несколько дней, если два чата отправляют с него сообщения одновременно. Поэтому прокси держит один чат на логин, а следующий ждёт очереди. Риск от этого ниже, но полностью он не исчезает: правила задаёт DeepSeek.
 
-На сайте сейчас одна модель: **DeepSeek-V4.1-Flash**. Родной Web Search, встроенный в chat.deepseek.com, **включён по умолчанию**, и именно им отвечают на вопросы про живой интернет. `-thinking` включает DeepThink. `-nosearch` или `"web_search": false` выключает поиск.
+**Куда уходят мой логин и сообщения?**
+Логин остаётся на вашем компьютере в `deepseek-auth.json`. Сообщения уходят в DeepSeek, как и в обычном чате.
 
-> Это экспериментальный web-chat proxy. DeepSeek может в любой момент поменять внутренний Web API. Когда это происходит, проект обновляется вслед за ним, и эта документация тоже может меняться. Поэтому советуем всегда держать свою копию на последней версии: Settings → Updates в дашборде или раздел [Обновления](#обновления).
+**Какую модель выбрать?**
+Модель одна, у неё два переключателя:
 
----
-
-## Навигация
-
-- [С чего начать](#с-чего-начать)
-- [Что это даёт](#что-это-даёт)
-- [Возможности](#возможности)
-- [Быстрый старт](#быстрый-старт)
-- [Windows](#windows)
-- [Linux / Chromium](#linux--chromium)
-- [VPS / headless](#vps--headless)
-- [Rootless Podman](#rootless-podman)
-- [Diagnostics / doctor](#diagnostics--doctor)
-- [Session reuse](#session-reuse)
-- [Пул аккаунтов](#пул-аккаунтов)
-- [Панель аккаунтов](#панель-аккаунтов)
-- [Обновления](#обновления)
-- [Вход](#вход)
-- [Агенты](#агенты)
-- [Проверка работы](#проверка-работы)
-- [Примеры запросов](#примеры-запросов)
-  - [Chat Completions](#chat-completions)
-  - [DeepThink](#deepthink)
-  - [Родной веб-поиск](#родной-веб-поиск)
-  - [Streaming](#streaming)
-  - [Anthropic Messages](#anthropic-messages)
-  - [OpenAI Responses](#openai-responses)
-  - [Tool calling](#tool-calling)
-  - [Картинки](#картинки)
-- [Модели](#модели)
-- [Endpoints](#endpoints)
-- [Переменные окружения](#переменные-окружения)
-- [Ошибки](#ошибки)
-- [Open WebUI](#open-webui)
-- [Обновить логин](#обновить-логин)
-- [Тесты](#тесты)
-- [Статус проекта](#статус-проекта)
-
----
-
-## Что это даёт
-
-- Использовать DeepSeek Web как локальный API endpoint.
-- Подключать DeepSeek к Open WebUI и другим OpenAI-compatible клиентам.
-- Получать обычный JSON или streaming SSE.
-- Включать DeepThink суффиксом `-thinking` и читать `reasoning_content`.
-- Говорить с Claude Code через Anthropic Messages.
-- Говорить с Codex через OpenAI Responses.
-- Держать отдельный Web-чат на каждого агента или `user`.
-- Отдавать несколько локальных инструментов за один ответ, до восьми.
-- Искать в интернете родным поиском DeepSeek, а не через bash и не через websearch харнесса.
-
-## Возможности
-
-- **OpenAI-compatible API:** `POST /v1/chat/completions`
-- **Anthropic-compatible shim:** `POST /v1/messages`
-- **OpenAI Responses shim:** `POST /v1/responses`
-- **Streaming:** SSE и обычный JSON без стрима
-- **DeepThink:** `reasoning_content`, когда включён `-thinking`
-- **Родной поиск:** Web Search chat.deepseek.com, включён по умолчанию. Выключается через `-nosearch` или `"web_search": false`
-- **Tool calling:** инструменты OpenAI, Anthropic и Responses, пачкой
-- **Возможности моделей:** `GET /v1/model-capabilities`
-- **Сессии агентов:** один чат DeepSeek на `x-agent-session` или `user`
-- **Восстановление сессии:** пустой ответ, сломанный tool call и таймаут оставляют тот же чат
-- **Без зависимостей:** Node.js 18+, ни одного npm-пакета
-- **Лицензия:** Apache-2.0
-
----
-
-## Быстрый старт
-
-```bash
-git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
-cd FreeDeepseekAPI
-npm run auth
-npm start
-```
-
-`npm run auth` открывает меню входа. Выберите вход через Chrome, залогиньтесь на chat.deepseek.com в открывшемся профиле, отправьте короткое сообщение вроде `ok` и вернитесь в терминал. Файл сохранится как `deepseek-auth.json` с правами `0600`.
-
-`npm start` открывает меню запуска:
-
-- запустить proxy
-- запустить proxy и открыть дашборд (или `npm run dashboard`)
-- войти через Chrome
-- импортировать auth-файл или экспорт cookies
-- показать id моделей DeepSeek-V4.1-Flash
-- выйти
-
-Без меню, для headless и CI:
-
-```bash
-NON_INTERACTIVE=1 npm start
-# или
-SKIP_ACCOUNT_MENU=1 npm start
-```
-
-Сервер слушает:
-
-```text
-http://127.0.0.1:9655
-```
-
-По умолчанию он доступен только с этого компьютера. Чтобы открыть его в сеть, задайте адрес и отдельный ключ proxy:
-
-```bash
-HOST=0.0.0.0 PROXY_API_KEY='replace-with-a-long-random-value' npm start
-```
-
-Ключ передаётся как `Authorization: Bearer <key>`. Без `PROXY_API_KEY` у API нет своей авторизации. Такой экземпляр в сеть не выставляйте.
-
-Запросы из браузера разрешены с loopback-origin. Если UI открыт на другом адресе, перечислите точные origin через запятую:
-
-```bash
-PROXY_CORS_ORIGINS='https://ui.example.com,http://192.168.1.20:3000'
-```
-
----
-
-## Windows
-
-```powershell
-git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
-cd FreeDeepseekAPI
-npm run auth
-npm start
-```
-
-Если Chrome стоит не в обычном месте:
-
-```powershell
-$env:CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
-npm run auth
-```
-
-Если Chrome не найден, `npm run auth` печатает, куда его ставить на Windows, macOS и Linux, а не сырой stack trace.
-
----
-
-## Linux / Chromium
-
-```bash
-git clone --branch stable https://github.com/dekrezz/FreeDeepseekAPI.git
-cd FreeDeepseekAPI
-CHROME_PATH=$(which chromium) npm run auth
-npm start
-```
-
-Если бинарник называется иначе:
-
-```bash
-CHROME_PATH=$(which chromium-browser) npm run auth
-# или
-CHROME_PATH=$(which google-chrome) npm run auth
-```
-
----
-
-## VPS / headless
-
-Надёжный путь не запускает Chrome на сервере.
-
-1. На машине, где есть GUI и Chrome:
-
-```bash
-npm run auth
-```
-
-2. Скопируйте `deepseek-auth.json` на VPS:
-
-```bash
-scp deepseek-auth.json user@your-vps:/opt/FreeDeepseekAPI/deepseek-auth.json
-```
-
-3. Импортируйте файл и проверьте его:
-
-```bash
-cd /opt/FreeDeepseekAPI
-npm run auth:import -- --input ./deepseek-auth.json
-npm run doctor -- --offline
-```
-
-4. Запустите proxy без меню:
-
-```bash
-NON_INTERACTIVE=1 npm start
-```
-
-Подойдёт и экспорт cookies браузера, если вместе с ним есть token:
-
-```bash
-DEEPSEEK_TOKEN="<token>" npm run auth:import -- --input ./cookies.json
-```
-
-`deepseek-auth.json` — это доступ к вашему логину DeepSeek Web. Не коммитьте его, не вставляйте в чат и храните с правами `0600`.
-
-Команды входа по паролю нет. Прокси не спрашивает пароль DeepSeek и не пишет его на диск. Вход — это Chrome, готовый auth-файл или экспорт cookies плюс token.
-
----
-
-## Rootless Podman
-
-Контейнер только запускает proxy. Вход делайте на хосте командой `npm run auth`. Скрипты авторизации и `deepseek-auth.json` в образ не копируются.
-
-Запускайте Podman своим пользователем, без root.
-
-1. Соберите образ:
-
-```bash
-podman build --tag localhost/free-deepseek-api:local --file Containerfile .
-```
-
-2. Положите auth-файл DeepSeek и отдельный ключ proxy в secrets:
-
-```bash
-podman secret create --replace free-deepseek-auth ./deepseek-auth.json
-
-printf 'Proxy API key: '
-IFS= read -r -s PROXY_API_KEY
-printf '\n'
-printf '%s' "$PROXY_API_KEY" |
-  podman secret create --replace free-deepseek-proxy-key -
-```
-
-Ключ должен быть длинным и случайным. Значение останется в этом shell, чтобы вы могли вызвать API. В образ и в командную строку Podman оно не попадает.
-
-3. Запустите контейнер с урезанными привилегиями:
-
-```bash
-podman run --detach \
-  --name free-deepseek-api \
-  --publish 127.0.0.1:9655:9655 \
-  --secret free-deepseek-auth,type=mount,target=/run/secrets/deepseek-auth.json,mode=0400 \
-  --secret free-deepseek-proxy-key,type=mount,target=/run/secrets/proxy-api-key,mode=0400 \
-  --read-only \
-  --cap-drop=ALL \
-  --security-opt=no-new-privileges \
-  localhost/free-deepseek-api:local
-```
-
-В образе уже стоят `NON_INTERACTIVE=1`, `HOST=0.0.0.0` и `REQUIRE_PROXY_API_KEY=1`. Без secret с ключом контейнер не начнёт обслуживать запросы. На хосте порт публикуется только на `127.0.0.1`. Не убирайте этот адрес, если перед ним нет firewall.
-
-4. Проверьте, что процесс жив, что логин готов и что список моделей закрыт ключом:
-
-```bash
-podman healthcheck run free-deepseek-api
-curl --fail http://127.0.0.1:9655/readyz
-curl --fail \
-  -H "Authorization: Bearer $PROXY_API_KEY" \
-  http://127.0.0.1:9655/v1/models
-```
-
-Встроенный healthcheck бьёт в локальный `/health` и говорит только то, что процесс поднят. `/readyz` вернёт `503`, если ни один логин DeepSeek сейчас не может взять чат.
-
-```bash
-podman logs free-deepseek-api
-podman inspect --format '{{.State.Health.Status}}' free-deepseek-api
-```
-
-Остановите контейнер и удалите secrets:
-
-```bash
-podman stop free-deepseek-api
-podman rm free-deepseek-api
-podman secret rm free-deepseek-auth free-deepseek-proxy-key
-unset PROXY_API_KEY
-```
-
-Когда меняете логин или ключ proxy, замените secret и пересоздайте контейнер.
-
----
-
-## Diagnostics / doctor
-
-```bash
-npm run doctor
-# без запроса в сеть к DeepSeek:
-npm run doctor -- --offline
-```
-
-`doctor` проверяет:
-
-- есть ли `deepseek-auth.json` или `DEEPSEEK_AUTH_DIR`;
-- парсится ли JSON;
-- заданы ли `token`, `cookie` и `wasmUrl`;
-- стоят ли права `0600` на macOS и Linux;
-- при обычном запуске — отвечает ли endpoint PoW у DeepSeek.
-
-Если видите `data.biz_data is null`, `fetch failed`, `401`, `403`, `429` или агент не видит модели, сначала запустите `npm run doctor`.
-
----
-
-## Session reuse
-
-FreeDeepseekAPI не открывает новый чат DeepSeek на каждый HTTP-запрос.
-
-- Одно значение `x-agent-session`, `session` или `user` — один чат DeepSeek.
-- Если чат уже есть, прокси продолжает его через `parent_message_id`.
-- Постоянный system prompt и список инструментов уходят наверх **один раз**. Дальше OpenCode, Claude Code и Codex шлют только новый ход пользователя или результат инструмента.
-- Изменившийся system prompt отправляется снова.
-- Пустой ответ, сломанный tool call и таймаут **оставляют** живой чат. Раньше из-за этого открывался новый чат и заново уезжал весь промпт. Теперь нет.
-- Новый чат начинается, если сессии нет, цепочка дошла до 100 сообщений, чату больше 2 часов, DeepSeek сказал, что промпт слишком длинный, или вы вызвали `/reset-session`.
-- Длинный промпт перед отправкой режется до `DEEPSEEK_MAX_PROMPT_CHARS` (по умолчанию 80 000 символов). Начало задачи, свежие результаты инструментов и напоминание про инструменты сохраняются.
-- Если клиент уже прислал многоходовую историю, прокси не подклеивает свою recovery-историю второй раз.
-- Пустой ответ повторяется до `DEEPSEEK_MAX_RETRIES` раз (по умолчанию 2). Каждый retry берёт меньший кусок контекста и, если чат жив, остаётся в нём.
-
-Явно задать агента:
-
-```bash
-curl -X POST http://127.0.0.1:9655/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "x-agent-session: my-agent" \
-  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"Привет"}]}'
-```
-
-Активные сессии:
-
-```bash
-curl http://127.0.0.1:9655/v1/sessions
-```
-
-Сбросить одну:
-
-```bash
-curl -X POST "http://127.0.0.1:9655/reset-session?agent=my-agent"
-```
-
-Сбросить все:
-
-```bash
-curl -X POST "http://127.0.0.1:9655/reset-session?agent=all"
-```
-
-Сброс сохраняет копию переписки на стороне прокси и подставляет её в следующий чат, если клиент присылает только одно сообщение. Добавьте `&history=drop`, если клиент сам пришлёт полную историю, например после правки одного из прошлых сообщений: тогда заменённые реплики не вернутся.
-
-Чаты на сайте DeepSeek всё равно будут видны. Прокси ходит во Web Chat API, а сами чаты хранит DeepSeek. Session reuse только не плодит новый чат, пока текущая цепочка ещё годится.
-
-Сообщение, текст которого ровно `/new`, сбрасывает удалённый чат этого агента и не уходит в модель.
-
----
-
-## Пул аккаунтов
-
-DeepSeek может забанить логин на несколько дней, если два чата отправят запрос с одного и того же логина одновременно. Правило пула: один чат в полёте на логин. Второй запрос на занятый логин ждёт и не накладывается.
-
-Sticky значит, что прокси не прыгает между аккаунтами посреди живого чата, кроме случаев, когда логин упёрся в лимит частоты или потерял авторизацию. Если логин получил `401` или `403` или DeepSeek упёрся в лимит частоты, логин уходит в cooldown, а старая удалённая сессия сбрасывается. Запрос, упёршийся в лимит, не падает: он сразу переходит на другой готовый логин, в новый чат с полной историей. После `401`/`403` переходит следующий запрос.
-
-Каталог auth-файлов:
-
-```bash
-mkdir -p accounts
-npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./accounts/worker-2.json
-chmod 600 accounts/*.json deepseek-auth.json
-DEEPSEEK_AUTH_DIR=./accounts NON_INTERACTIVE=1 npm start
-```
-
-Или список через запятую:
-
-```bash
-DEEPSEEK_AUTH_PATH="./accounts/main.json,./accounts/backup.json" NON_INTERACTIVE=1 npm start
-```
-
-Как ведёт себя пул:
-
-- новый агент получает свободный логин по кругу;
-- этот логин остаётся приклеен к сессии;
-- `401`, `403` и лимит частоты отправляют логин в cooldown (`DEEPSEEK_ACCOUNT_COOLDOWN_MS`, по умолчанию 10 минут). Лимит частоты — это HTTP `429`, сообщение «слишком частые» в HTTP `400` или JSON-ответе (например, `Слишком частые сообщения`) или подсказка в потоке DeepSeek с `finish_reason: rate_limit_reached`. Если DeepSeek прислал `Retry-After`, он соблюдается;
-- запрос, упёршийся в лимит, переходит на другой готовый логин в новый чат. Клиент получает `429 rate_limit`, только когда в cooldown все логины;
-- остальные ошибки `400` в cooldown не отправляют. Чат пересоздаётся на том же логине;
-- два запроса и два свободных логина уходят на разные аккаунты;
-- тот же `x-agent-session` внахлёст ждёт свой логин (`DEEPSEEK_ACCOUNT_LOCK_WAIT_MS`, по умолчанию 120 секунд);
-- когда заняты все логины, запрос ждёт sticky или тот, которым давно не пользовались;
-- запрос заголовка сессии OpenCode отвечается локально и логин не занимает;
-- `/health` показывает статус аккаунтов без путей к auth-файлам и без имён файлов;
-- `/dashboard` показывает все логины и позволяет приостановить, вернуть, снять cooldown и перечитать auth-файлы без перезапуска (см. [Панель аккаунтов](#панель-аккаунтов));
-- auth-файлы должны быть с правами `0600`.
-
-Привязать клиента к выбранному файлу нельзя. Прокси сам берёт свободный логин.
-
-```bash
-DEEPSEEK_ACCOUNT_COOLDOWN_MS=600000 npm start
-```
-
----
-
-## Панель аккаунтов
-
-Откройте `http://127.0.0.1:9655/dashboard`. Там видны все логины: состояние (`ready`, `busy`, `cooldown`, `disabled`, `no_credentials`), обратный отсчёт cooldown и его причина, подряд идущие и общие ошибки, последняя ошибка DeepSeek и расход. Оттуда можно:
-
-- **Disable / Enable** — приостановить или вернуть логин. Это пауза на время работы процесса: начатые запросы доработают, после перезапуска пауза забывается. Постоянный выключатель — `"enabled": false` в auth-файле; логин, выключенный в файле, из панели не включить.
-- **Clear cooldown** — сразу вернуть остывающий логин в ротацию.
-- **Reload accounts** — перечитать auth-файлы. Новые файлы добавляются, удалённые убираются. Оставшийся логин сохраняет cooldown и счётчики. Логин с новым токеном или cookie начинает с чистого листа.
-
-Чтобы добавить логин, импортируйте его и нажмите Reload:
-
-```bash
-npm run auth:import -- --input ~/Downloads/deepseek-auth.json --output ./accounts/worker-3.json
-```
-
-Страница статическая и данных не хранит. Она читает admin API:
-
-| Метод | Путь | Результат |
-|---|---|---|
-| `GET` | `/admin/accounts` | `{ now, pool, accounts }` |
-| `POST` | `/admin/accounts/<id>/disable` | `{ account, pool }` |
-| `POST` | `/admin/accounts/<id>/enable` | `{ account, pool }`. `409 disabled_in_file`, если в файле `"enabled": false` |
-| `POST` | `/admin/accounts/<id>/clear-cooldown` | `{ account, pool }` |
-| `POST` | `/admin/accounts/reload` | `{ added, removed, kept, errors, accounts, pool }`. `422 no_accounts_found` оставляет пул как был |
-| `POST` | `/admin/accounts/restore` | Тело `{ archived_as }` из ответа `DELETE`. Возвращает файл на место и перечитывает пул: `{ restored, errors, accounts, pool }`. `404 archive_not_found`, `409 restore_target_exists` |
-
-Доступ:
-
-- Если задан `PROXY_API_KEY`, `/admin/*` требует тот же bearer, что и `/v1/*`. Страница спросит ключ и сохранит его только в session storage вкладки.
-- Без ключа `/admin/*` отвечает только прямым клиентам с loopback. Запрос с `X-Forwarded-For`, `Forwarded` или `X-Real-IP` получает `403 admin_forbidden`, даже с `127.0.0.1`. Так же отклоняются `Host` не localhost и браузерный `Origin`, отличный от адреса самого прокси (другое локальное веб-приложение не может ставить логины на паузу). `PROXY_ADMIN_ALLOW_REMOTE=1` снимает только ограничение по адресу клиента. `Host` всё равно должен быть loopback, IP-адресом или хостом из `PROXY_CORS_ORIGINS`, а браузерный `Origin` — адресом самого прокси. Любой, кто достучится до порта, сможет ставить логины на паузу, поэтому на сетевом адресе лучше задать ключ.
-- POST из браузера по-прежнему проходит проверку origin. Чтобы открывать панель не с loopback-адреса, добавьте этот origin в `PROXY_CORS_ORIGINS`.
-- В ответах admin API нет токенов, cookie, значений `hif_*` и имён auth-файлов.
-
-Панель входит в образ контейнера. С `--read-only` действия, которые пишут auth-файлы (добавить, переименовать, удалить, восстановить), падают с `500 auth_file_write_failed`; пауза, возобновление и снятие cooldown работают.
-
----
-
-## Обновления
-
-DeepSeek время от времени меняет свой Web-чат, и FreeDeepseekAPI подстраивается под эти изменения. Держите свою копию свежей.
-
-Два канала, оба — ветки на GitHub:
-
-| Канал | Что приходит |
+| Модель | Что делает |
 |---|---|
-| `stable` | Релиз, после того как его проверили. Канал по умолчанию, его клонирует Quick start. |
-| `latest` | Каждый релиз сразу после выхода. |
+| `deepseek-v4-flash` | Отвечает с поиском в интернете |
+| `deepseek-v4-flash-thinking` | Сначала думает, потом отвечает |
 
-**Из дашборда:** Settings → Updates. Выберите канал, **Check for updates** покажет, что нового, **Install** попросит подтвердить эти изменения и только потом переведёт вашу копию на новую версию, **Restart now** её запустит. Перезапуск автоматический, если прокси запущен через `npm start` или `npm run dashboard`; иначе остановите его и запустите снова. Без этого подтверждения установка не начинается.
+Чтобы отключить поиск, допишите к любой из них `-nosearch`.
 
-Дашборд только двигает копию вперёд. Он останавливается и показывает команду для ручного обновления, если в папке есть незакоммиченные правки отслеживаемых файлов или в ветке канала есть свои коммиты. У образа контейнера и скачанного архива нет git-истории: скачайте новый образ или новый релиз.
+**Можно несколько аккаунтов?**
+Да. Добавьте их в дашборде: Settings → Accounts. Чтобы два агента работали одновременно, нужно два логина.
 
-**Вручную:**
+**Перестало работать. Что делать?**
+Попробуйте по порядку:
+1. Обновитесь: Settings → Updates в дашборде.
+2. Войдите заново: `npm run auth`.
+3. Проверьте настройку: `npm run doctor`.
 
-```bash
-git fetch origin && git switch stable && git merge --ff-only origin/stable
-```
+Если не помогло, скорее всего, DeepSeek что-то изменил. [Напишите нам в issue](https://github.com/dekrezz/FreeDeepseekAPI/issues).
 
-Потом перезапустите прокси.
+**Как обновиться?**
+Откройте Settings → Updates в дашборде и нажмите **Check for updates**. На канал `stable` релиз приходит после проверки, на `latest` сразу.
 
----
+**Можно подключаться с других устройств?**
+По умолчанию доступ есть только с вашего компьютера. Чтобы открыть его, задайте `PROXY_API_KEY` и сначала прочитайте раздел [Running it safely](SECURITY.md#running-it-safely).
 
-## Вход
+**Работает на Windows, сервере или в контейнере?**
+Да: [Windows](docs/ru/guide.md#windows), [VPS](docs/ru/guide.md#vps--headless), [Podman](docs/ru/guide.md#rootless-podman).
 
-| Команда | Что делает |
-|---|---|
-| `npm run auth` | Меню: Chrome, импорт, статус, удалить локальный файл |
-| `npm run deepseek:auth` | Снять token и cookies через Chrome |
-| `npm run auth:import` | Импорт `deepseek-auth.json` или экспорта cookies |
-| `npm run doctor` | Проверить файлы. Без `--offline` ещё и PoW |
+## Что ещё почитать
 
-Расширение Chrome: загрузите `chrome-extension/` на открытую вкладку chat.deepseek.com. Собирайте, пока **Token** не станет Ready, потом сохраните файл. Этот JSON в чат не вставляйте.
-
-Поля: `token`, `cookie`, `wasmUrl` (адрес `https://*.deepseek.com`). Необязательные: `hif_dliq`, `hif_leim`, `name` и `enabled` (`false` ставит логин на паузу). Пример: [`auth.example.json`](auth.example.json).
-
-Пароль аккаунта DeepSeek сюда не входит. Команды `auth:console` нет, и пароль на диск писать не нужно.
-
----
-
-## Агенты
-
-```bash
-npm run setup:agents
-npm run setup:agents -- --all --model deepseek-v4-flash
-npm run setup:agents -- --target claude-code --model deepseek-v4-flash-thinking
-npm run setup:agents -- --target codex --model deepseek-v4-flash
-```
-
-Прокси уже должен слушать порт. Адрес по умолчанию: `http://127.0.0.1:9655`. Другой задаётся через `--base-url`. Если задан `PROXY_API_KEY`, он копируется в конфиг агента.
-
-Setup добавляет FreeDeepseekAPI как отдельный профиль. Claude, GPT и то, чем вы пользуетесь сейчас, он не подменяет.
-
-| Агент | Что записывается | Как выбрать |
-|---|---|---|
-| Claude Code | `~/.claude/freedeepseek.settings.json` | `claude --settings ~/.claude/freedeepseek.settings.json` |
-| Codex | `~/.codex/freedeepseek.config.toml` и каталог моделей | `codex --profile freedeepseek` |
-| OpenCode | провайдер `freedeepseek` и правила автономности в `AGENTS.md` | выбрать `freedeepseek/<id>` |
-| Hermes | `~/.hermes/freedeepseek.yaml` | этот файл профиля |
-| OpenClaw | провайдер `freedeepseek` | выбрать явно |
-| Cursor | сниппет и launcher в `integrations/cursor/` | настройки редактора не меняются |
-
-`--model` всегда DeepSeek-V4.1-Flash с включённым родным поиском chat.deepseek.com. `-thinking` включает DeepThink. `-nosearch` выключает поиск; тогда у агента остаются его собственные веб-инструменты. Старый id с `-search` отображается на тот же id без суффикса.
-
-Setup Codex **не** пишет `forced_login_method = api`. На Codex CLI эта строка разлогинивает ChatGPT. Обычный `codex` остаётся на ChatGPT. Профиль FreeDeepseek говорит с этим прокси.
-
-Картинки:
-
-- Claude Code: вставьте или прикрепите. Блок Anthropic `image` уходит в DeepSeek Web.
-- Codex: `codex -i screenshot.png`. Повторите `-i` для нескольких файлов. `/v1/responses` принимает `input_image`.
-- OpenCode: вставьте или перетащите картинку. Сгенерированный конфиг её не выкидывает.
-- Остальные OpenAI-клиенты: `image_url` как base64 data URL или публичный HTTPS URL.
-
-Вернуть прошлый setup из бэкапа:
-
-```bash
-node scripts/setup-agents.js --restore ~/.freedeepseek-api/backups/<stamp>
-```
-
-Два агента сразу — два Web-логина в `accounts/`. Подробности: [docs/ru/agents.md](docs/ru/agents.md).
-
----
-
-## Проверка работы
-
-```bash
-curl http://127.0.0.1:9655/health
-curl http://127.0.0.1:9655/readyz
-curl http://127.0.0.1:9655/v1/models
-curl http://127.0.0.1:9655/v1/model-capabilities
-```
-
-`/health` говорит, что процесс жив. `/readyz` равен `200`, только если хотя бы один логин может обслужить запрос. `/v1/models` отдаёт четыре id DeepSeek-V4.1-Flash.
-
----
-
-## Примеры запросов
-
-### Chat Completions
-
-```bash
-curl -X POST http://127.0.0.1:9655/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "x-agent-session: my-agent" \
-  -d '{
-    "model": "deepseek-v4-flash",
-    "messages": [{"role": "user", "content": "Ответь одним предложением."}],
-    "stream": false
-  }'
-```
-
-### DeepThink
-
-`-thinking` — это переключатель DeepThink из композера чата. Модель всё та же, DeepSeek-V4.1-Flash. Она рассуждает перед ответом.
-
-```bash
-curl -X POST http://127.0.0.1:9655/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-v4-flash-thinking",
-    "messages": [{"role": "user", "content": "Почему небо голубое? Коротко."}],
-    "stream": false
-  }'
-```
-
-Где лежит рассуждение:
-
-- без стрима: `choices[0].message.reasoning_content`
-- стрим: `choices[0].delta.reasoning_content`
-- usage: `usage.completion_tokens_details.reasoning_tokens`
-
-`reasoning_tokens` — оценка по извлечённому тексту DeepThink. Web-стрим официальный расход reasoning-токенов не отдаёт.
-
-Ход с вызовом инструмента не приклеивает рассуждение к сообщению. Часть агентов считает любой текст рядом с tool call окончательным ответом и останавливается.
-
-### Родной веб-поиск
-
-Родной Web Search chat.deepseek.com включён по умолчанию для любого id модели. Вопросы про интернет идут через этот поиск. Не просите модель пользоваться bash, curl или инструментом харнесса `websearch` / `webfetch`.
-
-```bash
-curl -X POST http://127.0.0.1:9655/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-v4-flash",
-    "messages": [{"role": "user", "content": "Найди свежий факт про DeepSeek и ответь коротко."}],
-    "stream": false
-  }'
-```
-
-Чтобы ответить без поиска, передайте `"web_search": false` или возьмите id с окончанием `-nosearch`:
-
-```bash
-curl -X POST http://127.0.0.1:9655/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-v4-flash-thinking",
-    "web_search": false,
-    "messages": [{"role": "user", "content": "Объясни, как B-дерево разделяет узел."}],
-    "stream": false
-  }'
-```
-
-`web_search` должен быть `true` или `false`; любое другое значение возвращает `400 invalid_request_error`. Поле главнее id: `"web_search": true` на id с `-nosearch` снова включает поиск. Поле работает на `/v1/chat/completions`, `/v1/messages` и `/v1/responses`.
-
-При выключенном поиске кодирующий агент сохраняет свои инструменты `websearch` / `webfetch`, и ему не сообщают, что включён родной поиск.
-
-### Streaming
-
-```bash
-curl -N -X POST http://127.0.0.1:9655/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-v4-flash",
-    "messages": [{"role": "user", "content": "Расскажи короткий анекдот."}],
-    "stream": true
-  }'
-```
-
-Последний SSE-чанк несёт `usage`, затем `data: [DONE]`.
-
-### Anthropic Messages
-
-```bash
-curl -X POST http://127.0.0.1:9655/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-v4-flash",
-    "max_tokens": 512,
-    "messages": [{"role": "user", "content": "Ответь ровно OK"}],
-    "stream": false
-  }'
-```
-
-Claude Code после `npm run setup:agents -- --target claude-code`:
-
-```bash
-claude --settings ~/.claude/freedeepseek.settings.json
-```
-
-Имена вроде `claude-sonnet-*` и `claude-opus-*` отображаются на DeepSeek-V4.1-Flash и DeepSeek-V4.1-Flash с DeepThink, поэтому старый Claude id всё ещё выполняется.
-
-### OpenAI Responses
-
-```bash
-curl -X POST http://127.0.0.1:9655/v1/responses \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-v4-flash",
-    "input": "Ответь ровно OK",
-    "stream": false
-  }'
-```
-
-Codex ходит этим маршрутом. После setup:
-
-```bash
-codex --profile freedeepseek
-```
-
-### Tool calling
-
-Прокси принимает OpenAI `tools`, Anthropic `tools` и function tools из Responses.
-
-У DeepSeek Web нет настоящего массива tool calls. Прокси вписывает список инструментов в промпт и разбирает ответ обратно в OpenAI `tool_calls`. Принимаются такие формы:
-
-- `{"tool_call":{"name":"...","arguments":{...}}}`
-- `{"tool_calls":[{"name":"...","arguments":{...}}]}` — несколько независимых вызовов, до 8
-- `TOOL_CALL:` и следом JSON-объект
-- JSON в ограде с конвертом `tool_call`, `tool_calls` или `function_call`
-- `<tool_call>...</tool_call>`
-- DeepSeek DSML, включая Web-вариант с удвоенными чертами
-
-`execute_code` и `web_search` — собственные инструменты DeepSeek. На вашем компьютере они не запускаются. Если они стоят рядом с настоящим локальным инструментом вроде `read_file`, они отбрасываются, а локальные вызовы остаются. Недописанный блок инструмента не выполняется. Один повтор просит строгий JSON. Если и он сломан, ход возвращает `502 malformed_tool_call`, а чат остаётся открытым.
-
-Пока родной поиск включён, инструменты харнесса `websearch`, `webfetch` и `WebFetch` вырезаются, а живой интернет — это родной поиск chat.deepseek.com. При выключенном поиске они доходят до агента без изменений.
-
-### Картинки
-
-PNG, JPEG, WebP и GIF. До 10 картинок, по 20 МиБ в раскодированном виде. Тело JSON по умолчанию до 30 МиБ.
-
-Прокси загружает картинку в DeepSeek Web, ждёт конца разбора и потом шлёт id файла. Чужой `file_id` отклоняется. URL должен быть публичным HTTPS. Редиректы на локальные, частные и link-local адреса отклоняются.
-
-OpenAI Chat Completions использует `image_url`. Responses использует `input_image`. Anthropic использует блок `image` с base64. См. [docs/api.md](docs/api.md).
-
----
-
-## Модели
-
-`GET /v1/models` отдаёт только DeepSeek-V4.1-Flash.
-
-| ID | DeepThink | Родной веб-поиск | Что делает |
-|---|---|---|---|
-| `deepseek-v4-flash` | выкл | вкл | DeepSeek-V4.1-Flash. `deepseek-flash` — тот же id |
-| `deepseek-v4-flash-thinking` | вкл | вкл | Сначала DeepThink, потом ответ |
-| `deepseek-v4-flash-nosearch` | выкл | выкл | Без родного поиска |
-| `deepseek-v4-flash-thinking-nosearch` | вкл | выкл | DeepThink без родного поиска |
-
-Эти суффиксы — два переключателя в чате DeepSeek. Другую модель они не выбирают. `"web_search": true|false` в теле запроса переопределяет переключатель поиска у любого id.
-
-Старые id `deepseek-v4-flash-search` и `deepseek-v4-flash-thinking-search` по-прежнему работают. Они означают `deepseek-v4-flash` и `deepseek-v4-flash-thinking` и больше не перечислены в `/v1/models`.
-
-Старые id не зарегистрированы и отвечают `400 invalid_model`:
-
-`deepseek-chat`, `deepseek-reasoner`, `deepseek-r1`, `deepseek-v3`, `deepseek-instant`, `deepseek-expert`, `deepseek-v4-pro`, `deepseek-chat-search` и vision.
-
-```bash
-curl http://127.0.0.1:9655/v1/model-capabilities
-```
-
-Полная таблица: [docs/ru/models.md](docs/ru/models.md).
-
----
-
-## Endpoints
-
-| Метод | Путь | Назначение |
-|---|---|---|
-| `GET` | `/health` | Процесс жив. Статус аккаунтов, если ключа proxy нет или bearer совпал |
-| `GET` | `/readyz` | `200`, только если логин может обслужить запрос |
-| `GET` | `/dashboard` | Панель аккаунтов (статическая страница) |
-| `GET` | `/admin/accounts` | Пул и статус каждого логина. См. [Панель аккаунтов](#панель-аккаунтов) |
-| `POST` | `/admin/accounts/<id>/{disable,enable,clear-cooldown}` | Приостановить, вернуть или снять cooldown с логина |
-| `POST` | `/admin/accounts/reload` | Перечитать auth-файлы без перезапуска |
-| `GET` | `/v1/models` | Четыре id DeepSeek-V4.1-Flash |
-| `GET` | `/v1/model-capabilities` | Id, DeepThink и родной поиск |
-| `POST` | `/v1/chat/completions` | OpenAI Chat Completions |
-| `POST` | `/v1/messages` | Anthropic Messages |
-| `POST` | `/v1/responses` | OpenAI Responses |
-| `GET` | `/v1/sessions` | Локальные сессии агентов |
-| `POST` | `/reset-session?agent=<id>` | Закрыть один Web-чат |
-| `POST` | `/reset-session?agent=all` | Закрыть все Web-чаты |
-
----
-
-## Переменные окружения
-
-| Переменная | По умолчанию | Смысл |
-|---|---|---|
-| `HOST` | `127.0.0.1` | Адрес. Привязка не к loopback без ключа proxy печатает предупреждение |
-| `PORT` | `9655` | Порт |
-| `TLS_CERT_FILE` / `TLS_KEY_FILE` | выкл | PEM-сертификат и закрытый ключ. Если заданы оба и их можно прочитать, прокси отвечает по HTTPS. Если не заданы, остаётся HTTP. На loopback TLS не нужен. Привязка не к loopback без них предупреждает, что импорт логина и заголовок Authorization идут открытым текстом |
-| `PROXY_API_KEY` | выкл | Bearer обязателен на `/v1/*` и `/admin/*`, если задан |
-| `REQUIRE_PROXY_API_KEY` | выкл | Не стартовать без ключа. В контейнере это включено |
-| `PROXY_CORS_ORIGINS` | loopback | Дополнительные точные origin браузера |
-| `PROXY_ADMIN_ALLOW_REMOTE` | off | Если `1`, `/admin/*` отвечает не-loopback клиентам даже без `PROXY_API_KEY` |
-| `DEEPSEEK_AUTH_PATH` | `./deepseek-auth.json` | Один файл или список через запятую |
-| `DEEPSEEK_AUTH_DIR` | `./accounts`, если каталог есть | Все `*.json` в нём |
-| `DEEPSEEK_MAX_PROMPT_CHARS` | `80000` | Потолок того, что уходит наверх. Минимум 16000 |
-| `DEEPSEEK_MAX_RETRIES` | `2` | Повторы пустого ответа в том же чате |
-| `DEEPSEEK_REQUEST_DEADLINE_MS` | `120000` | Лимит времени на запрос |
-| `DEEPSEEK_MAX_CONCURRENT` | `24` | Потолок процесса. Настоящий параллелизм — число свободных логинов |
-| `DEEPSEEK_ACCOUNT_LOCK_WAIT_MS` | `120000` | Сколько второй чат ждёт занятый логин |
-| `DEEPSEEK_ACCOUNT_COOLDOWN_MS` | `600000` | Cooldown после 401, 403 или лимита частоты без `Retry-After` |
-| `TRUST_PROXY` | выкл | Если `1`, IP клиента берётся из `X-Forwarded-For` |
-| `MAX_REQUEST_BODY_BYTES` | `31457280` | Максимум тела JSON, вместе с base64-картинками |
-| `NON_INTERACTIVE` / `SKIP_ACCOUNT_MENU` | выкл | Пропустить меню запуска |
-
----
-
-## Ошибки
-
-| Статус | `error.type` | Что делать |
-|---|---|---|
-| 400 | `invalid_model` | Возьмите id из `GET /v1/models` |
-| 400 | `context_length_exceeded` | Промпт остался слишком длинным после уплотнения |
-| 401 | `authentication_error` | Ключ proxy не совпал |
-| 403 | `admin_forbidden` | `/admin/*` без ключа с не-loopback или проксированного клиента. См. [Панель аккаунтов](#панель-аккаунтов) |
-| 429 | `concurrent_chat_blocked` | Ожидание занятого логина истекло. Добавьте логин или повторите |
-| 429 | `rate_limit` | Все логины в cooldown (лимит частоты или ошибка входа). Уважайте `Retry-After` |
-| 429 | `rate_limit_error` | DeepSeek ограничил логин, а время запроса вышло или клиент ушёл раньше, чем закончился переход на другой логин. Уважайте `Retry-After` |
-| 502 | `malformed_tool_call` | Разметка инструмента осталась сломанной после одной починки. Чат сохранён |
-| 502 | `empty_response` | DeepSeek ничего не вернул после повторов |
-| 503 | `overloaded` / `no_auth` | Слишком много запросов в полёте или нет auth-файла |
-| 504 | `request_timeout` | Вышел срок из `DEEPSEEK_REQUEST_DEADLINE_MS` |
-
----
-
-## Open WebUI
-
-Base URL, если Open WebUI в Docker на той же машине:
-
-```text
-http://host.docker.internal:9655/v1
-```
-
-Локально, без Docker:
-
-```text
-http://127.0.0.1:9655/v1
-```
-
-Если `PROXY_API_KEY` не задан, в поле API key можно поставить что угодно. Если ключ задан, клиент должен прислать именно его. Прокси проверяет bearer до моделей, сессий и completions.
-
-Берите `deepseek-v4-flash` для обычного ответа с родным поиском chat.deepseek.com, `deepseek-v4-flash-thinking` для DeepThink и id с `-nosearch`, когда нужен ответ без поиска.
-
----
-
-## Обновить логин
-
-```bash
-npm run auth
-npm start
-```
-
-Если DeepSeek отвечает `401` или `403`, или падает PoW, войдите снова и замените `deepseek-auth.json`.
-
-В git не попадают:
-
-- `deepseek-auth.json`
-- `accounts/*.json`
-- каталоги профиля Chrome, которыми пользуется скрипт входа
-- `.env`
-
----
-
-## Тесты
-
-Синтаксис и модульные тесты, без сети:
-
-```bash
-npm test
-```
-
-Живые smoke-тесты против уже запущенного proxy:
-
-```bash
-BASE_URL=http://127.0.0.1:9655 MODEL=deepseek-v4-flash npm run test:live
-```
-
-`npm test` гоняет `node --check` по точкам входа и `node --test` по `tests/unit.test.js` и `tests/account-failover.test.js`. В DeepSeek он не ходит: тесты переключения аккаунтов отвечают на все запросы к DeepSeek встроенной заглушкой.
-
----
-
-## Статус проекта
-
-FreeDeepseekAPI — локальный web-chat proxy. Он зависит от текущего контракта chat.deepseek.com. Когда контракт меняется, может понадобиться поправить auth или тело запроса.
-
-Если вызов перестал работать:
-
-1. Обновитесь до последней версии ([Обновления](#обновления)).
-2. Обновите логин через `npm run auth`.
-3. Запустите `npm run doctor`.
-4. Прочитайте `GET /v1/model-capabilities` и возьмите id DeepSeek-V4.1-Flash.
-5. Если тот же чат продолжает падать, вызовите `POST /reset-session?agent=<id>` и попробуйте ещё раз.
-6. Если и это не помогло, DeepSeek, скорее всего, изменил внутренний Web API.
-
-Сообщения об уязвимостях идут в закрытый GitHub advisory, не в публичный issue. См. [SECURITY.md](SECURITY.md). Список мейнтейнеров: [CONTRIBUTORS.md](CONTRIBUTORS.md).
-
-## Документация
-
-- [Авторизация](docs/ru/auth.md)
-- [Агенты](docs/ru/agents.md)
-- [Модели](docs/ru/models.md)
-- [HTTP API](docs/api.md)
+- [Полное руководство](docs/ru/guide.md): всё подробно, с примерами запросов
+- [HTTP API](docs/api.md): эндпоинты, ошибки и настройки (на английском)
+- [Модели](docs/ru/models.md) · [Аккаунты и вход](docs/ru/auth.md) · [Агенты](docs/ru/agents.md)
+- [Безопасность](SECURITY.md): как сообщить об уязвимости
 
 ## Звёзды
 
 <a href="https://github.com/dekrezz/FreeDeepseekAPI/stargazers">
-  <img src="docs/assets/stars.svg" alt="История звёзд" width="800" />
+  <img src="docs/assets/stars.svg" alt="Star history" width="800" />
 </a>
 
 ## Лицензия
