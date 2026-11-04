@@ -602,7 +602,7 @@
     ["GET /v1/models returned no models.", "GET /v1/models 没有返回模型。"],
     ["What should we work on?", "想做点什么？"],
     ["Conversation", "对话"],
-    ["Message DeepSeek through this proxy…", "通过此代理给 DeepSeek 发消息…"],
+    ["Ask DeepSeek", "问问 DeepSeek"],
     ["Message", "消息"],
     ["Attach images", "附加图片"],
     ["Send", "发送"],

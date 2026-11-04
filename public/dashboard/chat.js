@@ -249,7 +249,7 @@
     const transcript = h('ol', { class: 'transcript', 'aria-label': 'Conversation' });
     const scroll = h('div', { class: 'chat-scroll', id: 'chat-scroll', tabindex: '-1' }, h('div', { class: 'chat-inner' }, banners, unknown, transcript));
 
-    const textarea = h('textarea', { class: 'composer-input', rows: '1', placeholder: F.t('Message DeepSeek through this proxy…'), 'aria-label': F.t('Message'), spellcheck: 'true' });
+    const textarea = h('textarea', { class: 'composer-input', rows: '1', placeholder: F.t('Ask DeepSeek'), 'aria-label': F.t('Message'), spellcheck: 'true' });
     const thumbs = h('div', { class: 'attach-row', hidden: true });
     // hidden, not just visually hidden: Safari drew an empty focus box for the 1px input.
     const fileInput = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', multiple: true, hidden: true, tabindex: '-1', 'aria-hidden': 'true' });
@@ -257,8 +257,7 @@
     // Under the box, Claude-style: model and mode on the right (the account is in its menu).
     const modelName = h('span', { class: 'meta-btn-label' });
     const modelMode = h('span', { class: 'meta-btn-detail' });
-    const modelBtn = h('button', { type: 'button', class: 'meta-btn meta-btn-model', 'aria-haspopup': 'menu', 'aria-expanded': 'false' }, modelName, modelMode);
-    const meta = h('div', { class: 'composer-meta' }, h('div', { class: 'composer-meta-left' }), h('div', { class: 'composer-meta-right' }, modelBtn));
+    const modelBtn = h('button', { type: 'button', class: 'meta-btn meta-btn-model', 'aria-haspopup': 'menu', 'aria-expanded': 'false' }, modelName, modelMode, F.icon('chevron-down', 'meta-chev'));
     const sendBtn = h('button', { type: 'submit', class: 'send-btn', 'aria-label': F.t('Send') },
       h('span', { class: 'send-icon send-icon-send' }, F.icon('send')),
       h('span', { class: 'send-icon send-icon-stop' }, F.icon('stop')));
@@ -266,10 +265,10 @@
       thumbs, textarea,
       h('div', { class: 'composer-row' },
         h('div', { class: 'composer-left' }, attachBtn),
-        h('div', { class: 'composer-right' }, sendBtn)));
+        h('div', { class: 'composer-right' }, modelBtn, sendBtn)));
     const note = h('p', { class: 'composer-note', role: 'status' });
     // The note sits above the composer, where the eye already is when a send is refused.
-    const dock = h('div', { class: 'composer-dock' }, note, form, meta, fileInput);
+    const dock = h('div', { class: 'composer-dock' }, note, form, fileInput);
     // Empty chat: greeting in the middle, composer at the bottom, the glyph field behind both.
     root.append(scroll, empty, dock);
     S.field = F.glyphField.attach(root, { mask: { image: '/dashboard/logo.png' }, fade: 'composer', when: (el) => el.classList.contains('is-empty') });
