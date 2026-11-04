@@ -21,10 +21,6 @@
   <a href="README.zh.md">简体中文</a>
 </p>
 
-<p align="center">
-  <img src="docs/assets/dashboard.png" alt="FreeDeepseekAPI dashboard" width="880" />
-</p>
-
 FreeDeepseekAPI runs on your computer and turns your free [chat.deepseek.com](https://chat.deepseek.com) account into a local API. Any app that works with OpenAI or Anthropic can talk to DeepSeek through it: Open WebUI, Claude Code, Codex, Cursor and others. You don't need a paid API key.
 
 ## Get started
@@ -65,19 +61,37 @@ It adds DeepSeek to Claude Code, Codex, OpenCode, Hermes, OpenClaw and Cursor as
 
 ## FAQ
 
-**Is it really free?**
+<details>
+<summary><strong>Is it really free?</strong></summary>
+
 Yes. It uses the same free account you use on the DeepSeek site.
 
-**Is this an official DeepSeek project?**
+</details>
+
+<details>
+<summary><strong>Is this an official DeepSeek project?</strong></summary>
+
 No. It talks to DeepSeek's private web chat, which can change at any time. When that happens, the project gets updated to follow.
 
-**Can my account get banned?**
+</details>
+
+<details>
+<summary><strong>Can my account get banned?</strong></summary>
+
 It can happen. DeepSeek can block a login for days if two chats send on it at the same time, so the proxy runs one chat per login and makes the next one wait. That lowers the risk but can't remove it. DeepSeek decides what it allows.
 
-**Where do my login and messages go?**
+</details>
+
+<details>
+<summary><strong>Where do my login and messages go?</strong></summary>
+
 Your login stays on your computer in `deepseek-auth.json`. Your messages go to DeepSeek, the same as in the normal chat.
 
-**Which model should I pick?**
+</details>
+
+<details>
+<summary><strong>Which model should I pick?</strong></summary>
+
 There is one model with two switches:
 
 | Model | What it does |
@@ -87,10 +101,18 @@ There is one model with two switches:
 
 Add `-nosearch` to either one to turn web search off.
 
-**Can I use several accounts?**
+</details>
+
+<details>
+<summary><strong>Can I use several accounts?</strong></summary>
+
 Yes. Add them in the dashboard under Settings → Accounts. Running two agents at once needs two logins.
 
-**It stopped working. What do I do?**
+</details>
+
+<details>
+<summary><strong>It stopped working. What do I do?</strong></summary>
+
 Try these in order:
 1. Update: Settings → Updates in the dashboard.
 2. Log in again: `npm run auth`.
@@ -98,14 +120,28 @@ Try these in order:
 
 If that doesn't help, DeepSeek has probably changed something. [Open an issue](https://github.com/dekrezz/FreeDeepseekAPI/issues).
 
-**How do I update?**
+</details>
+
+<details>
+<summary><strong>How do I update?</strong></summary>
+
 Open Settings → Updates in the dashboard and press **Check for updates**. `stable` gets a release once it has been checked. `latest` gets every release first.
 
-**Can other devices use it?**
+</details>
+
+<details>
+<summary><strong>Can other devices use it?</strong></summary>
+
 By default only your computer can reach it. To share it, set `PROXY_API_KEY` and read [Running it safely](SECURITY.md#running-it-safely) first.
 
-**Does it work on Windows, a server or in a container?**
+</details>
+
+<details>
+<summary><strong>Does it work on Windows, a server or in a container?</strong></summary>
+
 Yes: [Windows](docs/guide.md#windows), [VPS](docs/guide.md#vps--headless), [Podman](docs/guide.md#rootless-podman).
+
+</details>
 
 ## More
 
@@ -113,12 +149,6 @@ Yes: [Windows](docs/guide.md#windows), [VPS](docs/guide.md#vps--headless), [Podm
 - [HTTP API](docs/api.md): endpoints, errors and settings
 - [Models](docs/models.md) · [Accounts and login](docs/auth.md) · [Coding agents](docs/agents.md)
 - [Security](SECURITY.md): how to report a vulnerability
-
-## Stars
-
-<a href="https://github.com/dekrezz/FreeDeepseekAPI/stargazers">
-  <img src="docs/assets/stars.svg" alt="Star history" width="800" />
-</a>
 
 ## License
 

@@ -21,10 +21,6 @@
   <strong>简体中文</strong>
 </p>
 
-<p align="center">
-  <img src="docs/assets/dashboard.png" alt="FreeDeepseekAPI 控制台" width="880" />
-</p>
-
 FreeDeepseekAPI 运行在你的电脑上，把免费的 [chat.deepseek.com](https://chat.deepseek.com) 账号变成本地 API。凡是支持 OpenAI 或 Anthropic 的应用，都能通过它使用 DeepSeek，比如 Open WebUI、Claude Code、Codex、Cursor。不需要付费密钥。
 
 ## 快速上手
@@ -65,19 +61,37 @@ npm run setup:agents
 
 ## 常见问题
 
-**真的免费吗？**
+<details>
+<summary><strong>真的免费吗？</strong></summary>
+
 是的。用的就是你在 DeepSeek 网站上的免费账号。
 
-**这是 DeepSeek 官方项目吗？**
+</details>
+
+<details>
+<summary><strong>这是 DeepSeek 官方项目吗？</strong></summary>
+
 不是。它对接的是 DeepSeek 不公开的网页聊天接口，这个接口随时可能变化。变化之后，项目会跟着更新。
 
-**账号会被封吗？**
+</details>
+
+<details>
+<summary><strong>账号会被封吗？</strong></summary>
+
 有可能。如果同一个登录同时有两个聊天在发送，DeepSeek 可能封禁它几天。所以代理让每个登录同一时间只跑一个聊天，其余的排队。这样风险更低，但无法完全消除，规则由 DeepSeek 决定。
 
-**我的登录信息和消息会去哪里？**
+</details>
+
+<details>
+<summary><strong>我的登录信息和消息会去哪里？</strong></summary>
+
 登录信息保存在你电脑上的 `deepseek-auth.json` 里。消息会发给 DeepSeek，和普通聊天一样。
 
-**该选哪个模型？**
+</details>
+
+<details>
+<summary><strong>该选哪个模型？</strong></summary>
+
 只有一个模型，两个开关：
 
 | 模型 | 作用 |
@@ -87,10 +101,18 @@ npm run setup:agents
 
 在任意一个后面加上 `-nosearch` 就会关闭联网搜索。
 
-**可以用多个账号吗？**
+</details>
+
+<details>
+<summary><strong>可以用多个账号吗？</strong></summary>
+
 可以。在控制台的 Settings → Accounts 里添加。两个代理同时工作需要两个登录。
 
-**突然用不了了怎么办？**
+</details>
+
+<details>
+<summary><strong>突然用不了了怎么办？</strong></summary>
+
 按顺序试试：
 1. 更新：控制台的 Settings → Updates。
 2. 重新登录：`npm run auth`。
@@ -98,14 +120,28 @@ npm run setup:agents
 
 还不行的话，多半是 DeepSeek 改了什么。请[提交 issue](https://github.com/dekrezz/FreeDeepseekAPI/issues)。
 
-**怎么更新？**
+</details>
+
+<details>
+<summary><strong>怎么更新？</strong></summary>
+
 打开控制台的 Settings → Updates，点 **Check for updates**。`stable` 渠道的版本经过检查后才发布，`latest` 渠道最先收到每个版本。
 
-**其他设备能用吗？**
+</details>
+
+<details>
+<summary><strong>其他设备能用吗？</strong></summary>
+
 默认只有你的电脑能访问。要共享的话，请设置 `PROXY_API_KEY`，并先阅读 [Running it safely](SECURITY.md#running-it-safely)。
 
-**支持 Windows、服务器或容器吗？**
+</details>
+
+<details>
+<summary><strong>支持 Windows、服务器或容器吗？</strong></summary>
+
 支持：[Windows](docs/zh/guide.md#windows)、[VPS](docs/zh/guide.md#vps--无界面)、[Podman](docs/zh/guide.md#rootless-podman)。
+
+</details>
 
 ## 更多内容
 
@@ -113,12 +149,6 @@ npm run setup:agents
 - [HTTP API](docs/api.md)：接口、错误和设置（英文）
 - [模型](docs/zh/models.md) · [账号与登录](docs/zh/auth.md) · [编程代理](docs/zh/agents.md)
 - [安全](SECURITY.md)：如何报告漏洞
-
-## Star
-
-<a href="https://github.com/dekrezz/FreeDeepseekAPI/stargazers">
-  <img src="docs/assets/stars.svg" alt="Star history" width="800" />
-</a>
 
 ## 许可证
 

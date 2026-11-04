@@ -21,10 +21,6 @@
   <a href="README.zh.md">简体中文</a>
 </p>
 
-<p align="center">
-  <img src="docs/assets/dashboard.png" alt="Дашборд FreeDeepseekAPI" width="880" />
-</p>
-
 FreeDeepseekAPI работает на вашем компьютере и превращает бесплатный аккаунт [chat.deepseek.com](https://chat.deepseek.com) в локальный API. Через него с DeepSeek может говорить любое приложение, которое умеет работать с OpenAI или Anthropic: Open WebUI, Claude Code, Codex, Cursor и другие. Платный ключ не нужен.
 
 ## Как начать
@@ -65,19 +61,37 @@ npm run setup:agents
 
 ## Частые вопросы
 
-**Это правда бесплатно?**
+<details>
+<summary><strong>Это правда бесплатно?</strong></summary>
+
 Да. Используется тот же бесплатный аккаунт, что и на сайте DeepSeek.
 
-**Это официальный проект DeepSeek?**
+</details>
+
+<details>
+<summary><strong>Это официальный проект DeepSeek?</strong></summary>
+
 Нет. Он работает с закрытым веб-чатом DeepSeek, а тот может измениться в любой момент. Когда это случается, проект обновляется вслед за ним.
 
-**Могут ли забанить аккаунт?**
+</details>
+
+<details>
+<summary><strong>Могут ли забанить аккаунт?</strong></summary>
+
 Могут. DeepSeek способен заблокировать логин на несколько дней, если два чата отправляют с него сообщения одновременно. Поэтому прокси держит один чат на логин, а следующий ждёт очереди. Риск от этого ниже, но полностью он не исчезает: правила задаёт DeepSeek.
 
-**Куда уходят мой логин и сообщения?**
+</details>
+
+<details>
+<summary><strong>Куда уходят мой логин и сообщения?</strong></summary>
+
 Логин остаётся на вашем компьютере в `deepseek-auth.json`. Сообщения уходят в DeepSeek, как и в обычном чате.
 
-**Какую модель выбрать?**
+</details>
+
+<details>
+<summary><strong>Какую модель выбрать?</strong></summary>
+
 Модель одна, у неё два переключателя:
 
 | Модель | Что делает |
@@ -87,10 +101,18 @@ npm run setup:agents
 
 Чтобы отключить поиск, допишите к любой из них `-nosearch`.
 
-**Можно несколько аккаунтов?**
+</details>
+
+<details>
+<summary><strong>Можно несколько аккаунтов?</strong></summary>
+
 Да. Добавьте их в дашборде: Settings → Accounts. Чтобы два агента работали одновременно, нужно два логина.
 
-**Перестало работать. Что делать?**
+</details>
+
+<details>
+<summary><strong>Перестало работать. Что делать?</strong></summary>
+
 Попробуйте по порядку:
 1. Обновитесь: Settings → Updates в дашборде.
 2. Войдите заново: `npm run auth`.
@@ -98,14 +120,28 @@ npm run setup:agents
 
 Если не помогло, скорее всего, DeepSeek что-то изменил. [Напишите нам в issue](https://github.com/dekrezz/FreeDeepseekAPI/issues).
 
-**Как обновиться?**
+</details>
+
+<details>
+<summary><strong>Как обновиться?</strong></summary>
+
 Откройте Settings → Updates в дашборде и нажмите **Check for updates**. На канал `stable` релиз приходит после проверки, на `latest` сразу.
 
-**Можно подключаться с других устройств?**
+</details>
+
+<details>
+<summary><strong>Можно подключаться с других устройств?</strong></summary>
+
 По умолчанию доступ есть только с вашего компьютера. Чтобы открыть его, задайте `PROXY_API_KEY` и сначала прочитайте раздел [Running it safely](SECURITY.md#running-it-safely).
 
-**Работает на Windows, сервере или в контейнере?**
+</details>
+
+<details>
+<summary><strong>Работает на Windows, сервере или в контейнере?</strong></summary>
+
 Да: [Windows](docs/ru/guide.md#windows), [VPS](docs/ru/guide.md#vps--headless), [Podman](docs/ru/guide.md#rootless-podman).
+
+</details>
 
 ## Что ещё почитать
 
@@ -113,12 +149,6 @@ npm run setup:agents
 - [HTTP API](docs/api.md): эндпоинты, ошибки и настройки (на английском)
 - [Модели](docs/ru/models.md) · [Аккаунты и вход](docs/ru/auth.md) · [Агенты](docs/ru/agents.md)
 - [Безопасность](SECURITY.md): как сообщить об уязвимости
-
-## Звёзды
-
-<a href="https://github.com/dekrezz/FreeDeepseekAPI/stargazers">
-  <img src="docs/assets/stars.svg" alt="Star history" width="800" />
-</a>
 
 ## Лицензия
 
