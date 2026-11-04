@@ -22,12 +22,10 @@ concurrency:
 
 jobs:
   test:
-    # PRs always. Main only for direct commits — skip PR merges and the star-chart bot.
+    # PRs always. Main only for direct commits, not PR merges.
     if: >
-      github.event_name == 'pull_request' || (
-        !contains(github.event.head_commit.message, 'Merge pull request') &&
-        !contains(github.event.head_commit.message, 'Refresh the committed GitHub star chart')
-      )
+      github.event_name == 'pull_request' ||
+      !contains(github.event.head_commit.message, 'Merge pull request')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
